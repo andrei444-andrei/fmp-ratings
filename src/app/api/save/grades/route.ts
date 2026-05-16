@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, schema } from '@/db/client';
-import { eq } from 'drizzle-orm';
 
+// Чистый INSERT — данные накопительные, ничего не удаляем.
+// Pipeline сам пропускает символы, у которых уже есть grades в DB.
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -17,16 +18,11 @@ export async function POST(req: NextRequest) {
         action: r.action || null,
       }));
     if (!rows.length) return NextResponse.json({ inserted: 0 });
-    // Идемпотентность: чистим записи по уникальным символам, потом пишем.
-    const uniqSymbols = Array.from(new Set(rows.map(r => r.symbol)));
-    for (const sym of uniqSymbols) {
-      await db.delete(schema.grades).where(eq(schema.grades.symbol, sym));
-    }
     const CHUNK = 500;
     for (let i = 0; i < rows.length; i += CHUNK) {
       await db.insert(schema.grades).values(rows.slice(i, i + CHUNK));
     }
-    return NextResponse.json({ inserted: rows.length, symbols: uniqSymbols.length });
+    return NextResponse.json({ inserted: rows.length });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }

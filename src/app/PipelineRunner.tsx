@@ -38,6 +38,29 @@ export default function PipelineRunner() {
 
   useEffect(() => { loadStats(); }, []);
 
+  async function recomputeFilter() {
+    setRunning(true);
+    setStatus('Пересчитываю фильтр...');
+    try {
+      const res = await fetch('/api/compute-filtered', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ minJump }),
+      }).then(r => r.json());
+      if (res.error) {
+        log(`Ошибка фильтра: ${res.error}`);
+        setStatus(`Ошибка: ${res.error}`);
+      } else {
+        log(`✓ Фильтр пересчитан: ${res.inserted} строк (minJump=${res.minJump})`);
+        setStatus(`✓ ${res.inserted} строк (minJump=${minJump})`);
+      }
+    } catch (e: any) {
+      setStatus(`Ошибка: ${e.message}`);
+    } finally {
+      setRunning(false);
+      loadStats();
+    }
+  }
+
   async function run() {
     setLogLines([]);
     setRunning(true);
@@ -124,6 +147,9 @@ export default function PipelineRunner() {
         <div className="flex flex-wrap gap-2 items-center">
           <button className="btn-primary" disabled={running} onClick={run}>
             {running ? 'Выполняется...' : '▶ Run pipeline'}
+          </button>
+          <button className="btn" disabled={running} onClick={recomputeFilter}>
+            Recompute filter (без FMP)
           </button>
           <a className="btn" href="/results">Результаты</a>
           <a className="btn" href="/admin">Admin / DB</a>

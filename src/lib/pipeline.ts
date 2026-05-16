@@ -61,7 +61,7 @@ export async function phase0(
   return membership;
 }
 
-// === PHASE 1: ranking by historical mcap → top-N per year ===
+// === PHASE 1: ranking by historical mcap → top-N per year (incremental) ===
 export async function phase1(
   log: Logger,
   progress: ProgressFn,
@@ -70,18 +70,8 @@ export async function phase1(
   topN: number,
   delayMs: number
 ): Promise<Record<number, Array<{ symbol: string; marketCap: number; date: string; rank: number }>>> {
-  log('=== PHASE 1: top-N per year (historical mcap) ===');
+  log('=== PHASE 1: top-N per year (historical mcap, incremental) ===');
   const topByYear: Record<number, Array<{ symbol: string; marketCap: number; date: string; rank: number }>> = {};
-
-  let totalCalls = 0;
-  for (const year of years) {
-    const snapDate = `${year - 1}-12-31`;
-    const sp = membership[snapDate] || new Set<string>();
-    const universe = new Set<string>([...sp, ...FOREIGN_ADR]);
-    totalCalls += universe.size;
-  }
-  log(`Всего mcap-вызовов: ${totalCalls}`);
-  let done = 0;
 
   for (const year of years) {
     const snapDate = `${year - 1}-12-31`;
@@ -89,13 +79,25 @@ export async function phase1(
     const toDate = `${year - 1}-12-31`;
     const sp = membership[snapDate] || new Set<string>();
     const universe = Array.from(new Set<string>([...sp, ...FOREIGN_ADR]));
-    log(`Год ${year}: ранжируем ${universe.length} кандидатов на ${snapDate}...`);
-    const caps: Array<{ symbol: string; marketCap: number; date: string }> = [];
-    const batchToSave: Array<{ symbol: string; date: string; marketCap: number }> = [];
 
+    // pre-load: что уже в DB по этому диапазону дат
+    const cached: Record<string, { date: string; marketCap: number }> =
+      await fetchJsonOrThrow(`/api/read/market-cap-range?from=${fromDate}&to=${toDate}`);
+    const cachedCount = Object.keys(cached).length;
+    const missing = universe.filter(s => !cached[s]);
+    log(`Год ${year}: universe ${universe.length}, в кэше ${cachedCount}, к запросу ${missing.length}`);
+
+    const caps: Array<{ symbol: string; marketCap: number; date: string }> = [];
+    // сначала кладём кэшированные
     for (const sym of universe) {
-      done++;
-      progress(`P1 ${done}/${totalCalls}: ${year}/${sym}`);
+      const c = cached[sym];
+      if (c) caps.push({ symbol: sym, marketCap: c.marketCap, date: c.date });
+    }
+
+    const batchToSave: Array<{ symbol: string; date: string; marketCap: number }> = [];
+    for (let i = 0; i < missing.length; i++) {
+      const sym = missing[i];
+      progress(`P1 ${year}: ${i + 1}/${missing.length} ${sym} (FMP)`);
       try {
         const url = `/api/fmp/historical-mcap?symbol=${encodeURIComponent(sym)}&from=${fromDate}&to=${toDate}`;
         const data = await fetchJsonOrThrow(url);
@@ -110,10 +112,7 @@ export async function phase1(
       } catch (e: any) {
         // не валим pipeline на одной точке
       }
-      // батч-сохранение каждые 100
-      if (batchToSave.length >= 100) {
-        await postJson('/api/save/mcap', batchToSave.splice(0));
-      }
+      if (batchToSave.length >= 100) await postJson('/api/save/mcap', batchToSave.splice(0));
       if (delayMs) await sleep(delayMs);
     }
     if (batchToSave.length) await postJson('/api/save/mcap', batchToSave);
@@ -121,30 +120,35 @@ export async function phase1(
     caps.sort((a, b) => b.marketCap - a.marketCap);
     const top = caps.slice(0, topN).map((c, i) => ({ ...c, rank: i + 1 }));
     topByYear[year] = top;
-    log(`  → ${year}: получено mcap ${caps.length}/${universe.length}, top-3: ${top.slice(0, 3).map(c => c.symbol).join(', ')}`);
+    log(`  → ${year}: mcap для ${caps.length}/${universe.length}, top-3: ${top.slice(0, 3).map(c => c.symbol).join(', ')}`);
     await postJson('/api/save/top-n', { year, rows: top.map(c => ({ rank: c.rank, symbol: c.symbol, marketCap: c.marketCap, snapshotDate: c.date })) });
   }
   return topByYear;
 }
 
-// === PHASE 2: grades для уникальных символов ===
+// === PHASE 2: grades (incremental — skip symbols already in DB) ===
 export async function phase2(
   log: Logger,
   progress: ProgressFn,
   topByYear: Record<number, Array<{ symbol: string }>>,
   delayMs: number
 ): Promise<number> {
-  log('=== PHASE 2: grades ===');
+  log('=== PHASE 2: grades (incremental) ===');
   const uniq = new Set<string>();
   for (const list of Object.values(topByYear)) for (const c of list) uniq.add(c.symbol);
-  const symbols = Array.from(uniq);
-  log(`Уникальных символов: ${symbols.length}`);
+  const allSymbols = Array.from(uniq);
+
+  // pre-load: символы, по которым grades уже есть в DB
+  const cachedSymbols: string[] = await fetchJsonOrThrow('/api/read/grades-symbols');
+  const cachedSet = new Set(cachedSymbols);
+  const toFetch = allSymbols.filter(s => !cachedSet.has(s));
+  log(`Всего символов в top-N: ${allSymbols.length}, в кэше: ${allSymbols.length - toFetch.length}, к запросу: ${toFetch.length}`);
 
   let ok = 0, empty = 0, err = 0, totalRows = 0;
   const batch: any[] = [];
-  for (let i = 0; i < symbols.length; i++) {
-    const sym = symbols[i];
-    progress(`P2 ${i + 1}/${symbols.length}: ${sym}`);
+  for (let i = 0; i < toFetch.length; i++) {
+    const sym = toFetch[i];
+    progress(`P2 ${i + 1}/${toFetch.length}: ${sym}`);
     try {
       const data = await fetchJsonOrThrow(`/api/fmp/grades?symbol=${encodeURIComponent(sym)}`);
       if (Array.isArray(data)) {
@@ -160,13 +164,11 @@ export async function phase2(
       err++;
       log(`${sym}: ОШИБКА — ${e.message}`);
     }
-    if (batch.length >= 200) {
-      await postJson('/api/save/grades', batch.splice(0));
-    }
+    if (batch.length >= 200) await postJson('/api/save/grades', batch.splice(0));
     if (delayMs) await sleep(delayMs);
   }
   if (batch.length) await postJson('/api/save/grades', batch);
-  log(`PHASE 2: OK=${ok}, empty=${empty}, err=${err}, всего записей: ${totalRows}`);
+  log(`PHASE 2: новых OK=${ok}, пусто=${empty}, ошибок=${err}, записей: ${totalRows}`);
   return totalRows;
 }
 
