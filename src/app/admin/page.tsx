@@ -17,9 +17,28 @@ export default function AdminPage() {
   const [queryResult, setQueryResult] = useState<{ columns: string[]; rows: any[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const [migrating, setMigrating] = useState(false);
+  const [migrateMsg, setMigrateMsg] = useState<string | null>(null);
+
   async function loadStats() {
     const data = await fetch('/api/read/stats').then(r => r.json());
     setStats(data);
+  }
+
+  async function runMigrations() {
+    setMigrating(true);
+    setMigrateMsg(null);
+    try {
+      const r = await fetch('/api/admin/migrate', { method: 'POST' });
+      const data = await r.json();
+      if (data.error) setMigrateMsg(`Ошибка: ${data.error}`);
+      else setMigrateMsg('✓ Миграции применены');
+      loadStats();
+    } catch (e: any) {
+      setMigrateMsg(`Ошибка: ${e.message}`);
+    } finally {
+      setMigrating(false);
+    }
   }
   async function loadTable() {
     setError(null);
@@ -70,7 +89,16 @@ export default function AdminPage() {
             </div>
           ))}
         </div>
-        <button className="btn mt-3" onClick={loadStats}>Обновить</button>
+        <div className="mt-3 flex gap-2 items-center flex-wrap">
+          <button className="btn" onClick={loadStats}>Обновить</button>
+          <button className="btn-primary" onClick={runMigrations} disabled={migrating}>
+            {migrating ? 'Применяю миграции...' : 'Run DB migrations'}
+          </button>
+          {migrateMsg && <span className="text-sm">{migrateMsg}</span>}
+        </div>
+        <p className="text-xs text-neutral-500 mt-2">
+          Нажмите «Run DB migrations» один раз после подключения Turso через Vercel Marketplace — создаст таблицы.
+        </p>
       </section>
 
       <section className="card">

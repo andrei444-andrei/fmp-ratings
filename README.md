@@ -38,36 +38,39 @@ npm run dev
 # открыть http://localhost:3000
 ```
 
-## Деплой на Vercel + Turso
+## Деплой на Vercel (zero-CLI flow)
 
-1. **Создать Turso-базу:**
-   ```bash
-   brew install tursodatabase/tap/turso
-   turso auth signup
-   turso db create fmp-ratings
-   turso db show fmp-ratings --url    # сохранить как TURSO_DATABASE_URL
-   turso db tokens create fmp-ratings  # сохранить как TURSO_AUTH_TOKEN
-   ```
+1. **Импортировать репо в Vercel:**
+   - vercel.com → Add New Project → импорт из GitHub `fmp-ratings`
+   - Пока что добавьте только `FMP_API_KEY` в env. Deploy упадёт на DB-вызовах — это нормально.
 
-2. **Применить миграции к Turso:**
-   ```bash
-   TURSO_DATABASE_URL=libsql://... TURSO_AUTH_TOKEN=... npm run db:migrate
-   ```
+2. **Подключить Turso через Vercel Marketplace** (без CLI!):
+   - В проекте на Vercel → вкладка **Storage** → **Create Database** → **Marketplace** → **Turso** → Install
+   - Авторизация Turso через GitHub, выбрать проект
+   - Vercel автоматически добавит `TURSO_DATABASE_URL` и `TURSO_AUTH_TOKEN` в env-переменные
+   - Триггер redeploy (commit или ручной)
 
-3. **Запушить в GitHub:**
-   ```bash
-   gh repo create fmp-ratings --public --source=. --remote=origin --push
-   ```
+3. **Применить миграции одной кнопкой:**
+   - Открыть `https://your-app.vercel.app/admin`
+   - Нажать **Run DB migrations** — создаст 7 таблиц в Turso
+   - Готово
 
-4. **Деплой на Vercel:**
-   - vercel.com → Add New Project → импорт из GitHub
-   - В Settings → Environment Variables добавить:
-     - `FMP_API_KEY` — ключ FinancialModelingPrep (Starter+ для historical-mcap и sp500_constituent)
-     - `TURSO_DATABASE_URL`
-     - `TURSO_AUTH_TOKEN`
-   - Deploy
+4. **Запустить pipeline:**
+   - Открыть `/` → кнопка ▶ Run pipeline
+   - Прогресс в логе, результаты на `/results`, состояние таблиц на `/admin`
 
-5. После деплоя открыть URL → запустить pipeline.
+### Альтернатива через CLI
+
+Если предпочитаете CLI-флоу:
+```bash
+brew install tursodatabase/tap/turso
+turso auth signup
+turso db create fmp-ratings
+turso db show fmp-ratings --url        # → TURSO_DATABASE_URL
+turso db tokens create fmp-ratings     # → TURSO_AUTH_TOKEN
+TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=... npm run db:migrate
+```
+Затем добавить эти env в Vercel вручную.
 
 ## Архитектура
 
