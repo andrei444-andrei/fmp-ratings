@@ -1,4 +1,3 @@
-const BASE_V3 = 'https://financialmodelingprep.com/api/v3';
 const BASE_STABLE = 'https://financialmodelingprep.com/stable';
 
 export function getFmpKey(): string {
@@ -22,12 +21,12 @@ async function fmpGet(url: string) {
 
 export async function fmpSp500Current() {
   const key = getFmpKey();
-  return fmpGet(`${BASE_V3}/sp500_constituent?apikey=${encodeURIComponent(key)}`);
+  return fmpGet(`${BASE_STABLE}/sp500-constituent?apikey=${encodeURIComponent(key)}`);
 }
 
 export async function fmpSp500History() {
   const key = getFmpKey();
-  return fmpGet(`${BASE_V3}/historical/sp500_constituent?apikey=${encodeURIComponent(key)}`);
+  return fmpGet(`${BASE_STABLE}/historical-sp500-constituent?apikey=${encodeURIComponent(key)}`);
 }
 
 export async function fmpHistoricalMcap(symbol: string, from: string, to: string) {
