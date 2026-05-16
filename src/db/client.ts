@@ -1,8 +1,8 @@
-import { createClient } from '@libsql/client';
-import { drizzle } from 'drizzle-orm/libsql';
+import { createClient, type Client } from '@libsql/client';
+import { drizzle, type LibSQLDatabase } from 'drizzle-orm/libsql';
 import * as schema from './schema';
 
-function makeClient() {
+function makeClient(): Client {
   const localPath = process.env.LOCAL_SQLITE_PATH;
   const url = process.env.TURSO_DATABASE_URL;
   const token = process.env.TURSO_AUTH_TOKEN;
@@ -18,11 +18,41 @@ function makeClient() {
 
 declare global {
   // eslint-disable-next-line no-var
-  var __libsql_client: ReturnType<typeof makeClient> | undefined;
+  var __libsql_client: Client | undefined;
   // eslint-disable-next-line no-var
-  var __drizzle_db: ReturnType<typeof drizzle> | undefined;
+  var __drizzle_db: LibSQLDatabase<typeof schema> | undefined;
 }
 
-export const libsqlClient = globalThis.__libsql_client ?? (globalThis.__libsql_client = makeClient());
-export const db = globalThis.__drizzle_db ?? (globalThis.__drizzle_db = drizzle(libsqlClient, { schema }));
+function getLibsqlClient(): Client {
+  if (!globalThis.__libsql_client) {
+    globalThis.__libsql_client = makeClient();
+  }
+  return globalThis.__libsql_client;
+}
+
+function getDb(): LibSQLDatabase<typeof schema> {
+  if (!globalThis.__drizzle_db) {
+    globalThis.__drizzle_db = drizzle(getLibsqlClient(), { schema });
+  }
+  return globalThis.__drizzle_db;
+}
+
+// Lazy proxies — реальное подключение случается только при первом обращении,
+// а не во время сборки.
+export const libsqlClient: Client = new Proxy({} as Client, {
+  get(_t, prop) {
+    const c = getLibsqlClient() as any;
+    const val = c[prop];
+    return typeof val === 'function' ? val.bind(c) : val;
+  },
+});
+
+export const db: LibSQLDatabase<typeof schema> = new Proxy({} as LibSQLDatabase<typeof schema>, {
+  get(_t, prop) {
+    const d = getDb() as any;
+    const val = d[prop];
+    return typeof val === 'function' ? val.bind(d) : val;
+  },
+});
+
 export { schema };
