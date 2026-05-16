@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>FMP Rating Changes Collector — Point-in-Time</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 1100px; margin: 2em auto; padding: 0 1em; color: #222; }
+  h1 { margin-bottom: 0.2em; }
+  .step { border: 1px solid #ddd; padding: 1em 1.2em; margin: 1em 0; border-radius: 8px; background: #fafafa; }
+  .step h2 { margin-top: 0; font-size: 1.1em; }
+  button { padding: 8px 14px; margin: 4px 4px 4px 0; cursor: pointer; border: 1px solid #888; background: #fff; border-radius: 5px; font-size: 14px; }
+  button:hover:not(:disabled) { background: #eef; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.primary { background: #0066cc; color: #fff; border-color: #0066cc; }
+  button.primary:hover:not(:disabled) { background: #0055bb; }
+  input[type=password], input[type=text], input[type=number] { padding: 7px; border: 1px solid #aaa; border-radius: 4px; font-size: 14px; }
+  input[type=password], input[type=text] { width: 320px; }
+  select { padding: 6px; border: 1px solid #aaa; border-radius: 4px; font-size: 14px; }
+  .log { background: #1e1e1e; color: #ddd; padding: 1em; max-height: 280px; overflow-y: auto; font-family: ui-monospace, Menlo, monospace; font-size: 12px; white-space: pre-wrap; border-radius: 5px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin-top: 0.7em; }
+  th, td { border: 1px solid #ddd; padding: 5px 8px; text-align: left; }
+  th { background: #efefef; }
+  tr:nth-child(even) td { background: #f9f9f9; }
+  .progress { color: #0066cc; font-weight: 600; }
+  .error { color: #c00; font-weight: 600; }
+  .success { color: #060; font-weight: 600; }
+  .muted { color: #777; font-size: 12px; }
+  .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  details { margin: 6px 0; }
+  details > summary { cursor: pointer; padding: 4px 0; user-select: none; }
+  .universe-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 4px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  .universe-grid span { padding: 2px 6px; background: #eef; border-radius: 3px; text-align: center; }
+</style>
+</head>
+<body>
+<h1>FMP Rating Changes — Point-in-Time Top-50</h1>
+<p class="muted">Для каждого года 2015–2025: top-50 по market cap на 31 дек предыдущего года (через FMP historical-market-capitalization) → апгрейды аналитиков в этом году → фильтр ≥N уровней до Buy/Strong Buy → CSV с колонкой year.</p>
+
+<div class="step">
+  <h2>1. API Key</h2>
+  <div class="row">
+    <input type="password" id="apiKey" placeholder="FMP API key (Starter+: historical-market-capitalization)" autocomplete="off">
+    <button onclick="saveKey()">Сохранить</button>
+    <button onclick="clearKey()">Очистить</button>
+    <span id="keyStatus" class="muted"></span>
+  </div>
+  <p class="muted">Используются эндпоинты: <code>/stable/historical-market-capitalization</code> (платный) и <code>/stable/grades</code>.</p>
+</div>
+
+<div class="step">
+  <h2>2. Настройки</h2>
+  <div class="row">
+    <label class="muted">Начальный год:
+      <input type="number" id="startYear" value="2015" min="2010" max="2025" style="width:90px" oninput="saveSettings()">
+    </label>
+    <label class="muted">Конечный год:
+      <input type="number" id="endYear" value="2025" min="2010" max="2025" style="width:90px" oninput="saveSettings()">
+    </label>
+    <label class="muted">Размер рейтинга (top-N):
+      <input type="number" id="topN" value="50" min="5" max="100" style="width:80px" oninput="saveSettings()">
+    </label>
+    <label class="muted">Минимальный скачок:
+      <select id="minJump" onchange="saveSettings()">
+        <option value="1">1 уровень</option>
+        <option value="2" selected>2 уровня</option>
+      </select>
+    </label>
+    <label class="muted">Задержка API, мс:
+      <input type="number" id="delayMs" value="120" min="0" max="2000" style="width:80px" oninput="saveSettings()">
+    </label>
+  </div>
+</div>
+
+<div class="step">
+  <h2>3. Universe</h2>
+  <p class="muted">
+    <b>Динамический:</b> состав S&P 500 на 31 дек каждого года реконструируется через
+    <code>/historical/sp500_constituent</code> (откат изменений индекса с текущей даты в прошлое).<br>
+    <b>+ Foreign ADR список</b> (мега-капы, которые не в S&P 500: TSM, BABA, ASML, NVO, TM, SAP и т.д.).
+  </p>
+  <details>
+    <summary>Foreign ADR (фиксированный список)</summary>
+    <div class="universe-grid" id="universe-grid"></div>
+  </details>
+  <p class="muted" id="universe-count"></p>
+</div>
+
+<div class="step">
+  <h2>4. Запустить pipeline</h2>
+  <div class="row">
+    <button class="primary" onclick="runPipeline()">▶ Run all phases</button>
+    <button onclick="downloadCsv('topByYear')">CSV: top-50 по годам</button>
+    <button onclick="downloadCsv('rawGrades')">CSV: сырые grades</button>
+    <button onclick="downloadCsv('filtered')">CSV: финальный (с year)</button>
+    <span id="status"></span>
+  </div>
+  <div class="log" id="log">// логи pipeline появятся здесь</div>
+</div>
+
+<div class="step">
+  <h2>5. Результаты по годам</h2>
+  <div id="results"></div>
+</div>
+
+<script>
+window.addEventListener('error', e => {
+  const el = document.getElementById('log');
+  if (el) el.textContent += `\n[window.error] ${e.message} @ ${e.filename}:${e.lineno}:${e.colno}`;
+  console.error('[window.error]', e);
+});
+
+const storage = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } },
+  remove(k) { try { localStorage.removeItem(k); } catch (e) {} }
+};
+
+let apiKey = '';
+let topByYear = {};       // { 2015: [{symbol, marketCap, date}, ...], ... }
+let gradesBySymbol = {};  // { 'AAPL': [grade, ...], ... }
+let filtered = [];        // финальные строки с year-колонкой
+
+// Foreign ADR — мега-капы, которых нет в S&P 500, но они торгуются на US и
+// у FMP grades по ним есть данные. Это дополнение к динамически реконструируемому
+// S&P 500 (см. phase0_sp500AtDate ниже).
+const FOREIGN_ADR = [
+  'TSM','ASML','BABA','JD','PDD','SAP','BIDU','TCEHY',
+  'NVO','NVS','AZN','GSK','SNY','RHHBY','NSRGY','UL','BUD',
+  'TM','SHEL','BP','TTE','EQNR','HSBC','LVMUY','BHP','VALE','PBR',
+  'DEO','INFY','SONY'
+];
+
+// Реконструированный состав S&P 500 на каждую snapshot-дату.
+let sp500ByDate = {};   // { '2014-12-31': Set('AAPL', ...), ... }
+let sp500History = null; // raw changes array from FMP
+
+function renderUniverse() {
+  const grid = document.getElementById('universe-grid');
+  grid.innerHTML = FOREIGN_ADR.map(s => `<span>${s}</span>`).join('');
+  document.getElementById('universe-count').textContent = `Foreign ADR: ${FOREIGN_ADR.length} тикеров. S&P 500 (~500) реконструируется на дату.`;
+}
+
+function saveSettings() {
+  storage.set('fmp_start', document.getElementById('startYear').value);
+  storage.set('fmp_end', document.getElementById('endYear').value);
+  storage.set('fmp_topn', document.getElementById('topN').value);
+  storage.set('fmp_min_jump', document.getElementById('minJump').value);
+  storage.set('fmp_delay', document.getElementById('delayMs').value);
+}
+
+function loadSettings() {
+  const map = {fmp_start:'startYear', fmp_end:'endYear', fmp_topn:'topN', fmp_min_jump:'minJump', fmp_delay:'delayMs'};
+  for (const [k, id] of Object.entries(map)) {
+    const v = storage.get(k);
+    if (v) document.getElementById(id).value = v;
+  }
+}
+
+function saveKey() {
+  apiKey = document.getElementById('apiKey').value.trim();
+  if (apiKey) {
+    const ok = storage.set('fmp_key', apiKey);
+    document.getElementById('keyStatus').innerHTML = ok
+      ? '<span class="success">✓ сохранено</span>'
+      : '<span class="muted">✓ принято (localStorage недоступен)</span>';
+  }
+}
+
+function clearKey() {
+  apiKey = '';
+  storage.remove('fmp_key');
+  document.getElementById('apiKey').value = '';
+  document.getElementById('keyStatus').innerHTML = '<span class="muted">очищено</span>';
+}
+
+function log(msg) {
+  const el = document.getElementById('log');
+  const ts = new Date().toLocaleTimeString();
+  el.textContent += `[${ts}] ${msg}\n`;
+  el.scrollTop = el.scrollHeight;
+  console.log('[pipeline]', msg);
+}
+
+function setStatus(html) {
+  document.getElementById('status').innerHTML = html;
+}
+
+const RATING_MAP = {
+  'strong sell':1,'conviction sell':1,
+  'sell':2,'underperform':2,'underweight':2,'negative':2,'reduce':2,
+  'market underperform':2,'sector underperform':2,'weak hold':2,'moderate sell':2,
+  'hold':3,'neutral':3,'market perform':3,'equal weight':3,'equal-weight':3,
+  'in-line':3,'in line':3,'sector perform':3,'sector weight':3,'peer perform':3,
+  'mixed':3,'perform':3,
+  'buy':4,'outperform':4,'overweight':4,'positive':4,'add':4,'accumulate':4,
+  'market outperform':4,'sector outperform':4,'long-term buy':4,'speculative buy':4,'moderate buy':4,
+  'strong buy':5,'conviction buy':5,'top pick':5
+};
+
+function normalize(rating) {
+  if (!rating) return null;
+  const r = String(rating).toLowerCase().trim();
+  if (RATING_MAP[r] != null) return RATING_MAP[r];
+  if (r.includes('strong buy') || r.includes('conviction buy') || r.includes('top pick')) return 5;
+  if (r.includes('strong sell') || r.includes('conviction sell')) return 1;
+  if (r.includes('outperform') || r.includes('overweight') || r.includes('accumulate') || r.includes('positive')) return 4;
+  if (r.includes('underperform') || r.includes('underweight') || r.includes('reduce') || r.includes('negative')) return 2;
+  if (r.includes('hold') || r.includes('neutral') || r.includes('equal') || r.includes('market perform') ||
+      r.includes('peer perform') || r.includes('sector perform') || r.includes('in-line') || r.includes('in line')) return 3;
+  if (r.includes('buy')) return 4;
+  if (r.includes('sell')) return 2;
+  return null;
+}
+
+function labelFor(n) {
+  return {1:'Strong Sell',2:'Sell',3:'Hold',4:'Buy',5:'Strong Buy'}[n] || '';
+}
+
+async function fetchJson(url) {
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`HTTP ${res.status} — ${body.slice(0,150)}`);
+  }
+  const data = await res.json();
+  if (data && typeof data === 'object' && !Array.isArray(data) && (data['Error Message'] || data['error'])) {
+    throw new Error(data['Error Message'] || data['error']);
+  }
+  return data;
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// === PHASE 0: reconstruct S&P 500 membership at each snapshot date ===
+async function phase0_sp500(years) {
+  log(`=== PHASE 0: реконструкция S&P 500 ===`);
+  // Текущий состав
+  setStatus('<span class="progress">P0: текущий S&P 500...</span>');
+  const currentUrl = `https://financialmodelingprep.com/api/v3/sp500_constituent?apikey=${encodeURIComponent(apiKey)}`;
+  const current = await fetchJson(currentUrl);
+  if (!Array.isArray(current)) throw new Error('sp500_constituent: не массив');
+  log(`Текущий S&P 500: ${current.length} компаний`);
+  const currentSyms = current.map(c => c.symbol);
+
+  // История изменений
+  setStatus('<span class="progress">P0: история изменений S&P 500...</span>');
+  const histUrl = `https://financialmodelingprep.com/api/v3/historical/sp500_constituent?apikey=${encodeURIComponent(apiKey)}`;
+  sp500History = await fetchJson(histUrl);
+  if (!Array.isArray(sp500History)) throw new Error('historical/sp500_constituent: не массив');
+  log(`Изменений индекса в истории: ${sp500History.length}`);
+
+  // Для каждого года реконструируем состав на 31.12 (Y-1)
+  sp500ByDate = {};
+  for (const year of years) {
+    const snapDate = `${year - 1}-12-31`;
+    const members = new Set(currentSyms);
+    // Откатываем все изменения, произошедшие ПОСЛЕ snapDate
+    for (const ch of sp500History) {
+      const d = ch.date || ch.dateAdded || '';
+      if (d > snapDate) {
+        // change happened after snapshot — revert it
+        const added = ch.symbol || ch.addedSymbol || ch.added;
+        const removed = ch.removedTicker || ch.removedSymbol || ch.removed;
+        if (added) members.delete(added);
+        if (removed) members.add(removed);
+      }
+    }
+    sp500ByDate[snapDate] = members;
+    log(`  ${snapDate}: ${members.size} членов S&P 500`);
+  }
+}
+
+// === PHASE 1: top-N per year ===
+async function phase1_topByYear(years, delay) {
+  log(`=== PHASE 1: top-N per year ===`);
+  topByYear = {};
+  const topN = Math.max(5, Math.min(100, parseInt(document.getElementById('topN').value) || 50));
+
+  // Считаем общее число вызовов заранее
+  let totalCalls = 0;
+  for (const year of years) {
+    const snapDate = `${year - 1}-12-31`;
+    const sp = sp500ByDate[snapDate] || new Set();
+    const universe = new Set([...sp, ...FOREIGN_ADR]);
+    totalCalls += universe.size;
+  }
+  log(`Всего historical-mcap вызовов будет: ${totalCalls}`);
+  let done = 0;
+
+  for (const year of years) {
+    const snapDate = `${year - 1}-12-31`;
+    const fromDate = `${year - 1}-12-20`;
+    const toDate = `${year - 1}-12-31`;
+    const sp = sp500ByDate[snapDate] || new Set();
+    const universe = Array.from(new Set([...sp, ...FOREIGN_ADR]));
+    log(`Год ${year}: ранжируем ${universe.length} кандидатов (S&P 500 + ADR) на ${snapDate}...`);
+    const caps = [];
+    for (const sym of universe) {
+      done++;
+      setStatus(`<span class="progress">P1 ${done}/${totalCalls}: ${year}/${sym}</span>`);
+      const url = `https://financialmodelingprep.com/stable/historical-market-capitalization?symbol=${encodeURIComponent(sym)}&from=${fromDate}&to=${toDate}&apikey=${encodeURIComponent(apiKey)}`;
+      try {
+        const data = await fetchJson(url);
+        if (Array.isArray(data) && data.length) {
+          const sorted = data.slice().sort((a,b) => (b.date||'').localeCompare(a.date||''));
+          const latest = sorted[0];
+          if (latest.marketCap) {
+            caps.push({ symbol: sym, marketCap: latest.marketCap, date: latest.date });
+          }
+        }
+      } catch (e) {
+        // Не логируем каждый mcap-fail (слишком много), копим счётчик
+      }
+      if (delay) await sleep(delay);
+    }
+    caps.sort((a,b) => b.marketCap - a.marketCap);
+    topByYear[year] = caps.slice(0, topN);
+    log(`  → ${year}: получено mcap для ${caps.length}/${universe.length}, top-3: ${topByYear[year].slice(0,3).map(c=>c.symbol).join(', ')}`);
+  }
+  log(`PHASE 1 готова.`);
+}
+
+// === PHASE 2: fetch grades ===
+async function phase2_grades(delay) {
+  log(`=== PHASE 2: grades ===`);
+  const uniq = new Set();
+  for (const year of Object.keys(topByYear)) {
+    for (const c of topByYear[year]) uniq.add(c.symbol);
+  }
+  const symbols = Array.from(uniq);
+  log(`Уникальных символов в top-N всех лет: ${symbols.length}`);
+  gradesBySymbol = {};
+  let ok = 0, empty = 0, err = 0;
+
+  for (let i = 0; i < symbols.length; i++) {
+    const sym = symbols[i];
+    setStatus(`<span class="progress">P2 ${i+1}/${symbols.length}: ${sym}</span>`);
+    const url = `https://financialmodelingprep.com/stable/grades?symbol=${encodeURIComponent(sym)}&apikey=${encodeURIComponent(apiKey)}`;
+    try {
+      const data = await fetchJson(url);
+      if (Array.isArray(data)) {
+        for (const row of data) if (!row.symbol) row.symbol = sym;
+        gradesBySymbol[sym] = data;
+        if (data.length) { ok++; log(`${sym}: ${data.length} grades`); }
+        else { empty++; log(`${sym}: пусто`); }
+      } else {
+        err++;
+        log(`${sym}: неожиданный ответ`);
+      }
+    } catch (e) {
+      err++;
+      log(`${sym}: ОШИБКА — ${e.message}`);
+    }
+    if (delay) await sleep(delay);
+  }
+  log(`PHASE 2: OK=${ok}, пусто=${empty}, ошибок=${err}`);
+}
+
+// === PHASE 3: filter + per-year aggregation ===
+function phase3_filter() {
+  log(`=== PHASE 3: filter ===`);
+  const minJump = Math.max(1, parseInt(document.getElementById('minJump').value) || 2);
+  filtered = [];
+
+  // Построим set membership: year -> Set(symbols)
+  const memberSet = {};
+  for (const [year, list] of Object.entries(topByYear)) {
+    memberSet[year] = new Set(list.map(c => c.symbol));
+  }
+
+  for (const [sym, grades] of Object.entries(gradesBySymbol)) {
+    for (const g of grades) {
+      const date = g.date || '';
+      const year = parseInt(date.slice(0,4));
+      if (!year || !memberSet[year]) continue;
+      if (!memberSet[year].has(sym)) continue;  // тикер не был в top-N в этом году
+      const newN = normalize(g.newGrade);
+      const oldN = normalize(g.previousGrade);
+      if (newN == null || oldN == null) continue;
+      if (newN < 4) continue;
+      if ((newN - oldN) < minJump) continue;
+      filtered.push({
+        year: year,
+        date: date,
+        symbol: sym,
+        new_rating: labelFor(newN),
+        previous_rating: labelFor(oldN),
+        new_grade_raw: g.newGrade || '',
+        previous_grade_raw: g.previousGrade || '',
+        grading_company: g.gradingCompany || '',
+        action: g.action || ''
+      });
+    }
+  }
+  filtered.sort((a,b) => (b.date||'').localeCompare(a.date||''));
+  log(`PHASE 3: найдено ${filtered.length} апгрейдов (скачок ≥ ${minJump}, новый ∈ {Buy, Strong Buy})`);
+  renderResults();
+}
+
+function renderResults() {
+  const byYear = {};
+  for (const r of filtered) {
+    (byYear[r.year] = byYear[r.year] || []).push(r);
+  }
+  const years = Object.keys(byYear).sort();
+  const el = document.getElementById('results');
+  if (!years.length) {
+    el.innerHTML = '<p class="muted">Нет результатов.</p>';
+    return;
+  }
+  el.innerHTML = years.map(y => {
+    const rows = byYear[y];
+    const topMembers = (topByYear[y] || []).map(c => c.symbol).slice(0, 10).join(', ');
+    return `
+      <details ${rows.length > 0 ? 'open' : ''}>
+        <summary><b>${y}</b> — ${rows.length} апгрейдов · top-10 ${y}: <span class="muted">${topMembers}</span></summary>
+        <table><tr><th>Date</th><th>Symbol</th><th>New</th><th>Previous</th><th>Firm</th></tr>
+        ${rows.slice(0, 100).map(r =>
+          `<tr><td>${r.date}</td><td>${r.symbol}</td>` +
+          `<td>${r.new_rating} <span class="muted">(${r.new_grade_raw})</span></td>` +
+          `<td>${r.previous_rating} <span class="muted">(${r.previous_grade_raw})</span></td>` +
+          `<td>${r.grading_company}</td></tr>`
+        ).join('')}
+        </table>
+        ${rows.length > 100 ? `<p class="muted">Показаны первые 100 из ${rows.length}.</p>` : ''}
+      </details>
+    `;
+  }).join('');
+}
+
+async function runPipeline() {
+  if (!apiKey) { log('ERROR: API key не введён'); return; }
+  document.getElementById('log').textContent = '';
+  const startYear = parseInt(document.getElementById('startYear').value);
+  const endYear = parseInt(document.getElementById('endYear').value);
+  const delay = Math.max(0, parseInt(document.getElementById('delayMs').value) || 0);
+  if (!(startYear >= 2010 && endYear >= startYear && endYear <= 2025)) {
+    log('ERROR: некорректные годы'); return;
+  }
+  const years = [];
+  for (let y = startYear; y <= endYear; y++) years.push(y);
+  const t0 = Date.now();
+  try {
+    await phase0_sp500(years);
+    await phase1_topByYear(years, delay);
+    await phase2_grades(delay);
+    phase3_filter();
+    const dt = ((Date.now() - t0) / 1000).toFixed(1);
+    setStatus(`<span class="success">✓ Pipeline готов за ${dt}s, ${filtered.length} строк</span>`);
+    downloadCsv('filtered');
+  } catch (e) {
+    log(`PIPELINE ABORT: ${e.message}`);
+    setStatus(`<span class="error">Ошибка: ${e.message}</span>`);
+  }
+}
+
+function toCsv(rows, headers) {
+  const esc = v => {
+    if (v == null) return '';
+    const s = String(v);
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  return headers.join(',') + '\n' + rows.map(r => headers.map(h => esc(r[h])).join(',')).join('\n');
+}
+
+function downloadCsv(kind) {
+  let csv, name;
+  if (kind === 'topByYear') {
+    const rows = [];
+    for (const [year, list] of Object.entries(topByYear)) {
+      list.forEach((c, i) => rows.push({ year, rank: i + 1, symbol: c.symbol, marketCap: c.marketCap, snapshotDate: c.date }));
+    }
+    csv = toCsv(rows, ['year','rank','symbol','marketCap','snapshotDate']);
+    name = 'top_by_year.csv';
+  } else if (kind === 'rawGrades') {
+    const rows = [];
+    for (const [sym, list] of Object.entries(gradesBySymbol)) {
+      for (const g of list) rows.push({ symbol: sym, date: g.date, newGrade: g.newGrade, previousGrade: g.previousGrade, gradingCompany: g.gradingCompany, action: g.action });
+    }
+    csv = toCsv(rows, ['symbol','date','newGrade','previousGrade','gradingCompany','action']);
+    name = 'grades_raw.csv';
+  } else if (kind === 'filtered') {
+    csv = toCsv(filtered, ['year','date','symbol','new_rating','previous_rating','new_grade_raw','previous_grade_raw','grading_company','action']);
+    name = 'rating_upgrades_pit.csv';
+  } else return;
+  if (!csv || csv.split('\n').length <= 1) { log(`CSV ${kind}: пусто, пропуск`); return; }
+  const blob = new Blob(['﻿' + csv], {type: 'text/csv;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
+}
+
+function init() {
+  try {
+    const k = storage.get('fmp_key');
+    if (k) {
+      apiKey = k;
+      document.getElementById('apiKey').value = k;
+      document.getElementById('keyStatus').innerHTML = '<span class="success">✓ загружено из localStorage</span>';
+    }
+    loadSettings();
+    renderUniverse();
+  } catch (e) {
+    console.error('init failed', e);
+    document.getElementById('log').textContent = `init ERROR: ${e.message}\n${e.stack}`;
+  }
+}
+
+init();
+</script>
+</body>
+</html>

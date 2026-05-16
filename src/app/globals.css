@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+}
+
+@layer components {
+  .card {
+    @apply border border-neutral-200 rounded-lg p-4 bg-white shadow-sm mb-4;
+  }
+  .btn {
+    @apply px-3 py-1.5 rounded border border-neutral-400 bg-white hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed text-sm;
+  }
+  .btn-primary {
+    @apply px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-sm;
+  }
+  .input {
+    @apply border border-neutral-300 rounded px-2 py-1 text-sm;
+  }
+  .log {
+    @apply bg-neutral-900 text-neutral-200 rounded p-3 text-xs font-mono whitespace-pre-wrap overflow-y-auto max-h-72;
+  }
+  .label {
+    @apply text-xs text-neutral-600;
+  }
+}
