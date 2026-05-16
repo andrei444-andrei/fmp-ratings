@@ -1,17 +1,111 @@
 import { NextResponse } from 'next/server';
-import { migrate } from 'drizzle-orm/libsql/migrator';
-import { db } from '@/db/client';
-import path from 'node:path';
+import { libsqlClient } from '@/db/client';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
+// SQL миграции встроены прямо в код, чтобы не зависеть от файловой системы
+// serverless-функции на Vercel. Источник: drizzle/0000_jittery_scorpion.sql.
+// Все CREATE используют IF NOT EXISTS — повторный запуск безопасен.
+const STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS grades (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    symbol text NOT NULL,
+    date text NOT NULL,
+    new_grade text,
+    previous_grade text,
+    grading_company text,
+    action text
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_grades_symbol ON grades (symbol)`,
+  `CREATE INDEX IF NOT EXISTS idx_grades_date ON grades (date)`,
+
+  `CREATE TABLE IF NOT EXISTS market_cap (
+    symbol text NOT NULL,
+    date text NOT NULL,
+    market_cap real NOT NULL,
+    PRIMARY KEY (symbol, date)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_mcap_date ON market_cap (date)`,
+
+  `CREATE TABLE IF NOT EXISTS rating_changes_filtered (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    year integer NOT NULL,
+    date text NOT NULL,
+    symbol text NOT NULL,
+    new_rating text,
+    previous_rating text,
+    new_grade_raw text,
+    previous_grade_raw text,
+    grading_company text,
+    action text,
+    jump_size integer,
+    min_jump integer,
+    computed_at text NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_rcf_year ON rating_changes_filtered (year)`,
+  `CREATE INDEX IF NOT EXISTS idx_rcf_symbol ON rating_changes_filtered (symbol)`,
+
+  `CREATE TABLE IF NOT EXISTS runs (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    started_at text NOT NULL,
+    finished_at text,
+    status text NOT NULL,
+    start_year integer,
+    end_year integer,
+    top_n integer,
+    min_jump integer,
+    rows_written integer,
+    notes text
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS sp500_changes (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    date text NOT NULL,
+    added_symbol text,
+    removed_symbol text,
+    reason text,
+    raw text
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_sp500_changes_date ON sp500_changes (date)`,
+
+  `CREATE TABLE IF NOT EXISTS sp500_current (
+    symbol text PRIMARY KEY NOT NULL,
+    name text,
+    sector text,
+    sub_sector text,
+    founded text,
+    fetched_at text NOT NULL
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS top_n_per_year (
+    year integer NOT NULL,
+    rank integer NOT NULL,
+    symbol text NOT NULL,
+    market_cap real,
+    snapshot_date text,
+    PRIMARY KEY (year, rank)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_top_year ON top_n_per_year (year)`,
+];
+
 export async function POST() {
+  const results: Array<{ ok: boolean; sql: string; error?: string }> = [];
   try {
-    const folder = path.join(process.cwd(), 'drizzle');
-    await migrate(db, { migrationsFolder: folder });
-    return NextResponse.json({ ok: true, message: 'Миграции применены' });
+    for (const sql of STATEMENTS) {
+      try {
+        await libsqlClient.execute(sql);
+        results.push({ ok: true, sql: sql.split('\n')[0] });
+      } catch (e: any) {
+        results.push({ ok: false, sql: sql.split('\n')[0], error: e.message });
+      }
+    }
+    const failed = results.filter(r => !r.ok);
+    if (failed.length) {
+      return NextResponse.json({ ok: false, results, failed: failed.length }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true, executed: results.length, results });
   } catch (e: any) {
-    return NextResponse.json({ error: e.message, stack: e.stack }, { status: 500 });
+    return NextResponse.json({ error: e.message }, { status: 500 });
   }
 }
