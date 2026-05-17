@@ -108,11 +108,21 @@ export default function SignalsPage() {
   }, [signals, fromYear, toYear]);
 
   const summary = useMemo(() => {
-    type Stat = { n: number; avgExcess: number | null; medianExcess: number | null; pctBetter: number | null };
+    type Stat = {
+      n: number;
+      avgExcess: number | null;
+      medianExcess: number | null;
+      pctBetter: number | null;
+      avgWin: number | null;
+      avgLoss: number | null;
+      nWin: number;
+      nLoss: number;
+    };
     const out: Record<string, Stat> = {};
     for (const h of HORIZONS) {
       const diffs: number[] = [];
-      let better = 0;
+      const wins: number[] = [];
+      const losses: number[] = [];
       for (const r of rows) {
         if (r.error) continue;
         const s = r.symbolReturns?.[`d${h}`];
@@ -120,10 +130,14 @@ export default function SignalsPage() {
         if (s == null || b == null || !Number.isFinite(s) || !Number.isFinite(b)) continue;
         const d = s - b;
         diffs.push(d);
-        if (d > 0) better++;
+        if (d > 0) wins.push(d);
+        else if (d < 0) losses.push(d);
       }
       if (!diffs.length) {
-        out[`d${h}`] = { n: 0, avgExcess: null, medianExcess: null, pctBetter: null };
+        out[`d${h}`] = {
+          n: 0, avgExcess: null, medianExcess: null, pctBetter: null,
+          avgWin: null, avgLoss: null, nWin: 0, nLoss: 0,
+        };
         continue;
       }
       const avg = diffs.reduce((a, b) => a + b, 0) / diffs.length;
@@ -134,7 +148,11 @@ export default function SignalsPage() {
         n: diffs.length,
         avgExcess: avg,
         medianExcess: median,
-        pctBetter: better / diffs.length,
+        pctBetter: wins.length / diffs.length,
+        avgWin: wins.length ? wins.reduce((a, b) => a + b, 0) / wins.length : null,
+        avgLoss: losses.length ? losses.reduce((a, b) => a + b, 0) / losses.length : null,
+        nWin: wins.length,
+        nLoss: losses.length,
       };
     }
     return out;
@@ -339,6 +357,106 @@ export default function SignalsPage() {
         </div>
       </section>
 
+      {rows.length > 0 && (
+        <section className="card">
+          <div className="flex justify-between items-baseline mb-2">
+            <h3 className="font-semibold">Summary — превышение бенчмарка</h3>
+            <span className="text-xs text-neutral-500">
+              {benchmark
+                ? <>бенчмарк: <code>{benchmark}</code> · excess = доходность тикера − доходность бенчмарка</>
+                : 'бенчмарк не задан — статистика недоступна'}
+            </span>
+          </div>
+          {hasBenchmarkData ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-neutral-100">
+                    <th className="text-left p-2 border">Метрика</th>
+                    {HORIZONS.map(h => (
+                      <th key={h} className="text-right p-2 border whitespace-nowrap">{h} day</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td className="p-2 border">Среднее превышение бенчмарка</td>
+                    {HORIZONS.map(h => {
+                      const v = summary[`d${h}`]?.avgExcess;
+                      return (
+                        <td key={h} className={`p-2 border font-mono text-right whitespace-nowrap ${pctColor(v)}`}>
+                          {fmtPct(v)}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                  <tr>
+                    <td className="p-2 border">Медианное превышение бенчмарка</td>
+                    {HORIZONS.map(h => {
+                      const v = summary[`d${h}`]?.medianExcess;
+                      return (
+                        <td key={h} className={`p-2 border font-mono text-right whitespace-nowrap ${pctColor(v)}`}>
+                          {fmtPct(v)}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                  <tr>
+                    <td className="p-2 border">Средний выигрыш (excess &gt; 0)</td>
+                    {HORIZONS.map(h => {
+                      const v = summary[`d${h}`]?.avgWin;
+                      return (
+                        <td key={h} className={`p-2 border font-mono text-right whitespace-nowrap ${pctColor(v)}`}>
+                          {fmtPct(v)}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                  <tr>
+                    <td className="p-2 border">Средний проигрыш (excess &lt; 0)</td>
+                    {HORIZONS.map(h => {
+                      const v = summary[`d${h}`]?.avgLoss;
+                      return (
+                        <td key={h} className={`p-2 border font-mono text-right whitespace-nowrap ${pctColor(v)}`}>
+                          {fmtPct(v)}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                  <tr>
+                    <td className="p-2 border">% сделок лучше бенчмарка</td>
+                    {HORIZONS.map(h => {
+                      const v = summary[`d${h}`]?.pctBetter;
+                      const cls = v == null ? '' : v > 0.5 ? 'text-green-700' : v < 0.5 ? 'text-red-700' : '';
+                      return (
+                        <td key={h} className={`p-2 border font-mono text-right whitespace-nowrap ${cls}`}>
+                          {v == null ? '—' : (v * 100).toFixed(1) + '%'}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                  <tr className="text-xs text-neutral-500">
+                    <td className="p-2 border">N (всего / win / loss)</td>
+                    {HORIZONS.map(h => {
+                      const s = summary[`d${h}`];
+                      return (
+                        <td key={h} className="p-2 border font-mono text-right whitespace-nowrap">
+                          {s ? `${s.n} / ${s.nWin} / ${s.nLoss}` : '0 / 0 / 0'}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="text-sm text-neutral-600">
+              Чтобы увидеть статистику превышения, укажите бенчмарк и повторите расчёт.
+            </p>
+          )}
+        </section>
+      )}
+
       <section className="card">
         <div className="flex justify-between items-baseline mb-2">
           <h3 className="font-semibold">Результаты ({rows.length})</h3>
@@ -393,80 +511,6 @@ export default function SignalsPage() {
         </div>
       </section>
 
-      {rows.length > 0 && (
-        <section className="card">
-          <div className="flex justify-between items-baseline mb-2">
-            <h3 className="font-semibold">Summary — превышение бенчмарка</h3>
-            <span className="text-xs text-neutral-500">
-              {benchmark
-                ? <>бенчмарк: <code>{benchmark}</code> · excess = доходность тикера − доходность бенчмарка</>
-                : 'бенчмарк не задан — статистика недоступна'}
-            </span>
-          </div>
-          {hasBenchmarkData ? (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-neutral-100">
-                    <th className="text-left p-2 border">Метрика</th>
-                    {HORIZONS.map(h => (
-                      <th key={h} className="text-right p-2 border whitespace-nowrap">{h} day</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td className="p-2 border">Среднее превышение бенчмарка</td>
-                    {HORIZONS.map(h => {
-                      const v = summary[`d${h}`]?.avgExcess;
-                      return (
-                        <td key={h} className={`p-2 border font-mono text-right whitespace-nowrap ${pctColor(v)}`}>
-                          {fmtPct(v)}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                  <tr>
-                    <td className="p-2 border">Медианное превышение бенчмарка</td>
-                    {HORIZONS.map(h => {
-                      const v = summary[`d${h}`]?.medianExcess;
-                      return (
-                        <td key={h} className={`p-2 border font-mono text-right whitespace-nowrap ${pctColor(v)}`}>
-                          {fmtPct(v)}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                  <tr>
-                    <td className="p-2 border">% сделок лучше бенчмарка</td>
-                    {HORIZONS.map(h => {
-                      const v = summary[`d${h}`]?.pctBetter;
-                      const cls = v == null ? '' : v > 0.5 ? 'text-green-700' : v < 0.5 ? 'text-red-700' : '';
-                      return (
-                        <td key={h} className={`p-2 border font-mono text-right whitespace-nowrap ${cls}`}>
-                          {v == null ? '—' : (v * 100).toFixed(1) + '%'}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                  <tr className="text-xs text-neutral-500">
-                    <td className="p-2 border">N (учтено сделок)</td>
-                    {HORIZONS.map(h => (
-                      <td key={h} className="p-2 border font-mono text-right whitespace-nowrap">
-                        {summary[`d${h}`]?.n ?? 0}
-                      </td>
-                    ))}
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p className="text-sm text-neutral-600">
-              Чтобы увидеть статистику превышения, укажите бенчмарк и повторите расчёт.
-            </p>
-          )}
-        </section>
-      )}
     </main>
   );
 }
