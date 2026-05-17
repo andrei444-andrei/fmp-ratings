@@ -51,6 +51,15 @@ export async function POST(req: NextRequest) {
     })
     .sort((a, b) => a.date.localeCompare(b.date));
 
+  // Диапазон, на который запрашиваем историю в FMP. Без явных from/to FMP
+  // отдаёт ограниченное окно (≈ свежие 5 лет) — старые сигналы тогда выпадают
+  // и для бенчмарка/символа findStartIdx даёт одинаковый idx0=0 для всех
+  // сигналов раньше начала кэша, что приводит к одинаковой «фейковой»
+  // доходности бенчмарка во всех строках.
+  const earliestSignal = signals.length ? signals[0].date : null;
+  // буфер ~10 календарных дней до самого раннего сигнала на всякий случай
+  const fromDate = earliestSignal ? addDaysIso(earliestSignal, -10) : undefined;
+
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
@@ -63,7 +72,7 @@ export async function POST(req: NextRequest) {
       async function getPrices(sym: string): Promise<PriceBar[]> {
         if (cache.has(sym)) return cache.get(sym)!;
         try {
-          const data = await fmpHistoricalPriceEod(sym);
+          const data = await fmpHistoricalPriceEod(sym, fromDate);
           const rows = Array.isArray(data) ? data : (data?.historical || []);
           const norm: PriceBar[] = rows
             .map((r: any) => ({
@@ -150,6 +159,20 @@ function emptyHorizons(): Record<string, number | null> {
   return o;
 }
 
+function addDaysIso(iso: string, days: number): string {
+  const d = new Date(iso.length >= 10 ? iso.slice(0, 10) : iso);
+  if (isNaN(d.getTime())) return iso;
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function calendarDaysBetween(a: string, b: string): number {
+  const da = new Date(a).getTime();
+  const db = new Date(b).getTime();
+  if (isNaN(da) || isNaN(db)) return Infinity;
+  return Math.abs(Math.round((db - da) / 86400000));
+}
+
 // Найти наименьший индекс с prices[i].date >= signalDate.
 function findStartIdx(prices: PriceBar[], signalDate: string): number {
   let lo = 0, hi = prices.length;
@@ -170,6 +193,12 @@ function computeReturns(
   const out = emptyHorizons();
   const idx0 = findStartIdx(prices, signalDate);
   if (idx0 >= prices.length) return out;
+  // Защита от случая, когда signalDate раньше первой доступной цены —
+  // тогда idx0 = 0 и мы считали бы доходность от первой попавшейся даты,
+  // одинаковую для всех таких сигналов. Если найденная дата уехала от
+  // сигнала больше чем на 10 календарных дней — данных по этому сигналу
+  // нет, возвращаем пустые горизонты.
+  if (calendarDaysBetween(prices[idx0].date, signalDate) > 10) return out;
   const baseIdx = idx0 + (excludeSignalDay ? 1 : 0);
   if (baseIdx >= prices.length) return out;
   const basePrice = prices[baseIdx].close;
