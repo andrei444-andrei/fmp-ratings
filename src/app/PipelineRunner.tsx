@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { phase0, phase1, phase2, phase3 } from '@/lib/pipeline';
+import { phase0, phase1, phase2, phase2_5, phase3 } from '@/lib/pipeline';
 import { FOREIGN_ADR } from '@/lib/foreign-adr';
 
 export default function PipelineRunner() {
@@ -10,6 +10,8 @@ export default function PipelineRunner() {
   const [topN, setTopN] = useState(50);
   const [minJump, setMinJump] = useState(2);
   const [delayMs, setDelayMs] = useState(120);
+  const [belowConsensusOnly, setBelowConsensusOnly] = useState(false);
+  const [lookbackDays, setLookbackDays] = useState(365);
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState('');
   const [logLines, setLogLines] = useState<string[]>([]);
@@ -44,14 +46,17 @@ export default function PipelineRunner() {
     try {
       const res = await fetch('/api/compute-filtered', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ minJump }),
+        body: JSON.stringify({ minJump, belowConsensusOnly, lookbackDays }),
       }).then(r => r.json());
       if (res.error) {
         log(`Ошибка фильтра: ${res.error}`);
         setStatus(`Ошибка: ${res.error}`);
       } else {
-        log(`✓ Фильтр пересчитан: ${res.inserted} строк (minJump=${res.minJump})`);
-        setStatus(`✓ ${res.inserted} строк (minJump=${minJump})`);
+        log(`✓ Фильтр пересчитан: ${res.inserted} строк`);
+        log(`  всего событий: ${res.stats?.totalEvents}, прошли rating+jump: ${res.stats?.passedRatingAndJump}`);
+        log(`  консенсус из FMP: ${res.stats?.consensusFromFmp}, из grades: ${res.stats?.consensusFromGrades}, без: ${res.stats?.consensusNone}`);
+        log(`  ниже: ${res.stats?.below}, выше/равно: ${res.stats?.above}`);
+        setStatus(`✓ ${res.inserted} строк (minJump=${minJump}${belowConsensusOnly ? ', below consensus' : ''})`);
       }
     } catch (e: any) {
       setStatus(`Ошибка: ${e.message}`);
@@ -82,7 +87,8 @@ export default function PipelineRunner() {
       const membership = await phase0(log, progress, years);
       const topByYear = await phase1(log, progress, years, membership, topN, delayMs);
       await phase2(log, progress, topByYear, delayMs);
-      const inserted = await phase3(log, minJump);
+      await phase2_5(log, progress, topByYear, delayMs);
+      const inserted = await phase3(log, minJump, belowConsensusOnly, lookbackDays);
 
       const dt = ((Date.now() - t0) / 1000).toFixed(1);
       log(`✓ Pipeline готов за ${dt}s, ${inserted} строк в rating_changes_filtered`);
@@ -135,6 +141,16 @@ export default function PipelineRunner() {
             <span className="label">Задержка, мс</span>
             <input type="number" className="input" value={delayMs}
                    onChange={e => setDelayMs(parseInt(e.target.value) || 0)} min={0} max={2000} />
+          </label>
+          <label className="flex flex-col">
+            <span className="label">Окно консенсуса (дней)</span>
+            <input type="number" className="input" value={lookbackDays}
+                   onChange={e => setLookbackDays(parseInt(e.target.value) || 365)} min={30} max={1825} />
+          </label>
+          <label className="flex items-center gap-2 mt-4 cursor-pointer">
+            <input type="checkbox" checked={belowConsensusOnly}
+                   onChange={e => setBelowConsensusOnly(e.target.checked)} />
+            <span className="label">Только ниже консенсуса</span>
           </label>
         </div>
         <p className="text-xs text-neutral-500 mt-2">

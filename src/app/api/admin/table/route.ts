@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { libsqlClient } from '@/db/client';
 
 const ALLOWED = new Set([
-  'sp500_current','sp500_changes','market_cap','grades',
+  'sp500_current','sp500_changes','market_cap','grades','consensus_history',
   'top_n_per_year','rating_changes_filtered','runs',
 ]);
 

@@ -87,6 +87,31 @@ const STATEMENTS = [
     PRIMARY KEY (year, rank)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_top_year ON top_n_per_year (year)`,
+
+  `CREATE TABLE IF NOT EXISTS consensus_history (
+    symbol text NOT NULL,
+    date text NOT NULL,
+    strong_buy integer,
+    buy integer,
+    hold integer,
+    sell integer,
+    strong_sell integer,
+    total_analysts integer,
+    consensus_score real,
+    raw text,
+    PRIMARY KEY (symbol, date)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_consensus_symbol ON consensus_history (symbol)`,
+  `CREATE INDEX IF NOT EXISTS idx_consensus_date ON consensus_history (date)`,
+];
+
+// ALTER-стейтменты: SQLite не имеет ADD COLUMN IF NOT EXISTS, поэтому
+// гоним их через try/catch — повторный запуск проигнорирует ошибку
+// «duplicate column name» и пойдёт дальше.
+const ALTERS = [
+  `ALTER TABLE rating_changes_filtered ADD COLUMN consensus_before REAL`,
+  `ALTER TABLE rating_changes_filtered ADD COLUMN consensus_firm_count INTEGER`,
+  `ALTER TABLE rating_changes_filtered ADD COLUMN below_consensus INTEGER`,
 ];
 
 export async function POST() {
@@ -98,6 +123,16 @@ export async function POST() {
         results.push({ ok: true, sql: sql.split('\n')[0] });
       } catch (e: any) {
         results.push({ ok: false, sql: sql.split('\n')[0], error: e.message });
+      }
+    }
+    // ALTER-стейтменты: повторный запуск даёт "duplicate column" — это ок
+    for (const sql of ALTERS) {
+      try {
+        await libsqlClient.execute(sql);
+        results.push({ ok: true, sql });
+      } catch (e: any) {
+        const ignorable = /duplicate column/i.test(e.message);
+        results.push({ ok: ignorable, sql, error: ignorable ? undefined : e.message });
       }
     }
     const failed = results.filter(r => !r.ok);

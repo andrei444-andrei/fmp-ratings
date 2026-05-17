@@ -72,10 +72,32 @@ export const ratingChangesFiltered = sqliteTable('rating_changes_filtered', {
   action: text('action'),
   jumpSize: integer('jump_size'),
   minJump: integer('min_jump'),
+  consensusBefore: real('consensus_before'),
+  consensusFirmCount: integer('consensus_firm_count'),
+  belowConsensus: integer('below_consensus'),  // 0/1
   computedAt: text('computed_at').notNull(),
 }, t => ({
   yearIdx: index('idx_rcf_year').on(t.year),
   symbolIdx: index('idx_rcf_symbol').on(t.symbol),
+}));
+
+// Исторический консенсус аналитиков (counts на дату) из FMP grades-historical.
+// Используется для точного point-in-time консенсуса при фильтрации.
+export const consensusHistory = sqliteTable('consensus_history', {
+  symbol: text('symbol').notNull(),
+  date: text('date').notNull(),
+  strongBuy: integer('strong_buy'),
+  buy: integer('buy'),
+  hold: integer('hold'),
+  sell: integer('sell'),
+  strongSell: integer('strong_sell'),
+  totalAnalysts: integer('total_analysts'),
+  consensusScore: real('consensus_score'),
+  raw: text('raw'),
+}, t => ({
+  pk: primaryKey({ columns: [t.symbol, t.date] }),
+  symbolIdx: index('idx_consensus_symbol').on(t.symbol),
+  dateIdx: index('idx_consensus_date').on(t.date),
 }));
 
 // Метаданные запусков pipeline

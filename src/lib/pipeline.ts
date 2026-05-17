@@ -172,10 +172,62 @@ export async function phase2(
   return totalRows;
 }
 
+// === PHASE 2.5: исторический консенсус (counts на дату) от FMP ===
+export async function phase2_5(
+  log: Logger,
+  progress: ProgressFn,
+  topByYear: Record<number, Array<{ symbol: string }>>,
+  delayMs: number
+): Promise<number> {
+  log('=== PHASE 2.5: grades-historical (consensus, incremental) ===');
+  const uniq = new Set<string>();
+  for (const list of Object.values(topByYear)) for (const c of list) uniq.add(c.symbol);
+  const allSymbols = Array.from(uniq);
+
+  const cachedSymbols: string[] = await fetchJsonOrThrow('/api/read/consensus-symbols');
+  const cachedSet = new Set(cachedSymbols);
+  const toFetch = allSymbols.filter(s => !cachedSet.has(s));
+  log(`Всего: ${allSymbols.length}, в кэше: ${allSymbols.length - toFetch.length}, к запросу: ${toFetch.length}`);
+
+  let ok = 0, empty = 0, err = 0, totalRows = 0;
+  for (let i = 0; i < toFetch.length; i++) {
+    const sym = toFetch[i];
+    progress(`P2.5 ${i + 1}/${toFetch.length}: ${sym}`);
+    try {
+      const data = await fetchJsonOrThrow(`/api/fmp/grades-historical?symbol=${encodeURIComponent(sym)}`);
+      if (Array.isArray(data)) {
+        await postJson('/api/save/consensus-history', { symbol: sym, rows: data });
+        if (data.length) { ok++; log(`${sym}: ${data.length} consensus-точек`); }
+        else { empty++; log(`${sym}: пусто`); }
+        totalRows += data.length;
+      } else {
+        err++;
+        log(`${sym}: неожиданный ответ`);
+      }
+    } catch (e: any) {
+      err++;
+      log(`${sym}: ОШИБКА — ${e.message}`);
+    }
+    if (delayMs) await sleep(delayMs);
+  }
+  log(`PHASE 2.5: новых OK=${ok}, пусто=${empty}, ошибок=${err}, записей: ${totalRows}`);
+  return totalRows;
+}
+
 // === PHASE 3: server-side filter ===
-export async function phase3(log: Logger, minJump: number): Promise<number> {
+export async function phase3(
+  log: Logger,
+  minJump: number,
+  belowConsensusOnly: boolean,
+  lookbackDays: number
+): Promise<number> {
   log('=== PHASE 3: filter (server-side) ===');
-  const res = await postJson('/api/compute-filtered', { minJump });
-  log(`PHASE 3: записано ${res.inserted} строк (minJump=${res.minJump})`);
+  const res = await postJson('/api/compute-filtered', { minJump, belowConsensusOnly, lookbackDays });
+  log(`PHASE 3: ${res.inserted} строк (minJump=${res.minJump}, belowConsensusOnly=${res.belowConsensusOnly}, lookbackDays=${res.lookbackDays})`);
+  if (res.stats) {
+    log(`  всего событий: ${res.stats.totalEvents}, прошли rating+jump: ${res.stats.passedRatingAndJump}`);
+    log(`  консенсус: из FMP ${res.stats.consensusFromFmp}, из grades ${res.stats.consensusFromGrades}, без ${res.stats.consensusNone}`);
+    log(`  ниже: ${res.stats.below}, выше/равно: ${res.stats.above}`);
+  }
   return res.inserted;
 }

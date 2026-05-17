@@ -10,6 +10,7 @@ export async function GET() {
       ['sp500_changes', schema.sp500Changes],
       ['market_cap', schema.marketCap],
       ['grades', schema.grades],
+      ['consensus_history', schema.consensusHistory],
       ['top_n_per_year', schema.topNPerYear],
       ['rating_changes_filtered', schema.ratingChangesFiltered],
       ['runs', schema.runs],

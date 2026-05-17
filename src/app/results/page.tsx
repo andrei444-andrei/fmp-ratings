@@ -8,6 +8,8 @@ type Row = {
   newGradeRaw: string | null; previousGradeRaw: string | null;
   gradingCompany: string | null; action: string | null;
   jumpSize: number | null; minJump: number | null;
+  consensusBefore: number | null; consensusFirmCount: number | null;
+  belowConsensus: number | null;
 };
 
 export default function ResultsPage() {
@@ -26,7 +28,7 @@ export default function ResultsPage() {
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
 
   function downloadCsv() {
-    const headers = ['year','date','symbol','newRating','previousRating','newGradeRaw','previousGradeRaw','gradingCompany','action','jumpSize'];
+    const headers = ['year','date','symbol','newRating','previousRating','newGradeRaw','previousGradeRaw','gradingCompany','action','jumpSize','consensusBefore','consensusFirmCount','belowConsensus'];
     const esc = (v: any) => {
       if (v == null) return '';
       const s = String(v);
@@ -73,6 +75,8 @@ export default function ResultsPage() {
                   <th className="text-left p-2 border">New</th>
                   <th className="text-left p-2 border">Previous</th>
                   <th className="text-left p-2 border">Jump</th>
+                  <th className="text-left p-2 border">Consensus</th>
+                  <th className="text-left p-2 border">vs Cons.</th>
                   <th className="text-left p-2 border">Firm</th>
                 </tr>
               </thead>
@@ -84,6 +88,8 @@ export default function ResultsPage() {
                     <td className="p-2 border">{r.newRating} <span className="text-neutral-500 text-xs">({r.newGradeRaw})</span></td>
                     <td className="p-2 border">{r.previousRating} <span className="text-neutral-500 text-xs">({r.previousGradeRaw})</span></td>
                     <td className="p-2 border">+{r.jumpSize}</td>
+                    <td className="p-2 border">{r.consensusBefore != null ? r.consensusBefore.toFixed(2) : '—'} <span className="text-neutral-500 text-xs">(n={r.consensusFirmCount ?? 0})</span></td>
+                    <td className="p-2 border">{r.belowConsensus == null ? '—' : (r.belowConsensus ? '↓ below' : '↑ above')}</td>
                     <td className="p-2 border text-xs">{r.gradingCompany}</td>
                   </tr>
                 ))}

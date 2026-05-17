@@ -41,3 +41,9 @@ export async function fmpGrades(symbol: string) {
   const key = getFmpKey();
   return fmpGet(`${BASE_STABLE}/grades?symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(key)}`);
 }
+
+// Исторический срез counts аналитических рейтингов на разные даты
+export async function fmpGradesHistorical(symbol: string) {
+  const key = getFmpKey();
+  return fmpGet(`${BASE_STABLE}/grades-historical?symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(key)}`);
+}
