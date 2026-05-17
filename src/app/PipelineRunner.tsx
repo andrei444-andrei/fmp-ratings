@@ -37,6 +37,26 @@ export default function PipelineRunner() {
 
   useEffect(() => { loadStats(); }, []);
 
+  async function refreshConsensus() {
+    if (!confirm('Удалить всю consensus_history и подтянуть заново с FMP? (Phase 2.5 запустится отдельно после этого через Run pipeline)')) return;
+    setRunning(true);
+    try {
+      const r = await fetch('/api/admin/wipe-consensus', { method: 'POST' }).then(x => x.json());
+      if (r.error) {
+        log(`Ошибка очистки: ${r.error}`);
+        setStatus(`Ошибка: ${r.error}`);
+      } else {
+        log('✓ consensus_history очищен. Запустите Run pipeline — Phase 2.5 потянет свежие данные.');
+        setStatus('consensus_history очищен');
+      }
+    } catch (e: any) {
+      setStatus(`Ошибка: ${e.message}`);
+    } finally {
+      setRunning(false);
+      loadStats();
+    }
+  }
+
   async function run() {
     setLogLines([]);
     setRunning(true);
@@ -119,6 +139,10 @@ export default function PipelineRunner() {
         <div className="flex flex-wrap gap-2 items-center">
           <button className="btn-primary" disabled={running} onClick={run}>
             {running ? 'Выполняется...' : '▶ Run pipeline'}
+          </button>
+          <button className="btn" disabled={running} onClick={refreshConsensus}
+                  title="Удалить consensus_history и перетянуть с FMP в следующем Run pipeline">
+            ⟳ Обновить consensus
           </button>
           <a className="btn" href="/results">→ Results (с фильтрами)</a>
           <a className="btn" href="/admin">Admin / DB</a>
