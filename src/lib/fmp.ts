@@ -48,6 +48,16 @@ export async function fmpGradesHistorical(symbol: string) {
   return fmpGet(`${BASE_STABLE}/grades-historical?symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(key)}`);
 }
 
+// Историческая дневная цена закрытия (light: symbol, date, price, volume).
+// Возвращает массив, обычно отсортирован по убыванию даты.
+export async function fmpHistoricalPriceEod(symbol: string, from?: string, to?: string) {
+  const key = getFmpKey();
+  const params = new URLSearchParams({ symbol, apikey: key });
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  return fmpGet(`${BASE_STABLE}/historical-price-eod/light?${params.toString()}`);
+}
+
 // Историческая EPS Surprise: actual vs estimated по квартальным отчётам.
 // FMP /stable/earnings возвращает массив отчётов с epsActual/epsEstimated и revenue.
 export async function fmpEarnings(symbol: string) {
