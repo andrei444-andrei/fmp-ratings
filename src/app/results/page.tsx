@@ -10,25 +10,17 @@ type Event = {
   gradingCompany: string | null; action: string | null;
   jumpSize: number;
   consensusBefore: number | null; consensusFirmCount: number | null;
+  consDeviationPct: number | null;
   belowConsensus: number;
 };
 
-const RATINGS = [
-  { v: '', label: 'любой' },
-  { v: '1', label: 'Strong Sell (1)' },
-  { v: '2', label: 'Sell (2)' },
-  { v: '3', label: 'Hold (3)' },
-  { v: '4', label: 'Buy (4)' },
-  { v: '5', label: 'Strong Buy (5)' },
-];
-
 export default function ResultsPage() {
-  const [topN, setTopN] = useState(50);
+  // Основные фильтры (что просили)
   const [direction, setDirection] = useState<'upgrade'|'downgrade'|'any'>('upgrade');
-  const [minJump, setMinJump] = useState(2);
-  const [fromRating, setFromRating] = useState('');
-  const [toRating, setToRating] = useState('');
+  const [minJump, setMinJump] = useState<1|2|3|4>(2);
+  const [topN, setTopN] = useState(50);
   const [consensus, setConsensus] = useState<'any'|'below'|'above'>('any');
+  const [minConsDevPct, setMinConsDevPct] = useState(0);
   const [year, setYear] = useState('');
 
   const [events, setEvents] = useState<Event[]>([]);
@@ -42,9 +34,8 @@ export default function ResultsPage() {
     params.set('topN', String(topN));
     params.set('direction', direction);
     params.set('minJump', String(minJump));
-    if (fromRating) params.set('fromRating', fromRating);
-    if (toRating) params.set('toRating', toRating);
     params.set('consensus', consensus);
+    if (consensus !== 'any') params.set('minConsDevPct', String(minConsDevPct));
     if (year) params.set('year', year);
     return `/api/query/events?${params.toString()}`;
   }
@@ -69,16 +60,15 @@ export default function ResultsPage() {
     }
   }
 
-  // дебаунс: после изменения фильтра подождать 300мс и перезагрузить
   useEffect(() => {
     if (debounceRef.current) window.clearTimeout(debounceRef.current);
     debounceRef.current = window.setTimeout(load, 300) as unknown as number;
     return () => { if (debounceRef.current) window.clearTimeout(debounceRef.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topN, direction, minJump, fromRating, toRating, consensus, year]);
+  }, [topN, direction, minJump, consensus, minConsDevPct, year]);
 
   function downloadCsv() {
-    const headers = ['year','date','symbol','rank','newRating','previousRating','newGradeRaw','previousGradeRaw','gradingCompany','jumpSize','consensusBefore','consensusFirmCount','belowConsensus'];
+    const headers = ['year','date','symbol','rank','newRating','previousRating','newGradeRaw','previousGradeRaw','gradingCompany','jumpSize','consensusBefore','consensusFirmCount','consDeviationPct','belowConsensus'];
     const esc = (v: any) => {
       if (v == null) return '';
       const s = String(v);
@@ -88,12 +78,12 @@ export default function ResultsPage() {
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `events_${direction}_jump${minJump}.csv`;
+    const parts = [direction, `jump${minJump}`, `top${topN}`, consensus === 'any' ? null : `${consensus}${minConsDevPct}pct`].filter(Boolean);
+    a.download = `events_${parts.join('_')}.csv`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 100);
   }
 
-  // группировка по году для отображения
   const byYear: Record<number, Event[]> = {};
   for (const e of events) (byYear[e.year] = byYear[e.year] || []).push(e);
   const years = Object.keys(byYear).map(Number).sort((a,b)=>b-a);
@@ -101,13 +91,8 @@ export default function ResultsPage() {
   return (
     <main>
       <section className="card">
-        <h2 className="font-semibold mb-3">Фильтры</h2>
+        <h2 className="font-semibold mb-3">Фильтры (live, сразу применяются)</h2>
         <div className="flex flex-wrap gap-4 items-end">
-          <label className="flex flex-col">
-            <span className="label">Top-N компаний</span>
-            <input type="number" className="input w-24" value={topN} min={1} max={500}
-                   onChange={e => setTopN(parseInt(e.target.value) || 50)} />
-          </label>
           <label className="flex flex-col">
             <span className="label">Направление</span>
             <select className="input" value={direction} onChange={e => setDirection(e.target.value as any)}>
@@ -117,8 +102,8 @@ export default function ResultsPage() {
             </select>
           </label>
           <label className="flex flex-col">
-            <span className="label">Мин. скачок (уровней)</span>
-            <select className="input" value={minJump} onChange={e => setMinJump(parseInt(e.target.value))}>
+            <span className="label">Скачок (уровней)</span>
+            <select className="input" value={minJump} onChange={e => setMinJump(parseInt(e.target.value) as any)}>
               <option value={1}>1</option>
               <option value={2}>2</option>
               <option value={3}>3</option>
@@ -126,34 +111,32 @@ export default function ResultsPage() {
             </select>
           </label>
           <label className="flex flex-col">
-            <span className="label">Из рейтинга</span>
-            <select className="input" value={fromRating} onChange={e => setFromRating(e.target.value)}>
-              {RATINGS.map(r => <option key={r.v} value={r.v}>{r.label}</option>)}
-            </select>
+            <span className="label">Top-N компаний</span>
+            <input type="number" className="input w-24" value={topN} min={1} max={500}
+                   onChange={e => setTopN(parseInt(e.target.value) || 50)} />
           </label>
           <label className="flex flex-col">
-            <span className="label">В рейтинг</span>
-            <select className="input" value={toRating} onChange={e => setToRating(e.target.value)}>
-              {RATINGS.map(r => <option key={r.v} value={r.v}>{r.label}</option>)}
-            </select>
-          </label>
-          <label className="flex flex-col">
-            <span className="label">Консенсус</span>
+            <span className="label">vs Consensus</span>
             <select className="input" value={consensus} onChange={e => setConsensus(e.target.value as any)}>
               <option value="any">Любой</option>
-              <option value="below">Новый ниже консенсуса</option>
-              <option value="above">Новый выше консенсуса</option>
+              <option value="below">Ниже консенсуса</option>
+              <option value="above">Выше консенсуса</option>
             </select>
           </label>
+          <label className={`flex flex-col ${consensus === 'any' ? 'opacity-40 pointer-events-none' : ''}`}>
+            <span className="label">≥ % отклонения от консенсуса</span>
+            <input type="number" className="input w-28" value={minConsDevPct} min={0} max={100} step={0.5}
+                   onChange={e => setMinConsDevPct(parseFloat(e.target.value) || 0)} />
+          </label>
           <label className="flex flex-col">
-            <span className="label">Год (опционально)</span>
-            <input type="text" className="input w-24" placeholder="напр. 2020"
+            <span className="label">Год (опц.)</span>
+            <input type="text" className="input w-24" placeholder="2020"
                    value={year} onChange={e => setYear(e.target.value)} />
           </label>
         </div>
         <div className="mt-3 flex gap-2 items-center flex-wrap">
-          <button className="btn" onClick={load} disabled={loading}>Обновить</button>
           <button className="btn-primary" onClick={downloadCsv} disabled={!events.length}>Скачать CSV ({events.length})</button>
+          <button className="btn" onClick={load} disabled={loading}>Перезагрузить</button>
           {loading && <span className="text-sm text-blue-600">Загрузка...</span>}
           {error && <span className="text-sm text-red-600">{error}</span>}
           {stats && !loading && (
@@ -163,6 +146,12 @@ export default function ResultsPage() {
           )}
         </div>
       </section>
+
+      {!events.length && !loading && (
+        <section className="card">
+          <p className="text-sm text-neutral-600">Нет событий по текущему фильтру. Попробуйте изменить параметры или запустите pipeline на главной.</p>
+        </section>
+      )}
 
       {years.map(y => (
         <section key={y} className="card">
@@ -179,6 +168,7 @@ export default function ResultsPage() {
                   <th className="text-left p-2 border">Jump</th>
                   <th className="text-left p-2 border">Consensus</th>
                   <th className="text-left p-2 border">vs Cons.</th>
+                  <th className="text-left p-2 border">Dev %</th>
                   <th className="text-left p-2 border">Firm</th>
                 </tr>
               </thead>
@@ -193,12 +183,13 @@ export default function ResultsPage() {
                     <td className="p-2 border">{r.jumpSize > 0 ? '+' : ''}{r.jumpSize}</td>
                     <td className="p-2 border">{r.consensusBefore != null ? r.consensusBefore.toFixed(2) : '—'} <span className="text-neutral-500 text-xs">(n={r.consensusFirmCount ?? 0})</span></td>
                     <td className="p-2 border">{r.consensusBefore == null ? '—' : (r.belowConsensus ? '↓ below' : '↑ above')}</td>
+                    <td className="p-2 border">{r.consDeviationPct != null ? `${r.consDeviationPct > 0 ? '+' : ''}${r.consDeviationPct.toFixed(1)}%` : '—'}</td>
                     <td className="p-2 border text-xs">{r.gradingCompany}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            {byYear[y].length > 200 && <p className="text-xs text-neutral-500 mt-1">Показаны первые 200 из {byYear[y].length} (CSV содержит все).</p>}
+            {byYear[y].length > 200 && <p className="text-xs text-neutral-500 mt-1">Показаны первые 200 из {byYear[y].length}. CSV содержит все.</p>}
           </div>
         </section>
       ))}

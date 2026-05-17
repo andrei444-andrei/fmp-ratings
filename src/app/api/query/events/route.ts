@@ -22,6 +22,7 @@ export async function GET(req: NextRequest) {
     const fromRating = fromRatingStr ? Number(fromRatingStr) : null;
     const toRating = toRatingStr ? Number(toRatingStr) : null;
     const consensus = url.searchParams.get('consensus') || 'any'; // below/above/any
+    const minConsDevPct = Math.max(0, Number(url.searchParams.get('minConsDevPct')) || 0);
     const yearFilter = url.searchParams.get('year');
     const limit = Math.min(20000, Number(url.searchParams.get('limit')) || 5000);
 
@@ -82,10 +83,24 @@ export async function GET(req: NextRequest) {
       } else {
         consMissing++;
       }
+      // Отклонение нового рейтинга от консенсуса в процентах (от значения консенсуса).
+      // deviationPct > 0 ⇒ новый рейтинг выше консенсуса (бычьее).
+      // deviationPct < 0 ⇒ новый рейтинг ниже консенсуса (медвежее).
+      const deviationPct = (consScore != null && consScore > 0)
+        ? ((newN - consScore) / consScore) * 100
+        : null;
       const below = consScore != null && newN < consScore ? 1 : 0;
       const above = consScore != null && newN > consScore ? 1 : 0;
-      if (consensus === 'below' && !below) continue;
-      if (consensus === 'above' && !above) continue;
+
+      if (consensus === 'below') {
+        if (!below) continue;
+        if (deviationPct == null || -deviationPct < minConsDevPct) continue; // нужен скачок ≥ N% вниз
+      }
+      if (consensus === 'above') {
+        if (!above) continue;
+        if (deviationPct == null || deviationPct < minConsDevPct) continue; // нужен скачок ≥ N% вверх
+      }
+      // consensus === 'any' — отклонение не используем
 
       out.push({
         year: eventYear,
@@ -103,6 +118,7 @@ export async function GET(req: NextRequest) {
         jumpSize: jump,
         consensusBefore: consScore,
         consensusFirmCount: consFirms,
+        consDeviationPct: deviationPct,
         belowConsensus: below,
       });
       if (out.length >= limit) break;
