@@ -2,7 +2,7 @@
 
 import { useMemo, useRef, useState } from 'react';
 
-const HORIZONS = [1, 2, 3, 4, 5, 6, 7, 14, 21, 42, 63];
+const HORIZONS = [1, 2, 3, 4, 5, 6, 7, 14, 21, 42, 63, 125, 252];
 
 type SignalInput = { date: string; symbol: string };
 

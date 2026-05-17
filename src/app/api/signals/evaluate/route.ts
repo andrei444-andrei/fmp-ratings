@@ -5,7 +5,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
-const HORIZONS = [1, 2, 3, 4, 5, 6, 7, 14, 21, 42, 63];
+const HORIZONS = [1, 2, 3, 4, 5, 6, 7, 14, 21, 42, 63, 125, 252];
 
 type Signal = { date: string; symbol: string };
 type PriceBar = { date: string; close: number };
