@@ -23,6 +23,10 @@ export async function GET(req: NextRequest) {
     const toRating = toRatingStr ? Number(toRatingStr) : null;
     const consensus = url.searchParams.get('consensus') || 'any'; // below/above/any
     const minConsDevPct = Math.max(0, Number(url.searchParams.get('minConsDevPct')) || 0);
+    const consMinStr = url.searchParams.get('consensusMin');
+    const consMaxStr = url.searchParams.get('consensusMax');
+    const consMin = consMinStr ? Number(consMinStr) : null;
+    const consMax = consMaxStr ? Number(consMaxStr) : null;
     const yearFilter = url.searchParams.get('year');
     const limit = Math.min(20000, Number(url.searchParams.get('limit')) || 5000);
 
@@ -101,6 +105,14 @@ export async function GET(req: NextRequest) {
         if (deviationPct == null || deviationPct < minConsDevPct) continue; // нужен скачок ≥ N% вверх
       }
       // consensus === 'any' — отклонение не используем
+
+      // Фильтр по абсолютному значению консенсуса (1..5).
+      if (consMin != null) {
+        if (consScore == null || consScore < consMin) continue;
+      }
+      if (consMax != null) {
+        if (consScore == null || consScore > consMax) continue;
+      }
 
       out.push({
         year: eventYear,

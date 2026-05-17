@@ -21,6 +21,8 @@ export default function ResultsPage() {
   const [topN, setTopN] = useState(50);
   const [consensus, setConsensus] = useState<'any'|'below'|'above'>('any');
   const [minConsDevPct, setMinConsDevPct] = useState(0);
+  const [consMin, setConsMin] = useState('');
+  const [consMax, setConsMax] = useState('');
   const [year, setYear] = useState('');
 
   const [events, setEvents] = useState<Event[]>([]);
@@ -36,6 +38,8 @@ export default function ResultsPage() {
     params.set('minJump', String(minJump));
     params.set('consensus', consensus);
     if (consensus !== 'any') params.set('minConsDevPct', String(minConsDevPct));
+    if (consMin !== '') params.set('consensusMin', consMin);
+    if (consMax !== '') params.set('consensusMax', consMax);
     if (year) params.set('year', year);
     return `/api/query/events?${params.toString()}`;
   }
@@ -65,7 +69,7 @@ export default function ResultsPage() {
     debounceRef.current = window.setTimeout(load, 300) as unknown as number;
     return () => { if (debounceRef.current) window.clearTimeout(debounceRef.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topN, direction, minJump, consensus, minConsDevPct, year]);
+  }, [topN, direction, minJump, consensus, minConsDevPct, consMin, consMax, year]);
 
   function downloadCsv() {
     const headers = ['year','date','symbol','rank','newRating','previousRating','newGradeRaw','previousGradeRaw','gradingCompany','jumpSize','consensusBefore','consensusFirmCount','consDeviationPct','belowConsensus'];
@@ -127,6 +131,16 @@ export default function ResultsPage() {
             <span className="label">≥ % отклонения от консенсуса</span>
             <input type="number" className="input w-28" value={minConsDevPct} min={0} max={100} step={0.5}
                    onChange={e => setMinConsDevPct(parseFloat(e.target.value) || 0)} />
+          </label>
+          <label className="flex flex-col">
+            <span className="label">Консенсус ≥ (1–5)</span>
+            <input type="number" className="input w-24" value={consMin} min={1} max={5} step={0.1}
+                   placeholder="—" onChange={e => setConsMin(e.target.value)} />
+          </label>
+          <label className="flex flex-col">
+            <span className="label">Консенсус ≤ (1–5)</span>
+            <input type="number" className="input w-24" value={consMax} min={1} max={5} step={0.1}
+                   placeholder="—" onChange={e => setConsMax(e.target.value)} />
           </label>
           <label className="flex flex-col">
             <span className="label">Год (опц.)</span>
