@@ -17,49 +17,151 @@ type Event = {
   belowConsensus: number;
 };
 
+type FilterSet = {
+  direction: 'upgrade'|'downgrade'|'any';
+  minJump: 1|2|3|4;
+  topN: number;
+  consensus: 'any'|'below'|'above';
+  minConsDevPct: number;
+  consMin: string;
+  consMax: string;
+};
+
+const DEFAULT_A: FilterSet = {
+  direction: 'upgrade', minJump: 2, topN: 50,
+  consensus: 'any', minConsDevPct: 0, consMin: '', consMax: '',
+};
+const DEFAULT_B: FilterSet = {
+  direction: 'downgrade', minJump: 1, topN: 50,
+  consensus: 'any', minConsDevPct: 0, consMin: '', consMax: '',
+};
+
+function FilterRow({
+  title, value, onChange,
+}: { title: string; value: FilterSet; onChange: (v: FilterSet) => void }) {
+  const set = <K extends keyof FilterSet>(k: K, v: FilterSet[K]) => onChange({ ...value, [k]: v });
+  return (
+    <div className="border-t border-neutral-200 pt-3 mt-3 first:border-0 first:pt-0 first:mt-0">
+      <div className="text-xs font-semibold text-neutral-700 mb-2">{title}</div>
+      <div className="flex flex-wrap gap-4 items-end">
+        <label className="flex flex-col">
+          <span className="label">Направление</span>
+          <select className="input" value={value.direction} onChange={e => set('direction', e.target.value as any)}>
+            <option value="upgrade">Upgrade</option>
+            <option value="downgrade">Downgrade</option>
+            <option value="any">Любое</option>
+          </select>
+        </label>
+        <label className="flex flex-col">
+          <span className="label">Скачок (уровней)</span>
+          <select className="input" value={value.minJump} onChange={e => set('minJump', parseInt(e.target.value) as any)}>
+            <option value={1}>1</option>
+            <option value={2}>2</option>
+            <option value={3}>3</option>
+            <option value={4}>4</option>
+          </select>
+        </label>
+        <label className="flex flex-col">
+          <span className="label">Top-N компаний</span>
+          <input type="number" className="input w-24" value={value.topN} min={1} max={500}
+                 onChange={e => set('topN', parseInt(e.target.value) || 50)} />
+        </label>
+        <label className="flex flex-col">
+          <span className="label">vs Consensus</span>
+          <select className="input" value={value.consensus} onChange={e => set('consensus', e.target.value as any)}>
+            <option value="any">Любой</option>
+            <option value="below">Ниже консенсуса</option>
+            <option value="above">Выше консенсуса</option>
+          </select>
+        </label>
+        <label className={`flex flex-col ${value.consensus === 'any' ? 'opacity-40 pointer-events-none' : ''}`}>
+          <span className="label">≥ % отклонения от консенсуса</span>
+          <input type="number" className="input w-28" value={value.minConsDevPct} min={0} max={100} step={0.5}
+                 onChange={e => set('minConsDevPct', parseFloat(e.target.value) || 0)} />
+        </label>
+        <label className="flex flex-col">
+          <span className="label">Консенсус ≥ (1–5)</span>
+          <input type="number" className="input w-24" value={value.consMin} min={1} max={5} step={0.1}
+                 placeholder="—" onChange={e => set('consMin', e.target.value)} />
+        </label>
+        <label className="flex flex-col">
+          <span className="label">Консенсус ≤ (1–5)</span>
+          <input type="number" className="input w-24" value={value.consMax} min={1} max={5} step={0.1}
+                 placeholder="—" onChange={e => set('consMax', e.target.value)} />
+        </label>
+      </div>
+    </div>
+  );
+}
+
+function buildUrl(fs: FilterSet, year: string) {
+  const params = new URLSearchParams();
+  params.set('topN', String(fs.topN));
+  params.set('direction', fs.direction);
+  params.set('minJump', String(fs.minJump));
+  params.set('consensus', fs.consensus);
+  if (fs.consensus !== 'any') params.set('minConsDevPct', String(fs.minConsDevPct));
+  if (fs.consMin !== '') params.set('consensusMin', fs.consMin);
+  if (fs.consMax !== '') params.set('consensusMax', fs.consMax);
+  if (year) params.set('year', year);
+  return `/api/query/events?${params.toString()}`;
+}
+
 export default function ResultsPage() {
-  // Основные фильтры (что просили)
-  const [direction, setDirection] = useState<'upgrade'|'downgrade'|'any'>('upgrade');
-  const [minJump, setMinJump] = useState<1|2|3|4>(2);
-  const [topN, setTopN] = useState(50);
-  const [consensus, setConsensus] = useState<'any'|'below'|'above'>('any');
-  const [minConsDevPct, setMinConsDevPct] = useState(0);
-  const [consMin, setConsMin] = useState('');
-  const [consMax, setConsMax] = useState('');
+  const [filterA, setFilterA] = useState<FilterSet>(DEFAULT_A);
+  const [filterB, setFilterB] = useState<FilterSet>(DEFAULT_B);
+  const [secondEnabled, setSecondEnabled] = useState(false);
   const [year, setYear] = useState('');
 
   const [events, setEvents] = useState<Event[]>([]);
-  const [stats, setStats] = useState<{count:number; consFromFmp:number; consMissing:number} | null>(null);
+  const [stats, setStats] = useState<{count:number; consFromFmp:number; consMissing:number; countA:number; countB:number} | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const debounceRef = useRef<number | null>(null);
-
-  function buildUrl() {
-    const params = new URLSearchParams();
-    params.set('topN', String(topN));
-    params.set('direction', direction);
-    params.set('minJump', String(minJump));
-    params.set('consensus', consensus);
-    if (consensus !== 'any') params.set('minConsDevPct', String(minConsDevPct));
-    if (consMin !== '') params.set('consensusMin', consMin);
-    if (consMax !== '') params.set('consensusMax', consMax);
-    if (year) params.set('year', year);
-    return `/api/query/events?${params.toString()}`;
-  }
 
   async function load() {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetch(buildUrl()).then(r => r.json());
-      if (data.error) {
-        setError(data.error);
+      const urls = secondEnabled
+        ? [buildUrl(filterA, year), buildUrl(filterB, year)]
+        : [buildUrl(filterA, year)];
+      const responses = await Promise.all(urls.map(u => fetch(u).then(r => r.json())));
+      const firstErr = responses.find(r => r.error);
+      if (firstErr) {
+        setError(firstErr.error);
         setEvents([]);
         setStats(null);
-      } else {
-        setEvents(data.events || []);
-        setStats(data.stats || null);
+        return;
       }
+
+      const eventsA: Event[] = responses[0].events || [];
+      const eventsB: Event[] = (responses[1]?.events) || [];
+
+      // Объединяем результаты с дедупом по (symbol+date+gradingCompany+jumpSize).
+      const seen = new Set<string>();
+      const merged: Event[] = [];
+      const pushUnique = (e: Event) => {
+        const k = `${e.symbol}|${e.date}|${e.gradingCompany}|${e.jumpSize}`;
+        if (seen.has(k)) return;
+        seen.add(k);
+        merged.push(e);
+      };
+      for (const e of eventsA) pushUnique(e);
+      for (const e of eventsB) pushUnique(e);
+      merged.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+      const sA = responses[0].stats || { consFromFmp: 0, consMissing: 0 };
+      const sB = responses[1]?.stats || { consFromFmp: 0, consMissing: 0 };
+
+      setEvents(merged);
+      setStats({
+        count: merged.length,
+        consFromFmp: sA.consFromFmp + sB.consFromFmp,
+        consMissing: sA.consMissing + sB.consMissing,
+        countA: eventsA.length,
+        countB: eventsB.length,
+      });
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -72,7 +174,7 @@ export default function ResultsPage() {
     debounceRef.current = window.setTimeout(load, 300) as unknown as number;
     return () => { if (debounceRef.current) window.clearTimeout(debounceRef.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topN, direction, minJump, consensus, minConsDevPct, consMin, consMax, year]);
+  }, [filterA, filterB, secondEnabled, year]);
 
   function downloadCsv() {
     const headers = ['year','date','symbol','rank','newRating','previousRating','newGradeRaw','previousGradeRaw','gradingCompany','jumpSize','consensusBefore','consensusBaseScore','consensusAdjustments','consensusSnapshotDate','consensusFirmCount','consDeviationPct','belowConsensus'];
@@ -85,8 +187,9 @@ export default function ResultsPage() {
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    const parts = [direction, `jump${minJump}`, `top${topN}`, consensus === 'any' ? null : `${consensus}${minConsDevPct}pct`].filter(Boolean);
-    a.download = `events_${parts.join('_')}.csv`;
+    const tag = (fs: FilterSet) => [fs.direction, `jump${fs.minJump}`, `top${fs.topN}`, fs.consensus === 'any' ? null : `${fs.consensus}${fs.minConsDevPct}pct`].filter(Boolean).join('_');
+    const fname = secondEnabled ? `events_${tag(filterA)}__${tag(filterB)}.csv` : `events_${tag(filterA)}.csv`;
+    a.download = fname;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 100);
   }
@@ -99,58 +202,39 @@ export default function ResultsPage() {
     <main>
       <section className="card">
         <h2 className="font-semibold mb-3">Фильтры (live, сразу применяются)</h2>
-        <div className="flex flex-wrap gap-4 items-end">
-          <label className="flex flex-col">
-            <span className="label">Направление</span>
-            <select className="input" value={direction} onChange={e => setDirection(e.target.value as any)}>
-              <option value="upgrade">Upgrade</option>
-              <option value="downgrade">Downgrade</option>
-              <option value="any">Любое</option>
-            </select>
+
+        <FilterRow
+          title={secondEnabled ? 'Фильтр A' : 'Фильтр'}
+          value={filterA}
+          onChange={setFilterA}
+        />
+
+        <div className="mt-3 flex items-center gap-2">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={secondEnabled}
+              onChange={e => setSecondEnabled(e.target.checked)}
+            />
+            <span>Второй независимый фильтр (объединение результатов)</span>
           </label>
+          <span className="text-xs text-neutral-500">
+            Например: A = Upgrade, B = Downgrade — оба будут в одном списке.
+          </span>
+        </div>
+
+        {secondEnabled && (
+          <FilterRow title="Фильтр B" value={filterB} onChange={setFilterB} />
+        )}
+
+        <div className="border-t border-neutral-200 pt-3 mt-3 flex flex-wrap gap-4 items-end">
           <label className="flex flex-col">
-            <span className="label">Скачок (уровней)</span>
-            <select className="input" value={minJump} onChange={e => setMinJump(parseInt(e.target.value) as any)}>
-              <option value={1}>1</option>
-              <option value={2}>2</option>
-              <option value={3}>3</option>
-              <option value={4}>4</option>
-            </select>
-          </label>
-          <label className="flex flex-col">
-            <span className="label">Top-N компаний</span>
-            <input type="number" className="input w-24" value={topN} min={1} max={500}
-                   onChange={e => setTopN(parseInt(e.target.value) || 50)} />
-          </label>
-          <label className="flex flex-col">
-            <span className="label">vs Consensus</span>
-            <select className="input" value={consensus} onChange={e => setConsensus(e.target.value as any)}>
-              <option value="any">Любой</option>
-              <option value="below">Ниже консенсуса</option>
-              <option value="above">Выше консенсуса</option>
-            </select>
-          </label>
-          <label className={`flex flex-col ${consensus === 'any' ? 'opacity-40 pointer-events-none' : ''}`}>
-            <span className="label">≥ % отклонения от консенсуса</span>
-            <input type="number" className="input w-28" value={minConsDevPct} min={0} max={100} step={0.5}
-                   onChange={e => setMinConsDevPct(parseFloat(e.target.value) || 0)} />
-          </label>
-          <label className="flex flex-col">
-            <span className="label">Консенсус ≥ (1–5)</span>
-            <input type="number" className="input w-24" value={consMin} min={1} max={5} step={0.1}
-                   placeholder="—" onChange={e => setConsMin(e.target.value)} />
-          </label>
-          <label className="flex flex-col">
-            <span className="label">Консенсус ≤ (1–5)</span>
-            <input type="number" className="input w-24" value={consMax} min={1} max={5} step={0.1}
-                   placeholder="—" onChange={e => setConsMax(e.target.value)} />
-          </label>
-          <label className="flex flex-col">
-            <span className="label">Год (опц.)</span>
+            <span className="label">Год (опц., общий)</span>
             <input type="text" className="input w-24" placeholder="2020"
                    value={year} onChange={e => setYear(e.target.value)} />
           </label>
         </div>
+
         <div className="mt-3 flex gap-2 items-center flex-wrap">
           <button className="btn-primary" onClick={downloadCsv} disabled={!events.length}>Скачать CSV ({events.length})</button>
           <button className="btn" onClick={load} disabled={loading}>Перезагрузить</button>
@@ -158,7 +242,9 @@ export default function ResultsPage() {
           {error && <span className="text-sm text-red-600">{error}</span>}
           {stats && !loading && (
             <span className="text-sm text-neutral-600">
-              {stats.count} событий · консенсус из FMP: {stats.consFromFmp}, без консенсуса: {stats.consMissing}
+              {stats.count} событий
+              {secondEnabled && ` (A: ${stats.countA}, B: ${stats.countB}, после дедупа: ${stats.count})`}
+              {' · '}консенсус из FMP: {stats.consFromFmp}, без консенсуса: {stats.consMissing}
             </span>
           )}
         </div>
@@ -197,7 +283,7 @@ export default function ResultsPage() {
                     <td className="p-2 border">{r.rank}</td>
                     <td className="p-2 border">{r.newRating} <span className="text-neutral-500 text-xs">({r.newGradeRaw})</span></td>
                     <td className="p-2 border">{r.previousRating} <span className="text-neutral-500 text-xs">({r.previousGradeRaw})</span></td>
-                    <td className="p-2 border">{r.jumpSize > 0 ? '+' : ''}{r.jumpSize}</td>
+                    <td className={`p-2 border ${r.jumpSize > 0 ? 'text-green-700' : r.jumpSize < 0 ? 'text-red-700' : ''}`}>{r.jumpSize > 0 ? '+' : ''}{r.jumpSize}</td>
                     <td className="p-2 border" title={r.consensusBaseScore != null ? `База FMP-снимка ${r.consensusSnapshotDate}: ${r.consensusBaseScore.toFixed(3)}\nПравок: ${r.consensusAdjustments ?? 0}\nИтог: ${r.consensusBefore?.toFixed(3) ?? '—'}` : ''}>
                       <span className="font-mono">{r.consensusBefore != null ? r.consensusBefore.toFixed(3) : '—'}</span>
                       {r.consensusBaseScore != null && r.consensusAdjustments && r.consensusBaseScore !== r.consensusBefore && (
