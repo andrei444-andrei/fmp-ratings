@@ -380,7 +380,7 @@ export default function SignalsPage() {
                 </thead>
                 <tbody>
                   <tr>
-                    <td className="p-2 border">Среднее превышение бенчмарка</td>
+                    <td className="p-2 border whitespace-nowrap">Среднее превышение</td>
                     {HORIZONS.map(h => {
                       const v = summary[`d${h}`]?.avgExcess;
                       return (
@@ -391,7 +391,7 @@ export default function SignalsPage() {
                     })}
                   </tr>
                   <tr>
-                    <td className="p-2 border">Медианное превышение бенчмарка</td>
+                    <td className="p-2 border whitespace-nowrap">Медианное превышение</td>
                     {HORIZONS.map(h => {
                       const v = summary[`d${h}`]?.medianExcess;
                       return (
@@ -402,7 +402,7 @@ export default function SignalsPage() {
                     })}
                   </tr>
                   <tr>
-                    <td className="p-2 border">Средний выигрыш (excess &gt; 0)</td>
+                    <td className="p-2 border whitespace-nowrap">Средний выигрыш <span className="text-neutral-400 text-xs">(excess &gt; 0)</span></td>
                     {HORIZONS.map(h => {
                       const v = summary[`d${h}`]?.avgWin;
                       return (
@@ -413,7 +413,7 @@ export default function SignalsPage() {
                     })}
                   </tr>
                   <tr>
-                    <td className="p-2 border">Средний проигрыш (excess &lt; 0)</td>
+                    <td className="p-2 border whitespace-nowrap">Средний проигрыш <span className="text-neutral-400 text-xs">(excess &lt; 0)</span></td>
                     {HORIZONS.map(h => {
                       const v = summary[`d${h}`]?.avgLoss;
                       return (
@@ -424,7 +424,7 @@ export default function SignalsPage() {
                     })}
                   </tr>
                   <tr>
-                    <td className="p-2 border">% сделок лучше бенчмарка</td>
+                    <td className="p-2 border whitespace-nowrap">% лучше бенчмарка</td>
                     {HORIZONS.map(h => {
                       const v = summary[`d${h}`]?.pctBetter;
                       const cls = v == null ? '' : v > 0.5 ? 'text-green-700' : v < 0.5 ? 'text-red-700' : '';
@@ -436,7 +436,7 @@ export default function SignalsPage() {
                     })}
                   </tr>
                   <tr className="text-xs text-neutral-500">
-                    <td className="p-2 border">N (всего / win / loss)</td>
+                    <td className="p-2 border whitespace-nowrap">N (всего / win / loss)</td>
                     {HORIZONS.map(h => {
                       const s = summary[`d${h}`];
                       return (
