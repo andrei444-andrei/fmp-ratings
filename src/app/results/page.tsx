@@ -10,6 +10,9 @@ type Event = {
   gradingCompany: string | null; action: string | null;
   jumpSize: number;
   consensusBefore: number | null; consensusFirmCount: number | null;
+  consensusBaseScore: number | null;
+  consensusAdjustments: number | null;
+  consensusSnapshotDate: string | null;
   consDeviationPct: number | null;
   belowConsensus: number;
 };
@@ -72,7 +75,7 @@ export default function ResultsPage() {
   }, [topN, direction, minJump, consensus, minConsDevPct, consMin, consMax, year]);
 
   function downloadCsv() {
-    const headers = ['year','date','symbol','rank','newRating','previousRating','newGradeRaw','previousGradeRaw','gradingCompany','jumpSize','consensusBefore','consensusFirmCount','consDeviationPct','belowConsensus'];
+    const headers = ['year','date','symbol','rank','newRating','previousRating','newGradeRaw','previousGradeRaw','gradingCompany','jumpSize','consensusBefore','consensusBaseScore','consensusAdjustments','consensusSnapshotDate','consensusFirmCount','consDeviationPct','belowConsensus'];
     const esc = (v: any) => {
       if (v == null) return '';
       const s = String(v);
@@ -195,7 +198,10 @@ export default function ResultsPage() {
                     <td className="p-2 border">{r.newRating} <span className="text-neutral-500 text-xs">({r.newGradeRaw})</span></td>
                     <td className="p-2 border">{r.previousRating} <span className="text-neutral-500 text-xs">({r.previousGradeRaw})</span></td>
                     <td className="p-2 border">{r.jumpSize > 0 ? '+' : ''}{r.jumpSize}</td>
-                    <td className="p-2 border">{r.consensusBefore != null ? r.consensusBefore.toFixed(2) : '—'} <span className="text-neutral-500 text-xs">(n={r.consensusFirmCount ?? 0})</span></td>
+                    <td className="p-2 border" title={r.consensusBaseScore != null && r.consensusAdjustments ? `База FMP: ${r.consensusBaseScore.toFixed(2)}, корректировок: ${r.consensusAdjustments} (со снимка ${r.consensusSnapshotDate})` : ''}>
+                      {r.consensusBefore != null ? r.consensusBefore.toFixed(2) : '—'}
+                      {' '}<span className="text-neutral-500 text-xs">(n={r.consensusFirmCount ?? 0}{r.consensusAdjustments ? `, ±${r.consensusAdjustments}` : ''})</span>
+                    </td>
                     <td className="p-2 border">{r.consensusBefore == null ? '—' : (r.belowConsensus ? '↓ below' : '↑ above')}</td>
                     <td className="p-2 border">{r.consDeviationPct != null ? `${r.consDeviationPct > 0 ? '+' : ''}${r.consDeviationPct.toFixed(1)}%` : '—'}</td>
                     <td className="p-2 border text-xs">{r.gradingCompany}</td>

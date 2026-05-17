@@ -48,6 +48,14 @@ export async function GET(req: NextRequest) {
       consBySym[sym].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
     }
 
+    // grades by symbol, sorted by date asc — для накопительных корректировок
+    // между monthly snapshot и датой события.
+    const gradesBySym: Record<string, typeof allGrades> = {};
+    for (const g of allGrades) (gradesBySym[g.symbol] = gradesBySym[g.symbol] || []).push(g);
+    for (const sym of Object.keys(gradesBySym)) {
+      gradesBySym[sym].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    }
+
     const out: any[] = [];
     let consFromFmp = 0, consMissing = 0;
 
@@ -71,19 +79,67 @@ export async function GET(req: NextRequest) {
       if (fromRating != null && oldN !== fromRating) continue;
       if (toRating != null && newN !== toRating) continue;
 
-      // consensus — берём последнюю запись с date ≤ event.date
+      // === Гибридный консенсус ===
+      // 1) Берём последний FMP-снимок с датой ≤ event.date (FMP даёт месячные).
+      // 2) Из counts (strongBuy/buy/hold/sell/strongSell) считаем «базу».
+      // 3) Применяем все grade-события для этого тикера в (snapshot_date, event.date):
+      //    previousGrade → counts[previousGrade] -= 1
+      //    newGrade      → counts[newGrade] += 1
+      // 4) Пересчитываем consensus_score из обновлённых counts.
       const consList = consBySym[g.symbol] || [];
       let bestC: typeof consList[number] | null = null;
       for (const c of consList) {
         if ((c.date || '') > (g.date || '')) break;
         bestC = c;
       }
+
       let consScore: number | null = null;
       let consFirms: number | null = null;
-      if (bestC && bestC.consensusScore != null) {
-        consScore = bestC.consensusScore;
-        consFirms = bestC.totalAnalysts;
-        consFromFmp++;
+      let consBaseScore: number | null = null;
+      let adjustments = 0;
+      let snapshotDate: string | null = null;
+
+      if (bestC) {
+        // База
+        const counts: Record<number, number> = {
+          5: bestC.strongBuy || 0,
+          4: bestC.buy || 0,
+          3: bestC.hold || 0,
+          2: bestC.sell || 0,
+          1: bestC.strongSell || 0,
+        };
+        let total = counts[5] + counts[4] + counts[3] + counts[2] + counts[1];
+        consBaseScore = total > 0
+          ? (5 * counts[5] + 4 * counts[4] + 3 * counts[3] + 2 * counts[2] + 1 * counts[1]) / total
+          : null;
+        snapshotDate = bestC.date || null;
+
+        // Корректировки из grades между snapshotDate (исключительно) и event.date (исключительно)
+        const snap = bestC.date || '';
+        const gradesList = gradesBySym[g.symbol] || [];
+        for (const og of gradesList) {
+          const od = og.date || '';
+          if (od <= snap) continue;             // уже в снимке
+          if (od >= (g.date || '')) break;      // после или равно текущему событию — пропускаем
+          const newR = normalizeRating(og.newGrade);
+          const oldR = normalizeRating(og.previousGrade);
+          if (oldR != null && counts[oldR] != null) {
+            counts[oldR] = Math.max(0, counts[oldR] - 1);
+            total = Math.max(0, total - 1);
+          }
+          if (newR != null && counts[newR] != null) {
+            counts[newR] += 1;
+            total += 1;
+          }
+          if (newR != null || oldR != null) adjustments++;
+        }
+
+        consScore = total > 0
+          ? (5 * counts[5] + 4 * counts[4] + 3 * counts[3] + 2 * counts[2] + 1 * counts[1]) / total
+          : null;
+        consFirms = total;
+        if (consScore != null) consFromFmp++;
+        else consMissing++;
       } else {
         consMissing++;
       }
@@ -130,6 +186,9 @@ export async function GET(req: NextRequest) {
         jumpSize: jump,
         consensusBefore: consScore,
         consensusFirmCount: consFirms,
+        consensusBaseScore: consBaseScore,
+        consensusAdjustments: adjustments,
+        consensusSnapshotDate: snapshotDate,
         consDeviationPct: deviationPct,
         belowConsensus: below,
       });
