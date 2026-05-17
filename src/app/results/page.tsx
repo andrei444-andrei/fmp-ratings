@@ -198,9 +198,14 @@ export default function ResultsPage() {
                     <td className="p-2 border">{r.newRating} <span className="text-neutral-500 text-xs">({r.newGradeRaw})</span></td>
                     <td className="p-2 border">{r.previousRating} <span className="text-neutral-500 text-xs">({r.previousGradeRaw})</span></td>
                     <td className="p-2 border">{r.jumpSize > 0 ? '+' : ''}{r.jumpSize}</td>
-                    <td className="p-2 border" title={r.consensusBaseScore != null && r.consensusAdjustments ? `База FMP: ${r.consensusBaseScore.toFixed(2)}, корректировок: ${r.consensusAdjustments} (со снимка ${r.consensusSnapshotDate})` : ''}>
-                      {r.consensusBefore != null ? r.consensusBefore.toFixed(2) : '—'}
-                      {' '}<span className="text-neutral-500 text-xs">(n={r.consensusFirmCount ?? 0}{r.consensusAdjustments ? `, ±${r.consensusAdjustments}` : ''})</span>
+                    <td className="p-2 border" title={r.consensusBaseScore != null ? `База FMP-снимка ${r.consensusSnapshotDate}: ${r.consensusBaseScore.toFixed(3)}\nПравок: ${r.consensusAdjustments ?? 0}\nИтог: ${r.consensusBefore?.toFixed(3) ?? '—'}` : ''}>
+                      <span className="font-mono">{r.consensusBefore != null ? r.consensusBefore.toFixed(3) : '—'}</span>
+                      {r.consensusBaseScore != null && r.consensusAdjustments && r.consensusBaseScore !== r.consensusBefore && (
+                        <span className="text-neutral-400 text-xs ml-1">
+                          (база {r.consensusBaseScore.toFixed(3)} {r.consensusBefore! > r.consensusBaseScore ? '↑' : '↓'} ±{r.consensusAdjustments})
+                        </span>
+                      )}
+                      <div className="text-neutral-500 text-xs">n={r.consensusFirmCount ?? 0}{r.consensusSnapshotDate ? ` · snap ${r.consensusSnapshotDate}` : ''}</div>
                     </td>
                     <td className="p-2 border">{r.consensusBefore == null ? '—' : (r.belowConsensus ? '↓ below' : '↑ above')}</td>
                     <td className="p-2 border">{r.consDeviationPct != null ? `${r.consDeviationPct > 0 ? '+' : ''}${r.consDeviationPct.toFixed(1)}%` : '—'}</td>
