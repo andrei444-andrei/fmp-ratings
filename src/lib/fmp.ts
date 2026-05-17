@@ -47,3 +47,10 @@ export async function fmpGradesHistorical(symbol: string) {
   const key = getFmpKey();
   return fmpGet(`${BASE_STABLE}/grades-historical?symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(key)}`);
 }
+
+// Историческая EPS Surprise: actual vs estimated по квартальным отчётам.
+// FMP /stable/earnings возвращает массив отчётов с epsActual/epsEstimated и revenue.
+export async function fmpEarnings(symbol: string) {
+  const key = getFmpKey();
+  return fmpGet(`${BASE_STABLE}/earnings?symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(key)}`);
+}

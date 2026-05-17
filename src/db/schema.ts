@@ -100,6 +100,26 @@ export const consensusHistory = sqliteTable('consensus_history', {
   dateIdx: index('idx_consensus_date').on(t.date),
 }));
 
+// EPS Surprise: квартальные сюрпризы по прибыли (модуль /eps).
+// Источник — FMP /stable/earnings. Накопительно, без overwrite.
+export const epsSurprises = sqliteTable('eps_surprises', {
+  symbol: text('symbol').notNull(),
+  date: text('date').notNull(),                  // дата отчёта (announcement)
+  fiscalDateEnding: text('fiscal_date_ending'),  // конец фискального периода, если есть
+  epsActual: real('eps_actual'),
+  epsEstimated: real('eps_estimated'),
+  surprise: real('surprise'),                    // actual - estimated
+  surprisePct: real('surprise_pct'),             // surprise / |estimated| * 100
+  revenueActual: real('revenue_actual'),
+  revenueEstimated: real('revenue_estimated'),
+  fetchedAt: text('fetched_at').notNull(),
+  raw: text('raw'),
+}, t => ({
+  pk: primaryKey({ columns: [t.symbol, t.date] }),
+  symbolIdx: index('idx_eps_symbol').on(t.symbol),
+  dateIdx: index('idx_eps_date').on(t.date),
+}));
+
 // Метаданные запусков pipeline
 export const runs = sqliteTable('runs', {
   id: integer('id').primaryKey({ autoIncrement: true }),

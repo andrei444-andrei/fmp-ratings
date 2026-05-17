@@ -13,6 +13,7 @@ export async function GET() {
       ['consensus_history', schema.consensusHistory],
       ['top_n_per_year', schema.topNPerYear],
       ['rating_changes_filtered', schema.ratingChangesFiltered],
+      ['eps_surprises', schema.epsSurprises],
       ['runs', schema.runs],
     ];
     for (const [name, table] of tables) {

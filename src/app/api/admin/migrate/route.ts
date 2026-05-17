@@ -103,6 +103,23 @@ const STATEMENTS = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_consensus_symbol ON consensus_history (symbol)`,
   `CREATE INDEX IF NOT EXISTS idx_consensus_date ON consensus_history (date)`,
+
+  `CREATE TABLE IF NOT EXISTS eps_surprises (
+    symbol text NOT NULL,
+    date text NOT NULL,
+    fiscal_date_ending text,
+    eps_actual real,
+    eps_estimated real,
+    surprise real,
+    surprise_pct real,
+    revenue_actual real,
+    revenue_estimated real,
+    fetched_at text NOT NULL,
+    raw text,
+    PRIMARY KEY (symbol, date)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_eps_symbol ON eps_surprises (symbol)`,
+  `CREATE INDEX IF NOT EXISTS idx_eps_date ON eps_surprises (date)`,
 ];
 
 // ALTER-стейтменты: SQLite не имеет ADD COLUMN IF NOT EXISTS, поэтому
