@@ -16,6 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <nav className="text-sm text-neutral-600 space-x-3 mt-2">
               <a href="/" className="hover:underline">Pipeline</a>
               <a href="/results" className="hover:underline">Results</a>
+              <a href="/eps" className="hover:underline">EPS Surprise</a>
               <a href="/admin" className="hover:underline">Admin / DB</a>
               <a href="https://github.com" className="hover:underline opacity-50" target="_blank">GitHub</a>
             </nav>
