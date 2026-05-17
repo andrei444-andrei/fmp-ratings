@@ -107,6 +107,44 @@ export default function SignalsPage() {
     }).length;
   }, [signals, fromYear, toYear]);
 
+  const summary = useMemo(() => {
+    type Stat = { n: number; avgExcess: number | null; medianExcess: number | null; pctBetter: number | null };
+    const out: Record<string, Stat> = {};
+    for (const h of HORIZONS) {
+      const diffs: number[] = [];
+      let better = 0;
+      for (const r of rows) {
+        if (r.error) continue;
+        const s = r.symbolReturns?.[`d${h}`];
+        const b = r.benchmarkReturns?.[`d${h}`];
+        if (s == null || b == null || !Number.isFinite(s) || !Number.isFinite(b)) continue;
+        const d = s - b;
+        diffs.push(d);
+        if (d > 0) better++;
+      }
+      if (!diffs.length) {
+        out[`d${h}`] = { n: 0, avgExcess: null, medianExcess: null, pctBetter: null };
+        continue;
+      }
+      const avg = diffs.reduce((a, b) => a + b, 0) / diffs.length;
+      const sorted = [...diffs].sort((a, b) => a - b);
+      const mid = sorted.length >> 1;
+      const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+      out[`d${h}`] = {
+        n: diffs.length,
+        avgExcess: avg,
+        medianExcess: median,
+        pctBetter: better / diffs.length,
+      };
+    }
+    return out;
+  }, [rows]);
+
+  const hasBenchmarkData = useMemo(
+    () => rows.some(r => r.benchmarkReturns && HORIZONS.some(h => r.benchmarkReturns?.[`d${h}`] != null)),
+    [rows],
+  );
+
   function onFile(file: File) {
     setFileName(file.name);
     setParseError(null);
@@ -354,6 +392,81 @@ export default function SignalsPage() {
           </table>
         </div>
       </section>
+
+      {rows.length > 0 && (
+        <section className="card">
+          <div className="flex justify-between items-baseline mb-2">
+            <h3 className="font-semibold">Summary — превышение бенчмарка</h3>
+            <span className="text-xs text-neutral-500">
+              {benchmark
+                ? <>бенчмарк: <code>{benchmark}</code> · excess = доходность тикера − доходность бенчмарка</>
+                : 'бенчмарк не задан — статистика недоступна'}
+            </span>
+          </div>
+          {hasBenchmarkData ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-neutral-100">
+                    <th className="text-left p-2 border">Метрика</th>
+                    {HORIZONS.map(h => (
+                      <th key={h} className="text-right p-2 border whitespace-nowrap">{h} day</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td className="p-2 border">Среднее превышение бенчмарка</td>
+                    {HORIZONS.map(h => {
+                      const v = summary[`d${h}`]?.avgExcess;
+                      return (
+                        <td key={h} className={`p-2 border font-mono text-right whitespace-nowrap ${pctColor(v)}`}>
+                          {fmtPct(v)}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                  <tr>
+                    <td className="p-2 border">Медианное превышение бенчмарка</td>
+                    {HORIZONS.map(h => {
+                      const v = summary[`d${h}`]?.medianExcess;
+                      return (
+                        <td key={h} className={`p-2 border font-mono text-right whitespace-nowrap ${pctColor(v)}`}>
+                          {fmtPct(v)}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                  <tr>
+                    <td className="p-2 border">% сделок лучше бенчмарка</td>
+                    {HORIZONS.map(h => {
+                      const v = summary[`d${h}`]?.pctBetter;
+                      const cls = v == null ? '' : v > 0.5 ? 'text-green-700' : v < 0.5 ? 'text-red-700' : '';
+                      return (
+                        <td key={h} className={`p-2 border font-mono text-right whitespace-nowrap ${cls}`}>
+                          {v == null ? '—' : (v * 100).toFixed(1) + '%'}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                  <tr className="text-xs text-neutral-500">
+                    <td className="p-2 border">N (учтено сделок)</td>
+                    {HORIZONS.map(h => (
+                      <td key={h} className="p-2 border font-mono text-right whitespace-nowrap">
+                        {summary[`d${h}`]?.n ?? 0}
+                      </td>
+                    ))}
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="text-sm text-neutral-600">
+              Чтобы увидеть статистику превышения, укажите бенчмарк и повторите расчёт.
+            </p>
+          )}
+        </section>
+      )}
     </main>
   );
 }
