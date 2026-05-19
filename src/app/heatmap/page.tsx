@@ -126,6 +126,30 @@ export default function HeatmapPage() {
   const [aiNewsLoading, setAiNewsLoading] = useState<Record<string, boolean>>({});
   const [aiNewsError, setAiNewsError] = useState<Record<string, string>>({});
 
+  // Тёмная тема для всего документа пока страница смонтирована
+  useEffect(() => {
+    const prevBg = document.body.style.background;
+    const prevColor = document.body.style.color;
+    const prevHtmlBg = document.documentElement.style.background;
+    document.body.style.background = '#0a0b0e';
+    document.body.style.color = '#e9eaed';
+    document.documentElement.style.background = '#0a0b0e';
+    document.body.classList.add('hm-dark-body');
+    return () => {
+      document.body.style.background = prevBg;
+      document.body.style.color = prevColor;
+      document.documentElement.style.background = prevHtmlBg;
+      document.body.classList.remove('hm-dark-body');
+    };
+  }, []);
+
+  // Если якорь оказался вне нового диапазона — снять
+  useEffect(() => {
+    if (anchorDate && (anchorDate < fromDate || anchorDate > toDate)) {
+      setAnchorDate(null);
+    }
+  }, [fromDate, toDate, anchorDate]);
+
   // ===== Load/save localStorage =====
   useEffect(() => {
     try {
@@ -532,26 +556,32 @@ export default function HeatmapPage() {
   return (
     <div className="hm-root">
       <div className="hm-inner">
-        <div className="hm-h2">FMP <b>Heatmap</b> — дневные доходности × события</div>
+        <div className="hm-h2">FMP <b>Heatmap</b> · дневные доходности × события</div>
 
         {/* Setbar */}
         <div className="hm-setbar">
-          <span className="hm-pill" onClick={() => setDrawer(true)}>
-            Тикеры: <b>{tickersSummary || '—'}</b>
+          <span className="hm-pill" onClick={() => setDrawer(true)} title="Изменить тикеры">
+            <b>{tickersSummary || '—'}</b>
           </span>
-          <span className="hm-pill" onClick={() => setDrawer(true)}>
-            📅 <b>{fromDate} — {toDate}</b>
+          <span className="hm-pill" onClick={() => setDrawer(true)} title="Изменить диапазон">
+            <b>{fromDate}</b> → <b>{toDate}</b>
           </span>
-          <span className="hm-muted">
-            {loadedTickers.length ? `Загружено ${loadedTickers.length}/${tickers.length}` : 'нет данных'}
-          </span>
+          {loadedTickers.length ? (
+            <span className="hm-muted" style={{ fontSize: 11 }}>
+              {loadedTickers.length}/{tickers.length} · {tradingDates.length} дн.
+            </span>
+          ) : (
+            <span className="hm-muted" style={{ fontSize: 11 }}>нет данных</span>
+          )}
           <div className="hm-spacer" />
-          <button className="hm-ghost" onClick={() => setDrawer(d => !d)}>⚙ Настройки</button>
-          <button className="hm-ghost" onClick={() => setSortByCum(s => !s)} disabled={!loadedTickers.length}>
-            ⇅ Сортировка: {sortByCum ? 'по доходности' : 'нет'}
+          <button className="hm-ghost" onClick={() => setDrawer(d => !d)}>⚙</button>
+          <button className="hm-ghost" onClick={() => setSortByCum(s => !s)}
+            disabled={!loadedTickers.length}
+            title={sortByCum ? 'Снять сортировку' : 'Сортировать по доходности'}>
+            ⇅ {sortByCum ? 'по %' : ''}
           </button>
           <button className="hm-ghost primary" onClick={loadAll} disabled={loading || !tickers.length}>
-            {loading ? '…загрузка' : '↻ Загрузить'}
+            {loading ? '…' : '↻ Загрузить'}
           </button>
         </div>
         {(status || error) && (
