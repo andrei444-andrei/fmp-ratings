@@ -1,20 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { aimlChat } from '@/lib/aimlapi';
-import { gdeltSearch } from '@/lib/gdelt';
 import { marketauxSearch, type MarketauxArticle } from '@/lib/marketaux';
 import { getCachedNews, setCachedNews, getApiUsage, incApiUsage } from '@/lib/news-cache';
 
 // GET /api/ai/news?date=YYYY-MM-DD[&tickers=SPY,QQQ][&force=1]
 //
-// Источники (в порядке предпочтения):
+// Источники:
 //   1) кэш в Turso по date — мгновенный ответ, 0 внешних вызовов
-//   2) Marketaux (если MARKETAUX_KEY задан и месячный счётчик < MARKETAUX_MONTHLY_CAP)
-//   3) GDELT (бесплатный fallback)
+//   2) Marketaux (требует MARKETAUX_KEY; счётчик месячного расхода < MARKETAUX_MONTHLY_CAP)
 // Затем — AI выбирает 3-5 значимых из реальных заголовков.
 //
 // При successful запросе результат пишется в кэш (бессрочно).
 
-const FINANCE_QUERY_GDELT = '(market OR economy OR Fed OR ECB OR "central bank" OR earnings OR inflation OR rate OR sanctions OR war OR election OR tariff OR crisis OR oil OR bankruptcy) sourcelang:eng';
 const DEFAULT_CAP = 8000;
 
 type NewsItem = {
@@ -32,12 +29,6 @@ type RawArticle = {
   url: string;
 };
 
-function addDays(iso: string, days: number): string {
-  const d = new Date(iso + 'T00:00:00Z');
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
 async function fetchFromMarketaux(date: string, tickers: string): Promise<RawArticle[]> {
   const apiToken = process.env.MARKETAUX_KEY!;
   const arts: MarketauxArticle[] = await marketauxSearch({
@@ -54,25 +45,6 @@ async function fetchFromMarketaux(date: string, tickers: string): Promise<RawArt
     title: a.title,
     date: a.publishedAt,
     domain: a.source,
-    url: a.url,
-  }));
-}
-
-async function fetchFromGdelt(date: string): Promise<RawArticle[]> {
-  const startDate = addDays(date, -1);
-  const endDate = date;
-  const arts = await gdeltSearch({
-    query: FINANCE_QUERY_GDELT,
-    startDate, endDate,
-    maxRecords: 60,
-    sort: 'hybridrel',
-    timeoutMs: 20000,
-    retries: 2,
-  });
-  return arts.map(a => ({
-    title: a.title,
-    date: a.seendate,
-    domain: a.domain || '',
     url: a.url,
   }));
 }
@@ -182,45 +154,38 @@ export async function GET(req: NextRequest) {
     } catch { /* кэш недоступен — продолжим */ }
   }
 
-  // 2) Выбор источника
-  const hasMarketaux = !!process.env.MARKETAUX_KEY;
+  // 2) Источник — Marketaux (единственный).
+  if (!process.env.MARKETAUX_KEY) {
+    return NextResponse.json({
+      error: 'MARKETAUX_KEY не задан в окружении. Добавь переменную в Vercel и сделай Redeploy.',
+    }, { status: 503 });
+  }
   const cap = Number(process.env.MARKETAUX_MONTHLY_CAP || DEFAULT_CAP);
-  let usedSource: 'marketaux' | 'gdelt' = 'gdelt';
-  let articles: RawArticle[] = [];
-  let fetchError: string | null = null;
-
-  if (hasMarketaux) {
-    try {
-      const used = await getApiUsage('marketaux').catch(() => 0);
-      if (used < cap) {
-        try {
-          articles = await fetchFromMarketaux(date, tickers);
-          usedSource = 'marketaux';
-          await incApiUsage('marketaux').catch(() => {});
-        } catch (e: any) {
-          fetchError = `Marketaux: ${e.message}`;
-        }
-      }
-    } catch { /* счётчик недоступен — продолжим без cap */ }
+  const used = await getApiUsage('marketaux').catch(() => 0);
+  if (used >= cap) {
+    return NextResponse.json({
+      error: `Marketaux месячный лимит исчерпан (${used}/${cap}). Подожди до следующего месяца или подними MARKETAUX_MONTHLY_CAP.`,
+    }, { status: 429 });
   }
 
-  if (!articles.length) {
-    try {
-      articles = await fetchFromGdelt(date);
-      usedSource = 'gdelt';
-    } catch (e: any) {
-      fetchError = (fetchError ? fetchError + '; ' : '') + `GDELT: ${e.message}`;
-    }
+  let articles: RawArticle[] = [];
+  try {
+    articles = await fetchFromMarketaux(date, tickers);
+    await incApiUsage('marketaux').catch(() => {});
+  } catch (e: any) {
+    return NextResponse.json({ error: `Marketaux: ${e.message}` }, { status: 502 });
   }
 
   if (!articles.length) {
     const payload = {
       date,
-      summary: fetchError || 'Источники не вернули статей за эту дату.',
+      summary: 'Marketaux не вернул статей за эту дату.',
       items: [],
-      stats: { count: 0, error: fetchError || undefined },
+      stats: { count: 0 },
     };
-    return NextResponse.json({ ...payload, source: usedSource, cached: false });
+    // Кэшируем пустой результат, чтобы не дёргать API повторно для тех же дат.
+    try { await setCachedNews(date, 'marketaux', payload); } catch {}
+    return NextResponse.json({ ...payload, source: 'marketaux', cached: false });
   }
 
   // 3) AI кластеризация
@@ -242,7 +207,7 @@ export async function GET(req: NextRequest) {
   };
 
   // 4) Кэш
-  try { await setCachedNews(date, usedSource, payload); } catch { /* не критично */ }
+  try { await setCachedNews(date, 'marketaux', payload); } catch { /* не критично */ }
 
-  return NextResponse.json({ ...payload, source: usedSource, cached: false });
+  return NextResponse.json({ ...payload, source: 'marketaux', cached: false });
 }

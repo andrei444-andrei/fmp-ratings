@@ -953,7 +953,7 @@ export default function HeatmapPage() {
                 <span className="src">
                   {aiNews[popupDate]
                     ? `источник: ${(aiNews[popupDate] as any).source || 'AI'}${(aiNews[popupDate] as any).cached ? ' · из кэша' : ''}`
-                    : 'источник: Marketaux / GDELT + AI'}
+                    : 'источник: Marketaux + AI'}
                 </span>
               </div>
               {aiNewsLoading[popupDate] ? (
@@ -1027,7 +1027,7 @@ export default function HeatmapPage() {
                 </>
               ) : (
                 <div className="hm-muted" style={{ fontSize: 12 }}>
-                  Нажмите «📰 Загрузить новости дня» выше — статьи берутся из GDELT,
+                  Нажмите «📰 Загрузить новости дня» выше — статьи берутся из Marketaux,
                   AI выбирает 3-5 значимых и описывает на русском.
                 </div>
               )}
