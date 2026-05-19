@@ -1,7 +1,9 @@
 // Курированный список значимых рыночных событий.
 // Используется в /heatmap для маркировки дней. Пользователь может добавлять свои.
 
-export type EventCategory = 'geopolitics' | 'monetary' | 'crisis' | 'pandemic' | 'policy' | 'other';
+export type EventCategory =
+  | 'geopolitics' | 'monetary' | 'crisis' | 'pandemic'
+  | 'policy' | 'macro' | 'corporate' | 'other';
 
 export type MarketEvent = {
   date: string;           // YYYY-MM-DD
@@ -16,6 +18,8 @@ export const EVENT_COLORS: Record<EventCategory, string> = {
   crisis:      '#9333ea',  // purple-600
   pandemic:    '#ea580c',  // orange-600
   policy:      '#0891b2',  // cyan-600
+  macro:       '#16a34a',  // green-600  — CPI, NFP, PMI, GDP
+  corporate:   '#db2777',  // pink-600   — крупные M&A, IPO, банкротства
   other:       '#525252',  // neutral-600
 };
 
@@ -25,8 +29,25 @@ export const EVENT_LABELS: Record<EventCategory, string> = {
   crisis:      'Кризис / крах',
   pandemic:    'Пандемия',
   policy:      'Политика / тарифы',
+  macro:       'Макро-данные',
+  corporate:   'Корпоративные',
   other:       'Прочее',
 };
+
+// Безопасная нормализация категории (на вход — что угодно от AI/пользователя)
+export function normalizeCategory(c: any): EventCategory {
+  if (typeof c !== 'string') return 'other';
+  const k = c.toLowerCase().trim();
+  if (k === 'geopolitics' || k === 'geo' || k === 'geopolitical') return 'geopolitics';
+  if (k === 'monetary' || k === 'monetary policy' || k === 'fed' || k === 'cb') return 'monetary';
+  if (k === 'crisis' || k === 'crash' || k === 'shock') return 'crisis';
+  if (k === 'pandemic' || k === 'covid' || k === 'health') return 'pandemic';
+  if (k === 'policy' || k === 'tariff' || k === 'tariffs' || k === 'political' || k === 'election') return 'policy';
+  if (k === 'macro' || k === 'macro-data' || k === 'macrodata' || k === 'data' || k === 'economic') return 'macro';
+  if (k === 'corporate' || k === 'company' || k === 'ma' || k === 'm&a' || k === 'ipo' || k === 'earnings') return 'corporate';
+  if (k in EVENT_COLORS) return k as EventCategory;
+  return 'other';
+}
 
 export const MARKET_EVENTS: MarketEvent[] = [
   // === Геополитика ===

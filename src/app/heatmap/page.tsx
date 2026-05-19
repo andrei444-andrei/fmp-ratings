@@ -2,9 +2,25 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  MARKET_EVENTS, EVENT_COLORS, EVENT_LABELS,
+  MARKET_EVENTS, EVENT_COLORS, EVENT_LABELS, normalizeCategory,
   eventsByDate, type MarketEvent, type EventCategory,
 } from '@/lib/market-events';
+
+const AI_EVENTS_LS_KEY = 'fmp-heatmap-ai-events-v1';
+
+function monthsBetween(from: string, to: string): string[] {
+  const out: string[] = [];
+  let y = parseInt(from.slice(0, 4), 10);
+  let m = parseInt(from.slice(5, 7), 10);
+  const yTo = parseInt(to.slice(0, 4), 10);
+  const mTo = parseInt(to.slice(5, 7), 10);
+  while (y < yTo || (y === yTo && m <= mTo)) {
+    out.push(`${y}-${String(m).padStart(2, '0')}`);
+    m++;
+    if (m > 12) { m = 1; y++; }
+  }
+  return out;
+}
 
 type PriceRow = { date: string; price: number };
 type PricesBySymbol = Record<string, Record<string, number>>; // symbol -> date -> close
@@ -87,6 +103,36 @@ export default function HeatmapPage() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
 
+  // AI-события для диапазона (помесячно). Хранятся в localStorage.
+  const [aiRangeEvents, setAiRangeEvents] = useState<MarketEvent[]>([]);
+  const [aiRangeLoading, setAiRangeLoading] = useState(false);
+  const [aiRangeStatus, setAiRangeStatus] = useState('');
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(AI_EVENTS_LS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          setAiRangeEvents(parsed.filter(
+            (e: any) => e && typeof e.date === 'string' && typeof e.title === 'string'
+          ).map((e: any) => ({
+            date: e.date,
+            title: e.title,
+            category: normalizeCategory(e.category),
+            description: typeof e.description === 'string' ? e.description : undefined,
+          })));
+        }
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(AI_EVENTS_LS_KEY, JSON.stringify(aiRangeEvents));
+    } catch {}
+  }, [aiRangeEvents]);
+
   const tickers = useMemo(
     () => tickersInput.split(/[\s,;]+/).map(s => s.trim().toUpperCase()).filter(Boolean),
     [tickersInput]
@@ -102,7 +148,7 @@ export default function HeatmapPage() {
           .map((e: any) => ({
             date: e.date,
             title: e.title,
-            category: (e.category || 'other') as EventCategory,
+            category: normalizeCategory(e.category),
             description: e.description,
           }));
       }
@@ -115,14 +161,28 @@ export default function HeatmapPage() {
       if (parts.length >= 2 && /^\d{4}-\d{2}-\d{2}$/.test(parts[0])) {
         out.push({
           date: parts[0], title: parts[1],
-          category: (parts[2] as EventCategory) || 'other',
+          category: normalizeCategory(parts[2]),
         });
       }
     }
     return out;
   }, [customEventsRaw]);
 
-  const allEvents = useMemo(() => [...MARKET_EVENTS, ...customEvents], [customEvents]);
+  // Объединяем всё: курированные + пользовательские + AI-batch.
+  // Дедуп по (date|title), приоритет — у курированных.
+  const allEvents = useMemo(() => {
+    const seen = new Set<string>();
+    const out: MarketEvent[] = [];
+    for (const src of [MARKET_EVENTS, customEvents, aiRangeEvents]) {
+      for (const e of src) {
+        const k = `${e.date}|${e.title}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.push(e);
+      }
+    }
+    return out;
+  }, [customEvents, aiRangeEvents]);
   const eventsMap = useMemo(() => eventsByDate(allEvents), [allEvents]);
 
   const tradingDates = useMemo<string[]>(() => {
@@ -256,6 +316,63 @@ export default function HeatmapPage() {
     } finally {
       setAiLoading(false);
     }
+  }
+
+  // Помесячный батч-запрос событий для текущего диапазона
+  async function aiFillEvents() {
+    setAiRangeLoading(true);
+    setAiRangeStatus('');
+    try {
+      const months = monthsBetween(fromDate, toDate);
+      const collected: MarketEvent[] = [];
+      let newCount = 0;
+      const existingKeys = new Set(
+        [...MARKET_EVENTS, ...customEvents, ...aiRangeEvents].map(e => `${e.date}|${e.title}`)
+      );
+      for (let i = 0; i < months.length; i++) {
+        const mo = months[i];
+        setAiRangeStatus(`${i + 1}/${months.length} (${mo})…  новых: ${newCount}`);
+        try {
+          const res = await fetch(
+            `/api/ai/events-month?month=${mo}&tickers=${encodeURIComponent(tickersInput)}`
+          ).then(r => r.json());
+          if (res?.error) {
+            setAiRangeStatus(`${mo}: ${res.error}`);
+            continue;
+          }
+          const arr = Array.isArray(res?.events) ? res.events : [];
+          for (const e of arr) {
+            const date = String(e.date || '');
+            const title = String(e.title || '').trim();
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !title) continue;
+            const k = `${date}|${title}`;
+            if (existingKeys.has(k)) continue;
+            existingKeys.add(k);
+            collected.push({
+              date, title,
+              category: normalizeCategory(e.category),
+              description: typeof e.description === 'string' ? e.description : undefined,
+            });
+            newCount++;
+          }
+        } catch (e: any) {
+          setAiRangeStatus(`${mo}: ${e.message}`);
+        }
+        await sleep(150);
+      }
+      setAiRangeEvents(prev => [...prev, ...collected]);
+      setAiRangeStatus(`✓ Готово. Новых: ${newCount}. Всего AI: ${aiRangeEvents.length + newCount}.`);
+    } catch (e: any) {
+      setAiRangeStatus(`Ошибка: ${e.message}`);
+    } finally {
+      setAiRangeLoading(false);
+    }
+  }
+
+  function clearAiRangeEvents() {
+    if (!confirm('Удалить все AI-события из локального хранилища?')) return;
+    setAiRangeEvents([]);
+    setAiRangeStatus('AI-события очищены.');
   }
 
   const monthGroups = useMemo(() => {
@@ -421,7 +538,7 @@ export default function HeatmapPage() {
                   {aiNews[anchorDate].items.map((it, i) => (
                     <li key={i} className="flex gap-2 items-start">
                       <span className="inline-block w-2 h-2 rounded-full mt-1.5 flex-shrink-0"
-                            style={{ background: EVENT_COLORS[(it.category as EventCategory) || 'other'] || '#737373' }} />
+                            style={{ background: EVENT_COLORS[normalizeCategory(it.category)] }} />
                       <span>
                         <span className="font-semibold">{it.title}</span>
                         {it.description && (
@@ -439,6 +556,36 @@ export default function HeatmapPage() {
           </div>
         )}
 
+        <div className="mt-3 border border-neutral-200 rounded p-3 bg-neutral-50">
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-sm font-semibold">
+              AI-события (помесячно): {aiRangeEvents.length}
+            </span>
+            <button
+              className="btn-primary"
+              onClick={aiFillEvents}
+              disabled={aiRangeLoading}
+              title={`Запросить у aimlapi 3-5 значимых событий для каждого месяца в интервале ${fromDate} — ${toDate}`}
+            >
+              {aiRangeLoading ? 'Идёт поиск…' : '🤖 Найти события для диапазона (AI)'}
+            </button>
+            <button
+              className="btn"
+              onClick={clearAiRangeEvents}
+              disabled={aiRangeLoading || !aiRangeEvents.length}
+            >
+              Очистить
+            </button>
+            {aiRangeStatus && (
+              <span className="text-xs text-blue-700">{aiRangeStatus}</span>
+            )}
+          </div>
+          <p className="text-xs text-neutral-500 mt-1">
+            Помесячные батч-запросы (1 на каждый месяц диапазона). Результаты накапливаются в
+            localStorage, дедуп по (дата + заголовок). Требуется env <code>AIMLAPI_KEY</code>.
+          </p>
+        </div>
+
         <details className="mt-3">
           <summary className="text-sm cursor-pointer text-neutral-700">
             Свои события ({customEvents.length})
@@ -449,12 +596,12 @@ export default function HeatmapPage() {
           <textarea
             className="input w-full mt-2 font-mono text-xs"
             rows={4}
-            placeholder='2024-05-10 | CPI выше прогноза | monetary&#10;или JSON: [{"date":"2024-05-10","title":"CPI","category":"monetary"}]'
+            placeholder='2024-05-10 | CPI выше прогноза | macro&#10;или JSON: [{"date":"2024-05-10","title":"CPI","category":"macro"}]'
             value={customEventsRaw}
             onChange={e => setCustomEventsRaw(e.target.value)}
           />
           <p className="text-xs text-neutral-500 mt-1">
-            Категории: geopolitics, monetary, crisis, pandemic, policy, other
+            Категории: geopolitics, monetary, crisis, pandemic, policy, macro, corporate, other
           </p>
         </details>
 
