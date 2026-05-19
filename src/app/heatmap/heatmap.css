@@ -27,34 +27,51 @@
   width: 100vw;
   background: var(--hm-bg);
   color: var(--hm-tx);
-  padding: 18px 16px 80px;
-  min-height: 70vh;
+  padding: 14px 14px 80px;
+  margin-top: -28px;
+  margin-bottom: -28px;
+  min-height: calc(100vh + 56px);
   font-size: 14px;
 }
+.hm-dark-body { background: #0a0b0e !important; }
+.hm-dark-body a { color: #cfc8fb; }
+.hm-dark-body header,
+.hm-dark-body header h1,
+.hm-dark-body header nav,
+.hm-dark-body header nav a { color: #9aa0ad !important; }
+.hm-dark-body header nav a:hover { color: #e9eaed !important; }
+.hm-dark-body > div:first-child { background: #0a0b0e; }
 .hm-root * { box-sizing: border-box; }
 
 .hm-inner { max-width: 1320px; margin: 0 auto; }
 
-.hm-h2 { font-size: 16px; font-weight: 600; margin-bottom: 10px; }
-.hm-h2 b { color: var(--hm-acc); }
+.hm-h2 {
+  font-size: 13px; font-weight: 500; margin-bottom: 8px;
+  color: var(--hm-tx3); letter-spacing: .3px;
+}
+.hm-h2 b { color: var(--hm-acc); font-weight: 700; letter-spacing: 0; }
 
 .hm-setbar {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  background: var(--hm-surf); border: .5px solid var(--hm-line);
-  border-radius: var(--hm-rad-lg); padding: 10px 14px; margin-bottom: 14px;
-  font-size: 12.5px;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  background: linear-gradient(180deg, rgba(124,108,240,.05), var(--hm-surf));
+  border: .5px solid var(--hm-line);
+  border-radius: 10px; padding: 7px 10px; margin-bottom: 10px;
+  font-size: 12px;
+  box-shadow: 0 1px 0 rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.02);
 }
 .hm-pill {
   background: var(--hm-surf2); border: .5px solid var(--hm-line);
-  border-radius: 99px; padding: 5px 11px; color: var(--hm-tx2); cursor: pointer;
-  white-space: nowrap;
+  border-radius: 99px; padding: 4px 10px; color: var(--hm-tx2); cursor: pointer;
+  white-space: nowrap; font-size: 11.5px;
+  transition: border-color .12s, color .12s;
 }
 .hm-pill:hover { border-color: var(--hm-line2); color: var(--hm-tx); }
-.hm-pill b { color: var(--hm-tx); }
+.hm-pill b { color: var(--hm-tx); font-weight: 600; }
 .hm-ghost {
   background: transparent; border: .5px solid var(--hm-line2); color: var(--hm-tx2);
-  font: inherit; font-size: 12px; padding: 6px 12px; border-radius: var(--hm-rad);
+  font: inherit; font-size: 11.5px; padding: 4px 10px; border-radius: 7px;
   cursor: pointer; white-space: nowrap;
+  transition: background .12s, color .12s, border-color .12s;
 }
 .hm-ghost:hover { background: var(--hm-surf2); color: var(--hm-tx); }
 .hm-ghost:disabled { opacity: .4; cursor: not-allowed; }
