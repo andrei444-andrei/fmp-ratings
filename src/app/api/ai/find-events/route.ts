@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { aimlChat } from '@/lib/ai';
+import { aimlChat } from '@/lib/aimlapi';
 
 // POST /api/ai/find-events
 // body: { query: string, model?: string, limit?: number }
-// resp: { events: [{date, title, description?, category?}], usage?, model }
+// resp: { events: [{date, title, description?, category?}], model? }
 export async function POST(req: NextRequest) {
   try {
     const { query, model, limit } = await req.json();
@@ -27,30 +27,28 @@ export async function POST(req: NextRequest) {
       '- Никакого текста вне JSON-объекта.',
     ].join('\n');
 
-    const r = await aimlChat(
-      [
+    const raw = await aimlChat({
+      messages: [
         { role: 'system', content: system },
         { role: 'user', content: query },
       ],
-      { model: model || 'gpt-4o-mini', temperature: 0.2, jsonObject: true },
-    );
-
-    const content: string | undefined = r?.choices?.[0]?.message?.content;
-    if (!content) {
-      return NextResponse.json({ error: 'AI вернул пустой ответ', raw: r }, { status: 502 });
-    }
+      model: model || 'gpt-4o-mini',
+      temperature: 0.2,
+      max_tokens: 2000,
+      response_format: { type: 'json_object' },
+    });
 
     let parsed: any = null;
     try {
-      parsed = JSON.parse(content);
+      parsed = JSON.parse(raw);
     } catch {
-      const m = content.match(/\{[\s\S]*\}/);
+      const m = raw.match(/\{[\s\S]*\}/);
       if (m) {
         try { parsed = JSON.parse(m[0]); } catch {}
       }
     }
     if (!parsed) {
-      return NextResponse.json({ error: 'AI вернул невалидный JSON', content }, { status: 502 });
+      return NextResponse.json({ error: 'AI вернул невалидный JSON', raw }, { status: 502 });
     }
 
     const arr = Array.isArray(parsed?.events) ? parsed.events
@@ -68,8 +66,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       events,
-      model: r?.model || (model || 'gpt-4o-mini'),
-      usage: r?.usage,
+      model: model || 'gpt-4o-mini',
     });
   } catch (e: any) {
     return NextResponse.json({ error: e.message || String(e) }, { status: 500 });
