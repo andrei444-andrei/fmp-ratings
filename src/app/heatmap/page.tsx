@@ -401,7 +401,8 @@ export default function HeatmapPage() {
     try {
       const res = await fetch(
         `/api/ai/news?date=${encodeURIComponent(date)}` +
-        `&tickers=${encodeURIComponent(tickersInput)}`
+        `&tickers=${encodeURIComponent(tickersInput)}` +
+        (force ? '&force=1' : '')
       ).then(r => r.json());
       if (res?.error) {
         setAiNewsError(prev => ({ ...prev, [date]: res.error }));
@@ -902,7 +903,11 @@ export default function HeatmapPage() {
               </div>
               <div className="hm-nw-h">
                 <span>Новости дня</span>
-                <span className="src">источник: GDELT + AI</span>
+                <span className="src">
+                  {aiNews[popupDate]
+                    ? `источник: ${(aiNews[popupDate] as any).source || 'AI'}${(aiNews[popupDate] as any).cached ? ' · из кэша' : ''}`
+                    : 'источник: Marketaux / GDELT + AI'}
+                </span>
               </div>
               {aiNewsLoading[popupDate] ? (
                 <>
