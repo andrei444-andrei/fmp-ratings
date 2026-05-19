@@ -275,13 +275,6 @@ export default function HeatmapPage() {
     return groups;
   }, [tradingDates]);
 
-  // События в видимом диапазоне (для ленты снизу)
-  const eventsInRange = useMemo(() => {
-    return allEvents
-      .filter(e => e.date >= fromDate && e.date <= toDate)
-      .sort((a, b) => b.date.localeCompare(a.date));
-  }, [allEvents, fromDate, toDate]);
-
   const tableWidth = 80 + tradingDates.length * cellWidth;
 
   const hoverData = useMemo(() => {
@@ -304,14 +297,6 @@ export default function HeatmapPage() {
       scrollRef.current.scrollLeft = scrollRef.current.scrollWidth;
     }
   }, [tradingDates.length]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Прокрутить к дате (например, при клике на событие в ленте)
-  function scrollToDate(date: string) {
-    const idx = tradingDates.indexOf(date);
-    if (idx < 0 || !scrollRef.current) return;
-    const left = 80 + idx * cellWidth - scrollRef.current.clientWidth / 2;
-    scrollRef.current.scrollTo({ left: Math.max(0, left), behavior: 'smooth' });
-  }
 
   // Высоты sticky-рядов
   const H_MONTH = 20;
@@ -765,58 +750,6 @@ export default function HeatmapPage() {
         )}
       </div>
 
-      {/* Лента событий */}
-      {eventsInRange.length > 0 && (
-        <section className="card mt-4">
-          <h3 className="font-semibold mb-2">
-            Лента событий ({eventsInRange.length} в интервале {fromDate} — {toDate})
-          </h3>
-          <div className="overflow-y-auto" style={{ maxHeight: 400 }}>
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-neutral-100">
-                <tr>
-                  <th className="text-left p-2 border w-28">Дата</th>
-                  <th className="text-left p-2 border w-40">Категория</th>
-                  <th className="text-left p-2 border">Событие</th>
-                  <th className="text-left p-2 border w-20">Действия</th>
-                </tr>
-              </thead>
-              <tbody>
-                {eventsInRange.map((e, i) => (
-                  <tr key={`${e.date}-${i}`} className="hover:bg-neutral-50">
-                    <td className="p-2 border font-mono">{e.date}</td>
-                    <td className="p-2 border">
-                      <span className="inline-flex items-center gap-1.5">
-                        <span className="inline-block w-2.5 h-2.5 rounded-full"
-                              style={{ background: EVENT_COLORS[e.category] }} />
-                        {EVENT_LABELS[e.category]}
-                      </span>
-                    </td>
-                    <td className="p-2 border">
-                      <div className="font-medium">{e.title}</div>
-                      {e.description && (
-                        <div className="text-xs text-neutral-600 mt-0.5">{e.description}</div>
-                      )}
-                    </td>
-                    <td className="p-2 border">
-                      <button
-                        className="text-xs text-blue-600 hover:underline"
-                        onClick={() => {
-                          setMode('cumulative');
-                          setAnchorDate(e.date);
-                          scrollToDate(e.date);
-                        }}
-                      >
-                        → якорь
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
     </main>
   );
 }
