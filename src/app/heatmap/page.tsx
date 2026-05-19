@@ -416,47 +416,94 @@ export default function HeatmapPage() {
     }
   }
 
-  // ===== AI помесячный батч =====
+  // ===== Найти важные события за диапазон =====
+  // Поток: per-month Marketaux (с кэшем в Turso) → AI cluster-events → aiRangeEvents.
   async function aiFillEvents() {
     setAiRangeLoading(true);
-    setAiRangeStatus('');
+    setAiRangeStatus('Подготовка…');
     try {
       const months = monthsBetween(fromDate, toDate);
-      const collected: MarketEvent[] = [];
-      let newCount = 0;
+      // Сначала собираем сырые статьи по месяцам (кэш-aware, по 1 запросу на месяц).
+      type Raw = { date: string; title: string; domain?: string; url?: string };
+      const articles: Raw[] = [];
+      let cachedCount = 0;
+      let liveCount = 0;
+      const errors: string[] = [];
+
+      for (let i = 0; i < months.length; i++) {
+        const mo = months[i];
+        setAiRangeStatus(
+          `Шаг 1/2 — Marketaux ${i + 1}/${months.length} (${mo}) · кэш ${cachedCount} · live ${liveCount}` +
+          (errors.length ? ` · ошибок ${errors.length}` : '')
+        );
+        try {
+          const res = await fetch(
+            `/api/events/month-news?month=${mo}&tickers=${encodeURIComponent(tickersInput)}`
+          ).then(r => r.json());
+          if (res?.error) { errors.push(`${mo}: ${res.error}`); continue; }
+          if (res.cached) cachedCount++; else liveCount++;
+          const arr: any[] = Array.isArray(res?.articles) ? res.articles : [];
+          for (const a of arr) {
+            if (a && a.date && a.title) {
+              articles.push({ date: a.date, title: a.title, domain: a.domain, url: a.url });
+            }
+          }
+        } catch (e: any) {
+          errors.push(`${mo}: ${e.message}`);
+        }
+        // Мягкая пауза только когда реально били API (не для cached).
+        await sleep(80);
+      }
+
+      if (!articles.length) {
+        setAiRangeStatus(
+          errors.length
+            ? `Статей не найдено. Первые ошибки: ${errors.slice(0, 2).join('; ')}`
+            : 'Статей не найдено.'
+        );
+        return;
+      }
+
+      // AI кластеризация — один запрос на пачку.
+      setAiRangeStatus(`Шаг 2/2 — AI кластеризация ${articles.length} статей…`);
+      const clusterRes = await fetch('/api/ai/cluster-events', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          query: 'Значимые финансовые, макроэкономические и геополитические события рынка.',
+          articles: articles.map(a => ({ seendate: a.date, title: a.title, domain: a.domain })),
+          limit: 50,
+        }),
+      }).then(r => r.json());
+      if (clusterRes?.error) {
+        setAiRangeStatus(`AI кластеризация: ${clusterRes.error}`);
+        return;
+      }
+      const evs: any[] = Array.isArray(clusterRes?.events) ? clusterRes.events : [];
+
       const existingKeys = new Set(
         [...MARKET_EVENTS, ...customEvents, ...aiRangeEvents].map(e => `${e.date}|${e.title}`)
       );
-      for (let i = 0; i < months.length; i++) {
-        const mo = months[i];
-        setAiRangeStatus(`${i + 1}/${months.length} (${mo})…  новых: ${newCount}`);
-        try {
-          const res = await fetch(
-            `/api/ai/events-month?month=${mo}&tickers=${encodeURIComponent(tickersInput)}`
-          ).then(r => r.json());
-          if (res?.error) { setAiRangeStatus(`${mo}: ${res.error}`); continue; }
-          const arr = Array.isArray(res?.events) ? res.events : [];
-          for (const e of arr) {
-            const d = String(e.date || '');
-            const ti = String(e.title || '').trim();
-            if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !ti) continue;
-            const k = `${d}|${ti}`;
-            if (existingKeys.has(k)) continue;
-            existingKeys.add(k);
-            collected.push({
-              date: d, title: ti,
-              category: normalizeCategory(e.category),
-              description: typeof e.description === 'string' ? e.description : undefined,
-            });
-            newCount++;
-          }
-        } catch (e: any) {
-          setAiRangeStatus(`${mo}: ${e.message}`);
-        }
-        await sleep(150);
+      const collected: MarketEvent[] = [];
+      for (const e of evs) {
+        const d = String(e.date || '');
+        const ti = String(e.title || '').trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !ti) continue;
+        const k = `${d}|${ti}`;
+        if (existingKeys.has(k)) continue;
+        existingKeys.add(k);
+        collected.push({
+          date: d, title: ti,
+          category: normalizeCategory(e.category),
+          description: typeof e.description === 'string' ? e.description : undefined,
+        });
       }
       setAiRangeEvents(prev => [...prev, ...collected]);
-      setAiRangeStatus(`✓ Готово. Новых: ${newCount}.`);
+      setAiRangeStatus(
+        `✓ Готово. Новых событий: ${collected.length} из ${evs.length} AI-кластеров. ` +
+        `Marketaux: live ${liveCount}, из кэша ${cachedCount}, статей ${articles.length}.` +
+        (errors.length ? ` Ошибок: ${errors.length}.` : '')
+      );
     } catch (e: any) {
       setAiRangeStatus(`Ошибка: ${e.message}`);
     } finally {
@@ -637,7 +684,7 @@ export default function HeatmapPage() {
                   AI-событий накоплено: <b style={{ color: 'var(--hm-tx)' }}>{aiRangeEvents.length}</b>
                 </span>
                 <button className="hm-ghost primary" onClick={aiFillEvents} disabled={aiRangeLoading}>
-                  {aiRangeLoading ? 'Идёт поиск…' : '🤖 Найти события (помесячно)'}
+                  {aiRangeLoading ? 'Идёт поиск…' : '🔥 Найти важные события (Marketaux + AI)'}
                 </button>
                 <button className="hm-ghost" onClick={clearAiRangeEvents}
                   disabled={aiRangeLoading || !aiRangeEvents.length}>Очистить</button>

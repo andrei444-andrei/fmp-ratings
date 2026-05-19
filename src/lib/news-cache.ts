@@ -19,7 +19,46 @@ async function ensureSchema(): Promise<void> {
     n INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (name, period)
   )`);
+  await libsqlClient.execute(`CREATE TABLE IF NOT EXISTS news_month_cache (
+    month TEXT NOT NULL,
+    tickers_key TEXT NOT NULL,
+    source TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (month, tickers_key)
+  )`);
   ensured = true;
+}
+
+export async function getCachedMonthArticles(month: string, tickersKey: string):
+  Promise<{ source: string; articles: any[]; created_at: number } | null> {
+  await ensureSchema();
+  const r = await libsqlClient.execute({
+    sql: 'SELECT source, payload, created_at FROM news_month_cache WHERE month = ? AND tickers_key = ? LIMIT 1',
+    args: [month, tickersKey],
+  });
+  const row = r.rows?.[0];
+  if (!row) return null;
+  try {
+    const parsed = JSON.parse(String(row.payload));
+    return {
+      source: String(row.source),
+      articles: Array.isArray(parsed) ? parsed : (parsed?.articles || []),
+      created_at: Number(row.created_at),
+    };
+  } catch { return null; }
+}
+
+export async function setCachedMonthArticles(month: string, tickersKey: string, source: string, articles: any[]): Promise<void> {
+  await ensureSchema();
+  await libsqlClient.execute({
+    sql: `INSERT INTO news_month_cache (month, tickers_key, source, payload, created_at)
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(month, tickers_key) DO UPDATE SET source = excluded.source,
+                                                       payload = excluded.payload,
+                                                       created_at = excluded.created_at`,
+    args: [month, tickersKey, source, JSON.stringify(articles), Math.floor(Date.now() / 1000)],
+  });
 }
 
 export async function getCachedNews(date: string): Promise<{ source: string; payload: any; created_at: number } | null> {
