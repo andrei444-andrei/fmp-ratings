@@ -1,0 +1,48 @@
+// Клиент к aimlapi.com (OpenAI-совместимый /v1/chat/completions).
+// Используется в /api/ai/news для генерации сводки новостей дня.
+
+const BASE = 'https://api.aimlapi.com/v1';
+
+export function getAimlApiKey(): string {
+  const k = process.env.AIMLAPI_KEY;
+  if (!k) throw new Error('AIMLAPI_KEY is not set');
+  return k;
+}
+
+export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
+
+export async function aimlChat(opts: {
+  messages: ChatMessage[];
+  model?: string;
+  temperature?: number;
+  max_tokens?: number;
+  response_format?: { type: 'json_object' };
+}): Promise<string> {
+  const key = getAimlApiKey();
+  const body: any = {
+    model: opts.model || 'gpt-4o-mini',
+    messages: opts.messages,
+    temperature: opts.temperature ?? 0.2,
+    max_tokens: opts.max_tokens ?? 600,
+  };
+  if (opts.response_format) body.response_format = opts.response_format;
+  const res = await fetch(`${BASE}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'authorization': `Bearer ${key}`,
+    },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    throw new Error(`aimlapi ${res.status}: ${t.slice(0, 300)}`);
+  }
+  const data = await res.json();
+  const content = data?.choices?.[0]?.message?.content;
+  if (typeof content !== 'string') {
+    throw new Error('aimlapi: пустой ответ');
+  }
+  return content;
+}
