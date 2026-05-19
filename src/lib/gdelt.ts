@@ -29,6 +29,7 @@ export async function gdeltSearch(opts: {
   endDate: string;      // YYYY-MM-DD
   maxRecords?: number;  // ≤ 250
   sort?: 'datedesc' | 'dateasc' | 'hybridrel' | 'tonedesc' | 'toneasc';
+  timeoutMs?: number;
 }): Promise<GdeltArticle[]> {
   const params = new URLSearchParams({
     query: opts.query,
@@ -40,23 +41,42 @@ export async function gdeltSearch(opts: {
     enddatetime: ymdToCompact(opts.endDate, '235959'),
   });
   const url = `${BASE}?${params.toString()}`;
-  const res = await fetch(url, {
-    cache: 'no-store',
-    headers: { 'user-agent': 'fmp-ratings/1.0 (+market-events)' },
-  });
-  if (!res.ok) {
-    const t = await res.text().catch(() => '');
-    throw new Error(`GDELT ${res.status}: ${t.slice(0, 300)}`);
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? 25000);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      cache: 'no-store',
+      signal: ctrl.signal,
+      headers: {
+        // GDELT блокирует некоторые программные UA — используем нейтральный.
+        'user-agent': 'Mozilla/5.0 (compatible; market-events-research/1.0)',
+        'accept': 'application/json,text/plain;q=0.9,*/*;q=0.5',
+      },
+    });
+  } catch (e: any) {
+    if (e.name === 'AbortError') throw new Error(`GDELT timeout ${opts.timeoutMs ?? 25000}ms`);
+    throw new Error(`GDELT fetch: ${e.message}`);
+  } finally {
+    clearTimeout(timer);
   }
-  // GDELT иногда возвращает HTML с предупреждением о rate-limit
-  const ct = res.headers.get('content-type') || '';
+
   const body = await res.text();
-  if (!ct.includes('json')) {
-    throw new Error(`GDELT non-JSON: ${body.slice(0, 200)}`);
+  if (!res.ok) {
+    throw new Error(`GDELT ${res.status}: ${body.slice(0, 300)}`);
+  }
+  const trimmed = body.trim();
+  // Иногда GDELT отдаёт ошибку как HTML или plain text без content-type=json.
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+    // Пустой ответ или сообщение об ошибке = просто 0 статей за этот год.
+    if (/no\s+articles|no\s+results|too\s+many|rate/i.test(trimmed)) return [];
+    if (!trimmed) return [];
+    throw new Error(`GDELT non-JSON: ${trimmed.slice(0, 200)}`);
   }
   let data: any;
-  try { data = JSON.parse(body); } catch {
-    throw new Error(`GDELT invalid JSON: ${body.slice(0, 200)}`);
+  try { data = JSON.parse(trimmed); } catch {
+    throw new Error(`GDELT invalid JSON: ${trimmed.slice(0, 200)}`);
   }
   const arr = Array.isArray(data?.articles) ? data.articles : [];
   return arr.map((a: any): GdeltArticle => ({

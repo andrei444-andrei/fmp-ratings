@@ -143,6 +143,30 @@ export default function MarketEventsPage() {
 
   const periods = useMemo(() => parsePeriods(periodsRaw), [periodsRaw]);
 
+  async function postJson(label: string, url: string, body: any): Promise<any> {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const text = await res.text();
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      // Vercel/прокси отдали HTML-страницу ошибки или таймаута.
+      const snippet = text.replace(/<[^>]+>/g, ' ').trim().slice(0, 200);
+      throw new Error(`${label}: сервер вернул не JSON (status ${res.status}): ${snippet || '(пусто)'}`);
+    }
+    let data: any;
+    try { data = JSON.parse(text); } catch {
+      throw new Error(`${label}: невалидный JSON: ${text.slice(0, 200)}`);
+    }
+    if (!res.ok) {
+      throw new Error(`${label}: ${data?.error || res.statusText}`);
+    }
+    if (data?.error) throw new Error(`${label}: ${data.error}`);
+    return data;
+  }
+
   async function run() {
     setLoading(true);
     setError(null);
@@ -153,23 +177,15 @@ export default function MarketEventsPage() {
     setPrices({});
     try {
       // === Шаг 1: AI → GDELT query ===
-      const kwRes = await fetch('/api/ai/keywords', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ query, model }),
-      }).then(r => r.json());
-      if (kwRes.error) throw new Error(`Ключевые слова: ${kwRes.error}`);
+      const kwRes = await postJson('Ключевые слова', '/api/ai/keywords', { query, model });
       const gq: string = kwRes.gdeltQuery;
       setGdeltQuery(gq);
       setStatus(`Шаг 2/4 — GDELT ищет статьи (${yearFrom}–${yearTo})...`);
 
       // === Шаг 2: GDELT ===
-      const ndRes = await fetch('/api/news/gdelt', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ query: gq, yearFrom, yearTo, maxPerYear }),
-      }).then(r => r.json());
-      if (ndRes.error) throw new Error(`GDELT: ${ndRes.error}`);
+      const ndRes = await postJson('GDELT', '/api/news/gdelt', {
+        query: gq, yearFrom, yearTo, maxPerYear,
+      });
       const arts: GdeltArticle[] = ndRes.articles || [];
       setArticles(arts);
       if (!arts.length) {
@@ -180,12 +196,9 @@ export default function MarketEventsPage() {
       setStatus(`Шаг 3/4 — AI группирует ${arts.length} статей в события...`);
 
       // === Шаг 3: AI → события ===
-      const evRes = await fetch('/api/ai/cluster-events', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ query, articles: arts, model, limit }),
-      }).then(r => r.json());
-      if (evRes.error) throw new Error(`Кластеризация: ${evRes.error}`);
+      const evRes = await postJson('Кластеризация', '/api/ai/cluster-events', {
+        query, articles: arts, model, limit,
+      });
       const evs: AiEvent[] = evRes.events || [];
       if (!evs.length) {
         setEvents([]);
