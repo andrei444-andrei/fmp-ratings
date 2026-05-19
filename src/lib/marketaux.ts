@@ -6,8 +6,8 @@ const BASE = 'https://api.marketaux.com/v1/news/all';
 const BASE_V1 = 'https://api.marketaux.com/v1';
 
 export function getMarketauxToken(): string {
-  const k = process.env.MARKETAUX_API_TOKEN;
-  if (!k) throw new Error('MARKETAUX_API_TOKEN is not set');
+  const k = process.env.MARKETAUX_KEY;
+  if (!k) throw new Error('MARKETAUX_KEY is not set');
   return k;
 }
 

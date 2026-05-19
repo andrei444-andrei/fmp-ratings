@@ -232,7 +232,7 @@ export default function MarketauxDebugPage() {
         <p className="text-xs text-neutral-500 mb-3">
           Конструктор запросов к <a href="https://www.marketaux.com/documentation" target="_blank" rel="noreferrer"
             className="underline">Marketaux News API</a>.
-          Серверный proxy <code>/api/marketaux/debug</code> подставляет <code>MARKETAUX_API_TOKEN</code> из env
+          Серверный proxy <code>/api/marketaux/debug</code> подставляет <code>MARKETAUX_KEY</code> из env
           и возвращает ответ как есть. Токен в превью URL замаскирован.
         </p>
 

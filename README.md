@@ -19,6 +19,24 @@
 - **Turso** (production DB) или локальный SQLite (dev)
 - Деплой: **Vercel**
 
+## Интеграции (что уже подключено)
+
+> ⚠️ Перед добавлением «новой» интеграции — сверьтесь с таблицей.
+> Каждый сервис заведён **один раз** под одной env-переменной и переиспользуется во всех страницах.
+> Дубликаты (`MARKETAUX_API_TOKEN`, `OPENAI_API_KEY`, и т.п.) — не заводим.
+
+| Сервис | Env-переменная | Lib-модуль | Серверные роуты | Используется в UI |
+|---|---|---|---|---|
+| **FinancialModelingPrep** | `FMP_API_KEY` | `src/lib/fmp.ts` | `/api/fmp/*` (sp500, sp500-history, historical-mcap, historical-price-eod, grades, grades-historical, earnings) | `/`, `/results`, `/eps`, `/signals`, `/heatmap`, `/market-events` |
+| **Turso (libSQL)** | `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` (или `LOCAL_SQLITE_PATH` для dev) | `src/db/client.ts`, `src/db/schema.ts` | `/api/save/*`, `/api/read/*`, `/api/admin/*`, `/api/eps/*`, news-cache | `/`, `/results`, `/admin`, `/eps`, `/heatmap`, `/market-events` |
+| **aimlapi.com** (LLM-агрегатор, OpenAI-совместимый) | `AIMLAPI_KEY` | `src/lib/aimlapi.ts` | `/api/ai/news`, `/api/ai/events-month`, `/api/ai/keywords`, `/api/ai/cluster-events`, `/api/ai/find-events` | `/heatmap` (popup новостей), `/market-events` (двухшаговый поиск) |
+| **Marketaux News API** | `MARKETAUX_KEY` (+ опц. `MARKETAUX_MONTHLY_CAP`, default 8000) | `src/lib/marketaux.ts` | `/api/ai/news` (заголовки), `/api/events/month-news`, `/api/events/usage`, `/api/marketaux/debug` | `/heatmap` (новости дня + поиск событий), `/admin/marketaux` (отладка) |
+| **GDELT 2.0 DOC** (бесплатный) | — (без ключа) | `src/lib/gdelt.ts` | `/api/news/gdelt` | `/market-events` (поиск архивных статей) |
+
+**Где задать переменные:**
+- Локально: `cp .env.example .env.local` → заполнить.
+- Vercel: Project → Settings → Environment Variables → **Redeploy** после изменения.
+
 ## Локальный запуск
 
 ```bash
