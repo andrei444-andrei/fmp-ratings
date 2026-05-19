@@ -502,7 +502,8 @@ export default function HeatmapPage() {
 
   useEffect(() => {
     if (!popupDate) return;
-    if (!aiNews[popupDate] && !aiNewsLoading[popupDate]) loadAiNews(popupDate);
+    // Новости теперь подгружаются только по клику на кнопку «📰 Загрузить новости дня» —
+    // чтобы избежать лишних AI-запросов и галлюцинаций на каждый popup.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [popupDate]);
 
@@ -882,19 +883,26 @@ export default function HeatmapPage() {
               )}
               <div className="hm-acts">
                 <button
+                  className={anchorDate === popupDate ? 'on-anc' : ''}
+                  onClick={() => setAnchorAndClose(anchorDate === popupDate ? null : popupDate)}>
+                  ⚓ {anchorDate === popupDate ? 'Снять якорь' : 'Накопленная с этой даты'}
+                </button>
+                <button
+                  onClick={() => loadAiNews(popupDate, true)}
+                  disabled={!!aiNewsLoading[popupDate]}>
+                  {aiNewsLoading[popupDate]
+                    ? 'Загружаю…'
+                    : aiNews[popupDate] ? '🔄 Обновить новости' : '📰 Загрузить новости дня'}
+                </button>
+                <button
                   className={importantDays.has(popupDate) ? 'on-imp' : ''}
                   onClick={() => toggleImportant(popupDate)}>
                   {importantDays.has(popupDate) ? '★ Снять важное' : '☆ Отметить важным'}
                 </button>
-                <button
-                  className={anchorDate === popupDate ? 'on-anc' : ''}
-                  onClick={() => setAnchorAndClose(anchorDate === popupDate ? null : popupDate)}>
-                  ⚓ {anchorDate === popupDate ? 'Снять якорь' : 'Сделать якорем'}
-                </button>
               </div>
               <div className="hm-nw-h">
                 <span>Новости дня</span>
-                <span className="src">источник: aimlapi</span>
+                <span className="src">источник: GDELT + AI</span>
               </div>
               {aiNewsLoading[popupDate] ? (
                 <>
@@ -921,9 +929,14 @@ export default function HeatmapPage() {
                     </div>
                   )}
                   {aiNews[popupDate].items.length === 0 && (
-                    <div className="hm-muted" style={{ fontSize: 12 }}>AI не вернул событий для этого дня.</div>
+                    <div className="hm-muted" style={{ fontSize: 12 }}>
+                      Значимых событий не найдено
+                      {(aiNews[popupDate] as any).stats?.gdeltCount != null && (
+                        <> (GDELT-статей: {(aiNews[popupDate] as any).stats.gdeltCount}).</>
+                      )}
+                    </div>
                   )}
-                  {aiNews[popupDate].items.map((it, i) => {
+                  {aiNews[popupDate].items.map((it: any, i: number) => {
                     const cat = normalizeCategory(it.category);
                     const c = EVENT_COLORS[cat];
                     return (
@@ -932,29 +945,39 @@ export default function HeatmapPage() {
                           {(EVENT_LABELS[cat] || '?').slice(0, 1)}
                         </div>
                         <div style={{ flex: 1 }}>
-                          <div className="ti">{it.title}</div>
+                          <div className="ti">
+                            {it.url ? (
+                              <a href={it.url} target="_blank" rel="noopener noreferrer"
+                                 style={{ color: 'inherit', textDecoration: 'none' }}
+                                 onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
+                                 onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}>
+                                {it.title}
+                              </a>
+                            ) : it.title}
+                          </div>
                           {it.description && (
                             <div className="me" style={{ color: 'var(--hm-tx2)', lineHeight: 1.4 }}>
                               {it.description}
                             </div>
                           )}
-                          <div className="me">
+                          <div className="me" style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                             <span className="hm-badge" style={{ background: c + '22', color: c }}>
                               {EVENT_LABELS[cat]}
                             </span>
+                            {it.source && (
+                              <span style={{ color: 'var(--hm-tx3)', fontSize: 11 }}>· {it.source}</span>
+                            )}
                           </div>
                         </div>
                       </div>
                     );
                   })}
-                  <div style={{ marginTop: 10 }}>
-                    <button className="hm-ghost" onClick={() => loadAiNews(popupDate, true)}>
-                      🔄 Обновить (AI)
-                    </button>
-                  </div>
                 </>
               ) : (
-                <div className="hm-muted" style={{ fontSize: 12 }}>Нажмите для загрузки новостей дня (AI).</div>
+                <div className="hm-muted" style={{ fontSize: 12 }}>
+                  Нажмите «📰 Загрузить новости дня» выше — статьи берутся из GDELT,
+                  AI выбирает 3-5 значимых и описывает на русском.
+                </div>
               )}
 
               {/* Рейтинги аналитиков на эту дату — поверх любых тикеров */}

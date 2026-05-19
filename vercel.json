@@ -5,6 +5,7 @@
     "src/app/api/save/grades/route.ts": { "maxDuration": 30 },
     "src/app/api/save/mcap/route.ts": { "maxDuration": 30 },
     "src/app/api/news/gdelt/route.ts": { "maxDuration": 90 },
-    "src/app/api/ai/cluster-events/route.ts": { "maxDuration": 90 }
+    "src/app/api/ai/cluster-events/route.ts": { "maxDuration": 90 },
+    "src/app/api/ai/news/route.ts": { "maxDuration": 60 }
   }
 }
