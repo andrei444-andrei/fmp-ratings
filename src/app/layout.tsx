@@ -21,6 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <a href="/heatmap" className="hover:underline">Heatmap</a>
               <a href="/market-events" className="hover:underline">Market Events</a>
               <a href="/admin" className="hover:underline">Admin / DB</a>
+              <a href="/admin/marketaux" className="hover:underline">Marketaux</a>
               <a href="https://github.com" className="hover:underline opacity-50" target="_blank">GitHub</a>
             </nav>
           </header>

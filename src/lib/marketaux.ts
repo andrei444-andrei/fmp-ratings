@@ -3,6 +3,80 @@
 // Auth: API token через ?api_token=... в query или Authorization: Bearer.
 
 const BASE = 'https://api.marketaux.com/v1/news/all';
+const BASE_V1 = 'https://api.marketaux.com/v1';
+
+export function getMarketauxToken(): string {
+  const k = process.env.MARKETAUX_API_TOKEN;
+  if (!k) throw new Error('MARKETAUX_API_TOKEN is not set');
+  return k;
+}
+
+// ===== Универсальный конструктор запросов для /admin/marketaux =====
+
+export type MarketauxEndpoint =
+  | '/news/all'
+  | '/news/by-uuid'
+  | '/news/similar'
+  | '/news/sources'
+  | '/entity/search'
+  | '/entity/stats'
+  | '/entity/stats/intraday'
+  | '/entity/stats/aggregation'
+  | '/entity/type/list'
+  | '/entity/industry/list';
+
+export type MarketauxRequest = {
+  endpoint: MarketauxEndpoint;
+  uuid?: string;
+  params: Record<string, string>;
+};
+
+export function buildMarketauxUrl(req: MarketauxRequest, maskToken = false): string {
+  let path: string = req.endpoint;
+  if ((req.endpoint === '/news/by-uuid' || req.endpoint === '/news/similar') && req.uuid) {
+    path = `${req.endpoint}/${encodeURIComponent(req.uuid)}`;
+  }
+  const sp = new URLSearchParams();
+  for (const [k, v] of Object.entries(req.params)) {
+    if (v == null) continue;
+    const s = String(v).trim();
+    if (!s) continue;
+    sp.set(k, s);
+  }
+  const token = maskToken ? '***MASKED***' : getMarketauxToken();
+  sp.set('api_token', token);
+  return `${BASE_V1}${path}?${sp.toString()}`;
+}
+
+export async function callMarketaux(req: MarketauxRequest): Promise<{
+  url: string;
+  status: number;
+  contentType: string;
+  body: any;
+  rateLimit?: Record<string, string>;
+}> {
+  const url = buildMarketauxUrl(req, false);
+  const res = await fetch(url, { cache: 'no-store' });
+  const ct = res.headers.get('content-type') || '';
+  const text = await res.text();
+  let body: any = text;
+  if (ct.includes('json')) {
+    try { body = JSON.parse(text); } catch { body = text; }
+  }
+  const rateLimit: Record<string, string> = {};
+  for (const [k, v] of res.headers) {
+    if (k.toLowerCase().includes('ratelimit') || k.toLowerCase() === 'x-request-id') {
+      rateLimit[k] = v;
+    }
+  }
+  return {
+    url: buildMarketauxUrl(req, true),
+    status: res.status,
+    contentType: ct,
+    body,
+    rateLimit: Object.keys(rateLimit).length ? rateLimit : undefined,
+  };
+}
 
 export type MarketauxArticle = {
   uuid?: string;
