@@ -8,6 +8,14 @@ type AiEvent = {
   description?: string;
   category?: string;
 };
+type GdeltArticle = {
+  url: string;
+  title: string;
+  seendate: string;
+  domain?: string;
+  language?: string;
+  sourcecountry?: string;
+};
 
 type PriceMap = Record<string, number>; // YYYY-MM-DD → close
 type FmpPriceRow = { date: string; price: number };
@@ -19,6 +27,8 @@ const STORAGE_ASSET = 'me.asset';
 const STORAGE_MODEL = 'me.model';
 const STORAGE_PERIODS = 'me.periods';
 const STORAGE_RETURN_MODE = 'me.returnMode';
+const STORAGE_Y_FROM = 'me.yearFrom';
+const STORAGE_Y_TO = 'me.yearTo';
 
 const CATEGORY_COLORS: Record<string, string> = {
   geopolitics: '#dc2626',
@@ -31,15 +41,13 @@ const CATEGORY_COLORS: Record<string, string> = {
 };
 
 function todayIso(): string { return new Date().toISOString().slice(0, 10); }
-
+function currentYear(): number { return new Date().getUTCFullYear(); }
 function addDays(iso: string, days: number): string {
   const d = new Date(iso + 'T00:00:00Z');
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
 
-// Принимает отсортированный массив торговых дат и целевую дату (YYYY-MM-DD).
-// Возвращает индекс ПЕРВОЙ торговой даты ≥ target, либо -1.
 function firstTradeOnOrAfter(dates: string[], target: string): number {
   let lo = 0, hi = dates.length;
   while (lo < hi) {
@@ -49,8 +57,6 @@ function firstTradeOnOrAfter(dates: string[], target: string): number {
   }
   return lo < dates.length ? lo : -1;
 }
-
-// Индекс ПОСЛЕДНЕЙ торговой даты ≤ target, либо -1.
 function lastTradeOnOrBefore(dates: string[], target: string): number {
   let lo = 0, hi = dates.length;
   while (lo < hi) {
@@ -84,7 +90,6 @@ function cellColor(r: number | null, clampPct: number): string {
     ? `rgba(22, 163, 74, ${a.toFixed(3)})`
     : `rgba(220, 38, 38, ${a.toFixed(3)})`;
 }
-
 function cellText(r: number | null, clampPct: number): string {
   if (r == null) return '#a3a3a3';
   return Math.abs(r / (clampPct / 100)) > 0.55 ? '#ffffff' : '#171717';
@@ -93,28 +98,35 @@ function cellText(r: number | null, clampPct: number): string {
 export default function MarketEventsPage() {
   // === Параметры ===
   const [query, setQuery] = useState('');
+  const [yearFrom, setYearFrom] = useState(currentYear() - 5);
+  const [yearTo, setYearTo] = useState(currentYear());
   const [asset, setAsset] = useState(DEFAULT_ASSET);
   const [model, setModel] = useState(DEFAULT_MODEL);
   const [periodsRaw, setPeriodsRaw] = useState(DEFAULT_PERIODS);
   const [returnMode, setReturnMode] = useState<'cumulative' | 'absolute'>('cumulative');
   const [limit, setLimit] = useState(25);
+  const [maxPerYear, setMaxPerYear] = useState(100);
   const [clampPct, setClampPct] = useState(10);
 
   // === Данные ===
   const [events, setEvents] = useState<AiEvent[]>([]);
+  const [articles, setArticles] = useState<GdeltArticle[]>([]);
+  const [gdeltQuery, setGdeltQuery] = useState('');
   const [prices, setPrices] = useState<PriceMap>({});
   const [pricesAsset, setPricesAsset] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [showArticles, setShowArticles] = useState(false);
 
-  // Загрузка персистентных настроек
   useEffect(() => {
     try {
       const a = localStorage.getItem(STORAGE_ASSET); if (a) setAsset(a);
       const m = localStorage.getItem(STORAGE_MODEL); if (m) setModel(m);
       const p = localStorage.getItem(STORAGE_PERIODS); if (p) setPeriodsRaw(p);
       const r = localStorage.getItem(STORAGE_RETURN_MODE); if (r === 'absolute' || r === 'cumulative') setReturnMode(r);
+      const yf = localStorage.getItem(STORAGE_Y_FROM); if (yf) setYearFrom(parseInt(yf, 10) || currentYear() - 5);
+      const yt = localStorage.getItem(STORAGE_Y_TO); if (yt) setYearTo(parseInt(yt, 10) || currentYear());
     } catch {}
   }, []);
 
@@ -124,39 +136,80 @@ export default function MarketEventsPage() {
       localStorage.setItem(STORAGE_MODEL, model);
       localStorage.setItem(STORAGE_PERIODS, periodsRaw);
       localStorage.setItem(STORAGE_RETURN_MODE, returnMode);
+      localStorage.setItem(STORAGE_Y_FROM, String(yearFrom));
+      localStorage.setItem(STORAGE_Y_TO, String(yearTo));
     } catch {}
   }
 
   const periods = useMemo(() => parsePeriods(periodsRaw), [periodsRaw]);
 
-  // === Запуск: AI → события → цены → расчёт ===
   async function run() {
     setLoading(true);
     setError(null);
-    setStatus('AI: ищу события...');
+    setStatus('Шаг 1/4 — AI формирует ключевые слова...');
     setEvents([]);
+    setArticles([]);
+    setGdeltQuery('');
     setPrices({});
     try {
-      // 1. Запрос к AI
-      const aiRes = await fetch('/api/ai/find-events', {
+      // === Шаг 1: AI → GDELT query ===
+      const kwRes = await fetch('/api/ai/keywords', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ query, model, limit }),
+        body: JSON.stringify({ query, model }),
       }).then(r => r.json());
-      if (aiRes.error) throw new Error(`AI: ${aiRes.error}`);
-      const evs: AiEvent[] = aiRes.events || [];
-      if (!evs.length) {
-        setStatus('AI не нашёл подходящих событий.');
+      if (kwRes.error) throw new Error(`Ключевые слова: ${kwRes.error}`);
+      const gq: string = kwRes.gdeltQuery;
+      setGdeltQuery(gq);
+      setStatus(`Шаг 2/4 — GDELT ищет статьи (${yearFrom}–${yearTo})...`);
+
+      // === Шаг 2: GDELT ===
+      const ndRes = await fetch('/api/news/gdelt', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ query: gq, yearFrom, yearTo, maxPerYear }),
+      }).then(r => r.json());
+      if (ndRes.error) throw new Error(`GDELT: ${ndRes.error}`);
+      const arts: GdeltArticle[] = ndRes.articles || [];
+      setArticles(arts);
+      if (!arts.length) {
+        setStatus(`GDELT не нашёл статей. Уточните запрос или расширьте годы.`);
         setLoading(false);
         return;
       }
-      setEvents(evs);
-      setStatus(`AI: найдено ${evs.length} событий. Загружаю цены ${asset}...`);
+      setStatus(`Шаг 3/4 — AI группирует ${arts.length} статей в события...`);
 
-      // 2. Цены актива одним запросом: от (min date - 10) до (max date + max period + 10)
-      const minDate = evs[0].date;
+      // === Шаг 3: AI → события ===
+      const evRes = await fetch('/api/ai/cluster-events', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ query, articles: arts, model, limit }),
+      }).then(r => r.json());
+      if (evRes.error) throw new Error(`Кластеризация: ${evRes.error}`);
+      const evs: AiEvent[] = evRes.events || [];
+      if (!evs.length) {
+        setEvents([]);
+        setStatus(`AI не нашёл подходящих событий среди ${arts.length} статей.`);
+        setLoading(false);
+        return;
+      }
+      // отрежем события вне диапазона лет (на всякий случай)
+      const filtered = evs.filter(e => {
+        const y = parseInt(e.date.slice(0, 4), 10);
+        return y >= yearFrom && y <= yearTo;
+      });
+      setEvents(filtered);
+      setStatus(`Шаг 4/4 — загружаю цены ${asset}...`);
+
+      // === Шаг 4: цены актива одним запросом ===
+      if (!filtered.length) {
+        setStatus(`События за пределами диапазона лет.`);
+        setLoading(false);
+        return;
+      }
+      const minDate = filtered[0].date;
       const maxPeriod = Math.max(0, ...periods);
-      const maxDate = addDays(evs[evs.length - 1].date, maxPeriod + 10);
+      const maxDate = addDays(filtered[filtered.length - 1].date, maxPeriod + 10);
       const today = todayIso();
       const to = maxDate > today ? today : maxDate;
       const from = addDays(minDate, -10);
@@ -171,13 +224,11 @@ export default function MarketEventsPage() {
 
       const pm: PriceMap = {};
       for (const r of arr) {
-        if (r && typeof r.date === 'string' && typeof r.price === 'number') {
-          pm[r.date] = r.price;
-        }
+        if (r && typeof r.date === 'string' && typeof r.price === 'number') pm[r.date] = r.price;
       }
       setPrices(pm);
       setPricesAsset(asset);
-      setStatus(`✓ Готово: ${evs.length} событий, ${Object.keys(pm).length} торговых дней по ${asset}.`);
+      setStatus(`✓ Готово: ${filtered.length} событий из ${arts.length} статей, ${Object.keys(pm).length} торговых дней по ${asset}.`);
       saveSettings();
     } catch (e: any) {
       setError(e.message);
@@ -187,13 +238,11 @@ export default function MarketEventsPage() {
     }
   }
 
-  // === Матрица доходностей ===
   const sortedTradingDates = useMemo(() => Object.keys(prices).sort(), [prices]);
 
   const rows = useMemo(() => {
     if (!events.length || !sortedTradingDates.length) return [];
     return events.map(ev => {
-      // T+0 = первый торговый день ≥ event.date
       const i0 = firstTradeOnOrAfter(sortedTradingDates, ev.date);
       if (i0 < 0) {
         return { event: ev, t0Date: null, t0Price: null, values: periods.map(() => null) };
@@ -213,7 +262,6 @@ export default function MarketEventsPage() {
         if (returnMode === 'cumulative') {
           v = p / t0Price - 1;
         } else {
-          // absolute = изменение к предыдущему отчётному периоду
           v = prevPrice ? p / prevPrice - 1 : 0;
           prevPrice = p;
         }
@@ -253,12 +301,15 @@ export default function MarketEventsPage() {
     setTimeout(() => URL.revokeObjectURL(a.href), 100);
   }
 
+  const minYear = 2015;
+  const nowY = currentYear();
+
   return (
     <main>
       <section className="card">
         <h2 className="font-semibold mb-1">Анализ событий — реакция актива на исторические события</h2>
         <p className="text-xs text-neutral-500 mb-3">
-          Текстом описываете тип событий → AI ищет даты → таблица показывает доходность актива за выбранные периоды.
+          Описание → AI генерирует ключевые слова → GDELT ищет статьи в диапазоне лет → AI группирует их в события → таблица доходностей актива.
         </p>
 
         <label className="flex flex-col mb-3">
@@ -266,7 +317,7 @@ export default function MarketEventsPage() {
           <textarea
             className="input w-full font-mono"
             rows={3}
-            placeholder="Например: Крупные банкротства банков США 2008–2024 года; или: Дни, когда ФРС повышала ставку на 75 b.p."
+            placeholder="Например: Крупные банкротства банков США; или: Дни, когда ФРС повышала ставку на 75 b.p.; или: Геополитические шоки на Ближнем Востоке."
             value={query}
             onChange={e => setQuery(e.target.value)}
           />
@@ -274,7 +325,19 @@ export default function MarketEventsPage() {
 
         <div className="flex flex-wrap gap-3 items-end">
           <label className="flex flex-col">
-            <span className="label">Актив (по умолчанию SPY)</span>
+            <span className="label">Год от</span>
+            <input type="number" className="input w-24" min={minYear} max={nowY}
+                   value={yearFrom}
+                   onChange={e => setYearFrom(Math.max(minYear, Math.min(nowY, parseInt(e.target.value) || minYear)))} />
+          </label>
+          <label className="flex flex-col">
+            <span className="label">Год до</span>
+            <input type="number" className="input w-24" min={minYear} max={nowY}
+                   value={yearTo}
+                   onChange={e => setYearTo(Math.max(minYear, Math.min(nowY, parseInt(e.target.value) || nowY)))} />
+          </label>
+          <label className="flex flex-col">
+            <span className="label">Актив (default SPY)</span>
             <input type="text" className="input w-28 font-mono uppercase"
                    value={asset}
                    onChange={e => setAsset(e.target.value.toUpperCase().trim())} />
@@ -291,7 +354,25 @@ export default function MarketEventsPage() {
             </select>
           </label>
           <label className="flex flex-col">
-            <span className="label">Периоды (календарные дни)</span>
+            <span className="label">Статей / год</span>
+            <input type="number" className="input w-20" min={10} max={250}
+                   value={maxPerYear}
+                   onChange={e => setMaxPerYear(parseInt(e.target.value) || 100)} />
+          </label>
+          <label className="flex flex-col">
+            <span className="label">Макс. событий</span>
+            <input type="number" className="input w-20" min={1} max={50}
+                   value={limit}
+                   onChange={e => setLimit(parseInt(e.target.value) || 25)} />
+          </label>
+          <button className="btn-primary" onClick={run} disabled={loading || !query.trim() || yearFrom > yearTo}>
+            {loading ? 'Поиск...' : '▶ Найти события'}
+          </button>
+        </div>
+
+        <div className="flex flex-wrap gap-3 items-end mt-3">
+          <label className="flex flex-col">
+            <span className="label">Периоды (календ. дней)</span>
             <input type="text" className="input w-56 font-mono"
                    value={periodsRaw}
                    onChange={e => setPeriodsRaw(e.target.value)} />
@@ -305,26 +386,23 @@ export default function MarketEventsPage() {
             </select>
           </label>
           <label className="flex flex-col">
-            <span className="label">Макс. событий</span>
-            <input type="number" className="input w-20" min={1} max={50}
-                   value={limit}
-                   onChange={e => setLimit(parseInt(e.target.value) || 25)} />
-          </label>
-          <label className="flex flex-col">
             <span className="label">Шкала ±%</span>
             <input type="number" className="input w-20" min={1} step={1}
                    value={clampPct}
                    onChange={e => setClampPct(parseFloat(e.target.value) || 10)} />
           </label>
-          <button className="btn-primary" onClick={run} disabled={loading || !query.trim()}>
-            {loading ? 'Поиск...' : '▶ Найти события'}
-          </button>
           <button className="btn" onClick={downloadCsv} disabled={!rows.length}>Скачать CSV</button>
         </div>
 
-        <div className="mt-2 text-xs">
-          {status && <span className="text-blue-600">{status}</span>}
-          {error && <span className="text-red-600 ml-2">Ошибка: {error}</span>}
+        <div className="mt-3 text-xs space-y-1">
+          {status && <div className="text-blue-600">{status}</div>}
+          {error && <div className="text-red-600">Ошибка: {error}</div>}
+          {gdeltQuery && (
+            <div className="text-neutral-500">
+              <span className="font-semibold">GDELT query:</span>{' '}
+              <code className="bg-neutral-100 px-1 rounded">{gdeltQuery}</code>
+            </div>
+          )}
         </div>
       </section>
 
@@ -386,8 +464,46 @@ export default function MarketEventsPage() {
             T+0 = первый торговый день ≥ даты события. T+kd = последний торговый день ≤ event_date + k календарных дней.
             {returnMode === 'cumulative'
               ? ' Доходность считается к цене T+0.'
-              : ' Доходность считается к предыдущей точке (T+0 для первой колонки).'}
+              : ' Доходность считается к предыдущей точке.'}
           </p>
+        </section>
+      )}
+
+      {articles.length > 0 && (
+        <section className="card">
+          <button
+            type="button"
+            className="text-sm font-semibold text-neutral-700 hover:underline"
+            onClick={() => setShowArticles(s => !s)}
+          >
+            {showArticles ? '▼' : '►'} Сырые статьи GDELT ({articles.length})
+          </button>
+          {showArticles && (
+            <div className="mt-3 max-h-96 overflow-y-auto text-xs">
+              <table className="w-full">
+                <thead className="sticky top-0 bg-neutral-100">
+                  <tr>
+                    <th className="text-left p-1.5 border whitespace-nowrap">Дата</th>
+                    <th className="text-left p-1.5 border">Заголовок</th>
+                    <th className="text-left p-1.5 border whitespace-nowrap">Источник</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {articles.map((a, i) => (
+                    <tr key={i} className="hover:bg-neutral-50">
+                      <td className="p-1.5 border font-mono whitespace-nowrap">{a.seendate}</td>
+                      <td className="p-1.5 border">
+                        <a href={a.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                          {a.title}
+                        </a>
+                      </td>
+                      <td className="p-1.5 border whitespace-nowrap text-neutral-500">{a.domain}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
       )}
     </main>
