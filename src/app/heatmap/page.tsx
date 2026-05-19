@@ -315,7 +315,7 @@ export default function HeatmapPage() {
 
   // Высоты sticky-рядов
   const H_MONTH = 20;
-  const H_EVENTS_TXT = cellWidth >= 28 ? 100 : 0; // вертикальный текст событий — только при достаточной ширине
+  const H_EVENTS_TXT = 140; // диагональные подписи событий
   const H_DOTS = 16;
   const H_DATE = 32;
   const TOP_MONTH = 0;
@@ -329,9 +329,9 @@ export default function HeatmapPage() {
         <h2 className="font-semibold mb-2">Heatmap — дневные доходности тикеров × дни</h2>
         <p className="text-xs text-neutral-500 mb-3">
           Цвет ячейки — % изменения цены закрытия. Переключатель «Дневная / Накопительная» выбирает режим.
-          В накопительном — доходность от выбранной даты-якоря (клик на день в шапке). Цветные точки и
-          вертикальные подписи сверху — значимые события. Маркеры с правым нижним углом ячеек — изменения
-          рейтингов аналитиков (FMP grades).
+          В накопительном — доходность от выбранной даты-якоря (клик на день в шапке или на подписи события).
+          Диагональные подписи сверху и цветные точки — значимые события. Уголки ячеек — изменения рейтингов
+          аналитиков (FMP grades).
         </p>
 
         <div className="flex flex-wrap gap-3 items-end">
@@ -510,44 +510,65 @@ export default function HeatmapPage() {
                 ))}
               </div>
 
-              {/* Тексты событий (вертикальные) */}
+              {/* Тексты событий (диагональные подписи) */}
               {H_EVENTS_TXT > 0 && (
-                <div className="flex sticky z-30 bg-white border-b border-neutral-200"
-                     style={{ top: TOP_EVENTS_TXT }}>
+                <div className="sticky z-30 bg-white border-b border-neutral-200"
+                     style={{ top: TOP_EVENTS_TXT, height: H_EVENTS_TXT, display: 'flex' }}>
                   <div className="sticky left-0 z-40 bg-white border-r border-neutral-300 text-[10px] text-neutral-500 px-2 flex items-center"
                        style={{ width: 80, minWidth: 80, height: H_EVENTS_TXT }}>
                     События
                   </div>
-                  {tradingDates.map(d => {
-                    const evs = eventsMap[d];
-                    const main = evs && evs[0];
-                    return (
-                      <div key={d}
-                           className="border-r border-neutral-100 relative overflow-hidden"
-                           style={{ width: cellWidth, minWidth: cellWidth, height: H_EVENTS_TXT }}>
-                        {main && (
-                          <div
-                            className="absolute inset-0 flex items-end justify-center pb-1"
-                            title={evs.map(e => `${e.title}${e.description ? ': ' + e.description : ''}`).join('\n')}
-                          >
-                            <span
-                              className="text-[10px] font-medium leading-tight whitespace-nowrap"
-                              style={{
-                                writingMode: 'vertical-rl',
-                                transform: 'rotate(180deg)',
-                                color: EVENT_COLORS[main.category],
-                                maxHeight: H_EVENTS_TXT - 6,
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                              }}
-                            >
-                              {main.title}{evs.length > 1 ? ` +${evs.length - 1}` : ''}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                  <div className="relative"
+                       style={{
+                         width: tradingDates.length * cellWidth,
+                         minWidth: tradingDates.length * cellWidth,
+                         height: H_EVENTS_TXT,
+                       }}>
+                    {tradingDates.map((d, i) => {
+                      const evs = eventsMap[d];
+                      if (!evs || !evs.length) return null;
+                      const main = evs[0];
+                      const label = main.title + (evs.length > 1 ? ` +${evs.length - 1}` : '');
+                      const titleAttr = evs.map(e =>
+                        `${e.title}${e.description ? ': ' + e.description : ''}`
+                      ).join('\n');
+                      return (
+                        <button
+                          key={d}
+                          type="button"
+                          title={titleAttr}
+                          onClick={() => {
+                            if (anchorDate === d) {
+                              setMode('daily');
+                              setAnchorDate(null);
+                            } else {
+                              setMode('cumulative');
+                              setAnchorDate(d);
+                            }
+                          }}
+                          className="absolute font-semibold whitespace-nowrap hover:underline cursor-pointer"
+                          style={{
+                            left: i * cellWidth + cellWidth / 2,
+                            bottom: 4,
+                            transformOrigin: 'left bottom',
+                            transform: 'rotate(-55deg)',
+                            fontSize: 11,
+                            color: EVENT_COLORS[main.category],
+                            background: 'transparent',
+                            border: 'none',
+                            padding: '0 2px',
+                            maxWidth: 240,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                        >
+                          <span className="inline-block w-1.5 h-1.5 rounded-full mr-1 align-middle"
+                                style={{ background: EVENT_COLORS[main.category] }} />
+                          {label.length > 38 ? label.slice(0, 36) + '…' : label}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
 
