@@ -113,3 +113,78 @@ export async function gdeltSearch(opts: {
     sourcecountry: a.sourcecountry,
   })).filter((a: GdeltArticle) => a.url && a.title && a.seendate);
 }
+
+// ===== Универсальный конструктор для /admin/gdelt (отладка) =====
+
+export type GdeltRawRequest = {
+  query: string;
+  mode?: string;          // ArtList, TimelineVol, ToneChart, ...
+  format?: string;        // json, csv, html, rss
+  maxrecords?: string;    // 1-250
+  sort?: string;          // DateDesc, DateAsc, HybridRel, ToneDesc, ToneAsc
+  timespan?: string;      // 1d, 1w, 3m, 1y — альтернатива датам
+  startDate?: string;     // YYYY-MM-DD
+  endDate?: string;       // YYYY-MM-DD
+  extra?: Record<string, string>;  // любые доп. параметры
+};
+
+export function buildGdeltUrl(req: GdeltRawRequest): string {
+  const sp = new URLSearchParams();
+  sp.set('query', req.query);
+  sp.set('mode', req.mode || 'artlist');
+  sp.set('format', req.format || 'json');
+  if (req.maxrecords) sp.set('maxrecords', req.maxrecords);
+  if (req.sort) sp.set('sort', req.sort);
+  // timespan имеет приоритет; иначе — диапазон дат
+  if (req.timespan) {
+    sp.set('timespan', req.timespan);
+  } else {
+    if (req.startDate) sp.set('startdatetime', ymdToCompact(req.startDate, '000000'));
+    if (req.endDate) sp.set('enddatetime', ymdToCompact(req.endDate, '235959'));
+  }
+  if (req.extra) {
+    for (const [k, v] of Object.entries(req.extra)) {
+      if (v == null) continue;
+      const s = String(v).trim();
+      if (!s) continue;
+      sp.set(k, s);
+    }
+  }
+  return `${BASE}?${sp.toString()}`;
+}
+
+export async function callGdeltRaw(req: GdeltRawRequest, timeoutMs = 25000): Promise<{
+  url: string;
+  status: number;
+  contentType: string;
+  body: any;
+}> {
+  const url = buildGdeltUrl(req);
+  await gdeltGate();
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      cache: 'no-store',
+      signal: ctrl.signal,
+      headers: {
+        'user-agent': 'Mozilla/5.0 (compatible; market-events-research/1.0)',
+        'accept': 'application/json,text/plain;q=0.9,*/*;q=0.5',
+      },
+    });
+  } catch (e: any) {
+    clearTimeout(timer);
+    if (e.name === 'AbortError') throw new Error(`GDELT timeout ${timeoutMs}ms`);
+    throw new Error(`GDELT fetch: ${e.message}`);
+  }
+  clearTimeout(timer);
+  const ct = res.headers.get('content-type') || '';
+  const text = await res.text();
+  let body: any = text;
+  const trimmed = text.trim();
+  if ((req.format || 'json') === 'json' && (trimmed.startsWith('{') || trimmed.startsWith('['))) {
+    try { body = JSON.parse(trimmed); } catch { body = text; }
+  }
+  return { url, status: res.status, contentType: ct, body };
+}
