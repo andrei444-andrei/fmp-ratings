@@ -21,6 +21,9 @@ async function ensureSchema(): Promise<void> {
   );
   await libsqlClient.execute(`CREATE INDEX IF NOT EXISTS idx_ai_events_date ON ai_events_db (date)`);
   await libsqlClient.execute(`CREATE INDEX IF NOT EXISTS idx_ai_events_cat ON ai_events_db (category)`);
+  // Переводы title/description по языкам: JSON { "en": {title, description}, "ru": {...} }.
+  // base-колонки title/description — англоязычный оригинал (язык промпта).
+  try { await libsqlClient.execute(`ALTER TABLE ai_events_db ADD COLUMN translations TEXT`); } catch { /* колонка уже есть */ }
 
   await libsqlClient.execute(`CREATE TABLE IF NOT EXISTS ai_event_templates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,12 +40,14 @@ async function ensureSchema(): Promise<void> {
   ensured = true;
 }
 
+export type EventTranslation = { title: string; description?: string };
 export type DbEvent = {
   date: string;
   category: string;
   title: string;
   description?: string;
   source?: string;
+  translations?: Record<string, EventTranslation>;  // { en: {...}, ru: {...} }
 };
 
 export async function insertEvents(events: DbEvent[]): Promise<number> {
@@ -53,10 +58,12 @@ export async function insertEvents(events: DbEvent[]): Promise<number> {
   // INSERT OR IGNORE — дубликаты по (date,title) тихо пропускаются.
   for (const e of events) {
     if (!e.date || !e.title) continue;
+    const tr = e.translations && Object.keys(e.translations).length
+      ? JSON.stringify(e.translations) : null;
     const r = await libsqlClient.execute({
-      sql: `INSERT OR IGNORE INTO ai_events_db (date, category, title, description, source, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)`,
-      args: [e.date, e.category || 'other', e.title, e.description || null, e.source || null, now],
+      sql: `INSERT OR IGNORE INTO ai_events_db (date, category, title, description, source, translations, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: [e.date, e.category || 'other', e.title, e.description || null, e.source || null, tr, now],
     });
     inserted += Number(r.rowsAffected || 0);
   }
@@ -74,17 +81,24 @@ export async function listEvents(opts: {
   if (opts.category) { where.push('category = ?'); args.push(opts.category); }
   const limit = Math.max(1, Math.min(5000, opts.limit ?? 1000));
   const offset = Math.max(0, opts.offset ?? 0);
-  const sql = `SELECT date, category, title, description, source FROM ai_events_db
+  const sql = `SELECT date, category, title, description, source, translations FROM ai_events_db
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
     ORDER BY date ASC LIMIT ? OFFSET ?`;
   const r = await libsqlClient.execute({ sql, args: [...args, limit, offset] });
-  return (r.rows || []).map((row: any) => ({
-    date: String(row.date),
-    category: String(row.category),
-    title: String(row.title),
-    description: row.description != null ? String(row.description) : undefined,
-    source: row.source != null ? String(row.source) : undefined,
-  }));
+  return (r.rows || []).map((row: any) => {
+    let translations: Record<string, EventTranslation> | undefined;
+    if (row.translations != null) {
+      try { translations = JSON.parse(String(row.translations)); } catch {}
+    }
+    return {
+      date: String(row.date),
+      category: String(row.category),
+      title: String(row.title),
+      description: row.description != null ? String(row.description) : undefined,
+      source: row.source != null ? String(row.source) : undefined,
+      translations,
+    };
+  });
 }
 
 export async function countEvents(): Promise<{ total: number; byCategory: Record<string, number>; minDate?: string; maxDate?: string }> {
