@@ -596,6 +596,10 @@ export default function HeatmapPage() {
           setPrices(res.prices || {});
           setGrades(res.grades || {});
           setLoadedTickers(res.loadedTickers || []);
+        } else {
+          // Кэша на этот диапазон нет (например, первый заход после смены дефолта) —
+          // грузим напрямую, результат закэшируется в Turso для следующих заходов.
+          await loadDataset(tks, f, t);
         }
       } catch {}
     })();
@@ -1127,6 +1131,7 @@ export default function HeatmapPage() {
 
           {/* Правая колонка: лента событий ↔ детали выбранного дня */}
           <aside className="hm-feed-panel">
+          <div className="hm-feed-inner">
           {!selectedDate ? (
             <>
               <div className="hm-feed-h">
@@ -1367,6 +1372,7 @@ export default function HeatmapPage() {
             </div>
             </div>
           )}
+          </div>
           </aside>
          </div>
         )}
