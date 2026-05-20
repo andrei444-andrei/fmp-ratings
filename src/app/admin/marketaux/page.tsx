@@ -149,6 +149,16 @@ export default function MarketauxDebugPage() {
     rateLimit?: Record<string, string>;
   } | null>(null);
 
+  // Discover domains
+  const [discDays, setDiscDays] = useState(14);
+  const [discStep, setDiscStep] = useState(2);
+  const [discLoading, setDiscLoading] = useState(false);
+  const [discError, setDiscError] = useState<string | null>(null);
+  const [discResult, setDiscResult] = useState<{
+    sampledCount: number; totalArticles: number; uniqueDomains: number;
+    domains: { domain: string; count: number }[]; errors?: string[];
+  } | null>(null);
+
   const fields = useMemo(() => fieldsFor(endpoint), [endpoint]);
   const needsUuid = endpoint === '/news/by-uuid' || endpoint === '/news/similar';
 
@@ -215,6 +225,36 @@ export default function MarketauxDebugPage() {
     setExtrasRaw('');
     setResult(null);
     setError(null);
+  }
+
+  async function discoverDomains() {
+    setDiscLoading(true);
+    setDiscError(null);
+    setDiscResult(null);
+    try {
+      const sp = new URLSearchParams();
+      sp.set('days', String(discDays));
+      sp.set('step', String(discStep));
+      sp.set('limit', '100');
+      if (fieldValues.search) sp.set('search', fieldValues.search);
+      if (fieldValues.symbols) sp.set('symbols', fieldValues.symbols);
+      if (fieldValues.countries) sp.set('countries', fieldValues.countries);
+      const res = await fetch(`/api/marketaux/domains?${sp.toString()}`).then(r => r.json());
+      if (res?.error) { setDiscError(res.error); return; }
+      setDiscResult(res);
+    } catch (e: any) {
+      setDiscError(e.message);
+    } finally {
+      setDiscLoading(false);
+    }
+  }
+
+  function addDomainToFilter(domain: string) {
+    setFieldValues(p => {
+      const cur = (p.domains || '').split(',').map(s => s.trim()).filter(Boolean);
+      if (cur.includes(domain)) return p;
+      return { ...p, domains: [...cur, domain].join(',') };
+    });
   }
 
   const epMeta = ENDPOINTS.find(e => e.v === endpoint);
@@ -315,6 +355,61 @@ export default function MarketauxDebugPage() {
           onChange={e => setExtrasRaw(e.target.value)}
           placeholder={'# пример:\nsearch=oil\nlimit=10'}
         />
+      </section>
+
+      <section className="card">
+        <h3 className="font-semibold mb-2">🔎 Какие домены реально доступны в моём тарифе</h3>
+        <p className="text-xs text-neutral-500 mb-3">
+          Фильтр <code>domains</code> работает только по источникам, которые есть в вашем плане Marketaux.
+          Премиум-вайры (bloomberg.com, wsj.com, ft.com) в большинстве тарифов отсутствуют — поэтому фильтр по ним возвращает пусто.
+          Кнопка ниже пройдётся по выборке последних дней, соберёт реальные домены из ответов и покажет частоту.
+          Клик по домену добавит его в поле <code>domains</code> формы выше.
+          {(fieldValues.search || fieldValues.symbols || fieldValues.countries) && (
+            <> Текущие фильтры (search/symbols/countries) учитываются.</>
+          )}
+        </p>
+        <div className="flex flex-wrap gap-3 items-end">
+          <label className="flex flex-col">
+            <span className="label">Дней назад</span>
+            <input type="number" className="input w-24" min={1} max={30} value={discDays}
+              onChange={e => setDiscDays(parseInt(e.target.value) || 14)} />
+          </label>
+          <label className="flex flex-col">
+            <span className="label">Шаг (через сколько дней)</span>
+            <input type="number" className="input w-24" min={1} max={30} value={discStep}
+              onChange={e => setDiscStep(parseInt(e.target.value) || 1)} />
+          </label>
+          <span className="text-xs text-neutral-500 self-center">
+            ≈ {Math.ceil(discDays / discStep)} запросов к Marketaux
+          </span>
+          <button className="btn-primary" onClick={discoverDomains} disabled={discLoading}>
+            {discLoading ? '…собираю' : 'Собрать домены из выборки'}
+          </button>
+        </div>
+        {discError && <p className="text-red-600 text-sm mt-2">{discError}</p>}
+        {discResult && (
+          <div className="mt-3">
+            <p className="text-xs text-neutral-600 mb-2">
+              Выборка: {discResult.sampledCount} дней · {discResult.totalArticles} статей ·
+              {' '}{discResult.uniqueDomains} уникальных доменов
+            </p>
+            {discResult.errors && (
+              <p className="text-xs text-amber-600 mb-2">Ошибки: {discResult.errors.join('; ')}</p>
+            )}
+            <div className="flex flex-wrap gap-1.5 max-h-72 overflow-y-auto">
+              {discResult.domains.map(d => (
+                <button
+                  key={d.domain}
+                  onClick={() => addDomainToFilter(d.domain)}
+                  className="text-xs border border-neutral-300 rounded px-2 py-1 hover:bg-blue-50 hover:border-blue-400 font-mono"
+                  title="Добавить в фильтр domains"
+                >
+                  {d.domain} <span className="text-neutral-400">×{d.count}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="card">
