@@ -284,13 +284,24 @@
 /* align-items: stretch — лента и левая колонка одинаковой высоты */
 /* Высота ленты привязана к левой колонке (графику); прокрутка — внутри блока */
 .hm-stage { display: grid; grid-template-columns: 1fr 360px; gap: 14px; align-items: stretch; }
-@media (max-width: 1180px) { .hm-stage { grid-template-columns: 1fr; } }
 .hm-panel { min-width: 0; } /* грид скроллится по X */
+/* Высота правой колонки привязана к левой: внутренний контент абсолютный,
+   поэтому он не растягивает строку грида — высота диктуется графиком слева. */
 .hm-feed-panel {
+  position: relative; overflow: hidden;
   background: var(--hm-surf); border: .5px solid var(--hm-line);
-  border-radius: var(--hm-rad-lg); overflow: hidden;
-  display: flex; flex-direction: column; min-height: 0;
-  max-height: 100%;
+  border-radius: var(--hm-rad-lg); min-height: 0;
+}
+.hm-feed-inner {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+}
+@media (max-width: 1180px) {
+  .hm-stage { grid-template-columns: 1fr; }
+  /* На узких экранах одна колонка — лента течёт по контенту, без абсолюта. */
+  .hm-feed-panel { position: static; }
+  .hm-feed-inner { position: static; }
+  .hm-feed, .hm-pop-detail { max-height: 70vh; }
 }
 
 /* hot / selected подсветка колонок */
