@@ -1,0 +1,85 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { aimlChat, getAimlSonarModel } from '@/lib/aimlapi';
+import { getCachedNews, setCachedNews } from '@/lib/news-cache';
+
+// POST /api/ai/day-news { date: YYYY-MM-DD, lang?: string }
+// 5-10 значимых финансовых новостей за день через Perplexity Sonar (живой поиск),
+// со ссылками, на языке браузера. Кэшируется в Turso (news_day_cache, source=sonar).
+
+function langName(lang: string): string {
+  const code = (lang || 'ru').slice(0, 2).toLowerCase();
+  const map: Record<string, string> = {
+    ru: 'русском', en: 'английском', uk: 'украинском', de: 'немецком',
+    fr: 'французском', es: 'испанском', pt: 'португальском', it: 'итальянском',
+    pl: 'польском', tr: 'турецком', zh: 'китайском', ja: 'японском',
+  };
+  return map[code] || 'английском';
+}
+
+export async function POST(req: NextRequest) {
+  let date = '', lang = 'ru', force = false;
+  try {
+    const j = await req.json();
+    date = typeof j?.date === 'string' ? j.date : '';
+    lang = typeof j?.lang === 'string' ? j.lang : 'ru';
+    force = j?.force === true || j?.force === 1;
+  } catch {}
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return NextResponse.json({ error: 'date=YYYY-MM-DD обязателен' }, { status: 400 });
+  }
+
+  if (!force) {
+    try {
+      const cached = await getCachedNews(`sonar:${date}:${lang.slice(0, 2)}`);
+      if (cached) return NextResponse.json({ ...cached.payload, cached: true });
+    } catch {}
+  }
+
+  const outLang = langName(lang);
+  const system = [
+    'Ты — финансовый исследователь с доступом к веб-поиску.',
+    `Найди 5-10 значимых финансовых/рыночных новостей за указанную дату и верни СТРОГО JSON.`,
+    'Ищи по авторитетным источникам (Reuters, Bloomberg, WSJ, FT, CNBC, регуляторы).',
+    `Текст полей title/description выводи на ${outLang} языке.`,
+    'Формат: {"items":[{"title":"...","description":"<1-2 предложения>","category":"geopolitics|monetary|macro|corporate|crisis|policy|other","url":"https://...","source":"домен"}]}',
+    'Правила: только реальные новости этой даты с рабочими ссылками; 5-10 штук; никакого текста вне JSON.',
+  ].join('\n');
+
+  let raw: string;
+  try {
+    raw = await aimlChat({
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: `Дата: ${date}.` },
+      ],
+      model: getAimlSonarModel(),
+      temperature: 0.1,
+      max_tokens: 2500,
+    });
+  } catch (e: any) {
+    return NextResponse.json({ error: `Sonar: ${e.message}` }, { status: 502 });
+  }
+
+  let parsed: any = null;
+  try { parsed = JSON.parse(raw); } catch {
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (m) { try { parsed = JSON.parse(m[0]); } catch {} }
+  }
+  const arr = Array.isArray(parsed?.items) ? parsed.items
+    : Array.isArray(parsed) ? parsed : [];
+  const items = arr.map((it: any) => {
+    const url = typeof it?.url === 'string' && /^https?:\/\//.test(it.url) ? it.url : undefined;
+    let host = typeof it?.source === 'string' ? it.source : undefined;
+    if (!host && url) { try { host = new URL(url).hostname.replace(/^www\./, ''); } catch {} }
+    return {
+      title: typeof it?.title === 'string' ? it.title.slice(0, 240) : '',
+      description: typeof it?.description === 'string' ? it.description.slice(0, 500) : '',
+      category: typeof it?.category === 'string' ? it.category : 'other',
+      url, source: host,
+    };
+  }).filter((x: any) => x.title);
+
+  const payload = { date, items, source: 'perplexity' };
+  try { await setCachedNews(`sonar:${date}:${lang.slice(0, 2)}`, 'perplexity', payload); } catch {}
+  return NextResponse.json({ ...payload, cached: false });
+}
