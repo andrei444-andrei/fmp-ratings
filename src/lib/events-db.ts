@@ -121,6 +121,59 @@ export async function clearEvents(): Promise<void> {
   await libsqlClient.execute('DELETE FROM ai_events_db');
 }
 
+// ===== Перевод недостающих языков =====
+
+function safeLang(l: string): string { return l.replace(/[^a-z]/gi, '').toLowerCase(); }
+
+// Сколько событий ещё не имеют перевода на язык lang.
+export async function countMissingLang(lang: string): Promise<number> {
+  await ensureSchema();
+  const l = safeLang(lang);
+  if (!l) return 0;
+  const r = await libsqlClient.execute({
+    sql: `SELECT COUNT(*) AS n FROM ai_events_db
+          WHERE translations IS NULL OR json_extract(translations, ?) IS NULL`,
+    args: [`$.${l}`],
+  });
+  return Number(r.rows?.[0]?.n || 0);
+}
+
+export type MissingRow = {
+  id: number; title: string; description?: string;
+  translations?: Record<string, EventTranslation>;
+};
+
+// Партия событий без перевода на lang (для батч-перевода).
+export async function listMissingLang(lang: string, limit: number): Promise<MissingRow[]> {
+  await ensureSchema();
+  const l = safeLang(lang);
+  if (!l) return [];
+  const r = await libsqlClient.execute({
+    sql: `SELECT id, title, description, translations FROM ai_events_db
+          WHERE translations IS NULL OR json_extract(translations, ?) IS NULL
+          ORDER BY id ASC LIMIT ?`,
+    args: [`$.${l}`, Math.max(1, Math.min(100, limit))],
+  });
+  return (r.rows || []).map((row: any) => {
+    let translations: Record<string, EventTranslation> | undefined;
+    if (row.translations != null) { try { translations = JSON.parse(String(row.translations)); } catch {} }
+    return {
+      id: Number(row.id),
+      title: String(row.title),
+      description: row.description != null ? String(row.description) : undefined,
+      translations,
+    };
+  });
+}
+
+export async function updateTranslations(id: number, translations: Record<string, EventTranslation>): Promise<void> {
+  await ensureSchema();
+  await libsqlClient.execute({
+    sql: `UPDATE ai_events_db SET translations = ? WHERE id = ?`,
+    args: [JSON.stringify(translations), id],
+  });
+}
+
 // ===== Шаблоны промптов =====
 
 export type Template = {

@@ -283,6 +283,32 @@ export default function AiEventsDebugPage() {
     } catch (e: any) { setCollectStatus(`Ошибка: ${e.message}`); }
   }
 
+  // Дозалить переводы на недостающие языки для уже собранных событий.
+  async function translateMissing() {
+    const targets = langList.filter(l => l !== 'en');
+    if (!targets.length) { setCollectStatus('Нет языков для перевода (кроме en).'); return; }
+    setCollecting(true);
+    let grandTotal = 0;
+    try {
+      for (const lang of targets) {
+        let guard = 0;
+        while (guard++ < 1000) {
+          const res = await fetch('/api/ai/events-db/translate', {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ lang, model, limit: 30 }),
+          }).then(r => r.json());
+          if (res?.error) { setCollectStatus(`перевод ${lang}: ${res.error}`); break; }
+          grandTotal += res.translated || 0;
+          setCollectStatus(`Перевод [${lang}]: +${res.translated || 0}, осталось ${res.remaining ?? '?'} · всего ${grandTotal}`);
+          if (!res.translated || (res.remaining ?? 0) <= 0) break;
+          await sleep(300);
+        }
+      }
+      setCollectStatus(`✓ Перевод завершён. Переведено всего: ${grandTotal}`);
+    } catch (e: any) { setCollectStatus(`Ошибка перевода: ${e.message}`); }
+    finally { setCollecting(false); }
+  }
+
   function downloadJson() {
     if (!events) return;
     const blob = new Blob([JSON.stringify(events, null, 2)], { type: 'application/json' });
@@ -435,6 +461,10 @@ export default function AiEventsDebugPage() {
           </label>
           <button className="btn-primary" onClick={collectToDb} disabled={collecting}>
             {collecting ? '⏳ Сбор…' : '▶ Запустить сбор в БД'}
+          </button>
+          <button className="btn" onClick={translateMissing} disabled={collecting}
+            title="Дозалить переводы на языки из поля «Языки» для уже собранных событий">
+            🌐 Перевести недостающие
           </button>
           <button className="btn" onClick={resetDb} disabled={collecting}>🗑 Сбросить базу</button>
           {collectStatus && <span className="text-xs text-blue-700 self-center">{collectStatus}</span>}
