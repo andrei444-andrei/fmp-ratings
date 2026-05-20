@@ -282,9 +282,10 @@
 }
 /* ===== Stage: heatmap + лента новостей ===== */
 /* align-items: stretch — лента и левая колонка одинаковой высоты */
-.hm-stage { display: grid; grid-template-columns: 1fr 360px; gap: 14px; align-items: stretch; }
+.hm-stage { display: grid; grid-template-columns: 1fr 360px; gap: 14px; align-items: start; }
 @media (max-width: 1180px) { .hm-stage { grid-template-columns: 1fr; } }
-.hm-panel { min-width: 0; display: flex; flex-direction: column; } /* грид скроллится по X */
+.hm-panel { min-width: 0; } /* грид скроллится по X */
+/* Лента ограничена по высоте и прокручивается внутри — не вылезает за сетку */
 .hm-feed-panel {
   background: var(--hm-surf); border: .5px solid var(--hm-line);
   border-radius: var(--hm-rad-lg); overflow: hidden;

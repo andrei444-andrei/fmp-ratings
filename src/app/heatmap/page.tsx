@@ -140,7 +140,6 @@ export default function HeatmapPage() {
   const [toDate, setToDate] = useState(todayIso());
   const [clampPct, setClampPct] = useState(3);
   const [clampPctAnchor, setClampPctAnchor] = useState(10);
-  const [customEventsRaw, setCustomEventsRaw] = useState('');
   const [fetchGrades] = useState(false);
 
   // ===== Данные =====
@@ -253,35 +252,10 @@ export default function HeatmapPage() {
     [tickersInput]
   );
 
-  const customEvents = useMemo<MarketEvent[]>(() => {
-    if (!customEventsRaw.trim()) return [];
-    try {
-      const parsed = JSON.parse(customEventsRaw);
-      if (Array.isArray(parsed)) {
-        return parsed.filter((e: any) => e && typeof e.date === 'string' && typeof e.title === 'string')
-          .map((e: any) => ({
-            date: e.date, title: e.title,
-            category: normalizeCategory(e.category),
-            description: e.description,
-          }));
-      }
-    } catch {}
-    const out: MarketEvent[] = [];
-    for (const line of customEventsRaw.split('\n')) {
-      const t = line.trim();
-      if (!t || t.startsWith('#')) continue;
-      const parts = t.split('|').map(s => s.trim());
-      if (parts.length >= 2 && /^\d{4}-\d{2}-\d{2}$/.test(parts[0])) {
-        out.push({ date: parts[0], title: parts[1], category: normalizeCategory(parts[2]) });
-      }
-    }
-    return out;
-  }, [customEventsRaw]);
-
   const allEvents = useMemo(() => {
     const seen = new Set<string>();
     const out: MarketEvent[] = [];
-    for (const src of [MARKET_EVENTS, customEvents, aiRangeEvents]) {
+    for (const src of [MARKET_EVENTS, aiRangeEvents]) {
       for (const e of src) {
         const k = `${e.date}|${e.title}`;
         if (seen.has(k)) continue;
@@ -290,7 +264,7 @@ export default function HeatmapPage() {
       }
     }
     return out;
-  }, [customEvents, aiRangeEvents]);
+  }, [aiRangeEvents]);
   const eventsMap = useMemo(() => eventsByDate(allEvents), [allEvents]);
 
   const tradingDates = useMemo<string[]>(() => {
@@ -693,6 +667,13 @@ export default function HeatmapPage() {
     return tradingDates[tradingDates.length - 1];
   }
 
+  // Выбор дня для деталей: привязка к торговому дню; нерабочие дни без данных не открываем.
+  function selectDay(date: string) {
+    const d = snapToTradingDay(date);
+    if (!tradingDates.includes(d)) return;
+    setSelectedDate(prev => (prev === d ? null : d));
+  }
+
   // Клик по самой дате — вкл/выкл накопленную доходность от этой даты (якорь).
   function toggleAnchorDate(date: string) {
     const snapped = snapToTradingDay(date);
@@ -775,10 +756,10 @@ export default function HeatmapPage() {
       <div className="hm-inner">
         {/* Setbar */}
         <div className="hm-setbar">
-          <span className="hm-pill" onClick={() => setDrawer(true)} title="Изменить тикеры">
+          <span className="hm-pill" onClick={() => setDrawer(d => !d)} title="Настройки">
             <b>{tickersSummary || '—'}</b>
           </span>
-          <span className="hm-pill" onClick={() => setDrawer(true)} title="Изменить диапазон">
+          <span className="hm-pill" onClick={() => setDrawer(d => !d)} title="Настройки">
             <b>{fromDate}</b> → <b>{toDate}</b>
           </span>
           {loadedTickers.length ? (
@@ -840,12 +821,6 @@ export default function HeatmapPage() {
               <label>Шкала ±% от якоря</label>
               <input type="number" value={clampPctAnchor} min={1} step={1}
                 onChange={e => setClampPctAnchor(parseFloat(e.target.value) || 10)} />
-            </div>
-
-            <div className="hm-drawer-full hm-fld">
-              <label>Свои события (JSON или `YYYY-MM-DD | заголовок | категория` на строку)</label>
-              <textarea value={customEventsRaw} onChange={e => setCustomEventsRaw(e.target.value)}
-                placeholder='2024-05-10 | CPI выше прогноза | macro' />
             </div>
           </div>
         </div>
@@ -922,7 +897,7 @@ export default function HeatmapPage() {
                       <th key={d}>
                         <div
                           className={`hm-dh ${isAnchor ? 'anchor' : ''} ${imp ? 'imp' : ''} ${hot ? 'hot' : ''} ${sel ? 'sel' : ''} ${aiMarkerDates.has(d) ? 'aimark' : ''} ${hoverPhaseDate === d ? 'aimark-hot' : ''}`}
-                          onClick={() => setSelectedDate(sel ? null : d)}
+                          onClick={() => selectDay(d)}
                           title={`${d} (${weekdayShort(d)})${evs ? '\n' + evs.map(e => e.title).join('\n') : ''}`}
                         >
                           <div className="hm-lane">
@@ -985,7 +960,7 @@ export default function HeatmapPage() {
                               minWidth: 36,
                               width: 36,
                             }}
-                            onClick={() => setSelectedDate(selectedDate === d ? null : d)}
+                            onClick={() => selectDay(d)}
                             onMouseEnter={e => setHover({ x: e.clientX, y: e.clientY, sym, date: d })}
                             onMouseMove={e => setHover(h => h ? { ...h, x: e.clientX, y: e.clientY } : null)}
                             onMouseLeave={() => setHover(null)}
@@ -1062,7 +1037,7 @@ export default function HeatmapPage() {
                   return (
                     <div key={d}
                       className={`hm-fday ${hot ? 'hot' : ''}`}
-                      onClick={() => setSelectedDate(d)}>
+                      onClick={() => selectDay(d)}>
                       <div className="hm-fday-h">
                         <span className="hm-fday-d">
                           {imp && <span style={{ color: 'var(--hm-imp)' }}>★</span>}
@@ -1357,7 +1332,7 @@ export default function HeatmapPage() {
                       style={{ borderLeftColor: meta.color }}
                       onMouseEnter={() => setHoverPhaseDate(it.date)}
                       onMouseLeave={() => setHoverPhaseDate(null)}
-                      onClick={() => setSelectedDate(it.date)}
+                      onClick={() => selectDay(it.date)}
                     >
                       <div className="hm-ai-card-h">
                         <span className="ph" style={{ color: meta.color }}>{meta.label}</span>
