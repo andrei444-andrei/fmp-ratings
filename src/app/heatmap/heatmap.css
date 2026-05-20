@@ -385,7 +385,11 @@
   font-size: 11px; padding: 3px 9px; border-radius: 99px;
   background: var(--hm-acc-bg); color: #cfc8fb; border: .5px solid var(--hm-acc-bd);
 }
-.hm-ai-sum-desc { font-size: 13px; color: var(--hm-tx2); line-height: 1.5; margin-top: 10px; }
+.hm-ai-sum-desc {
+  font-size: 14.5px; color: var(--hm-tx); line-height: 1.55; margin-top: 12px;
+  background: var(--hm-bg2); border: .5px solid var(--hm-line2);
+  border-radius: 10px; padding: 12px 14px;
+}
 .hm-ai-tk { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 10px; }
 .hm-ai-tkchip {
   font-size: 11px; font-family: var(--hm-mono); padding: 3px 8px; border-radius: 6px;
