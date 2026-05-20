@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchFredSeries } from '@/lib/leverage/fred';
 import { fetchCftcNetPctOi } from '@/lib/leverage/cftc';
-import { parseFinraCsv } from '@/lib/leverage/finra';
+import { parseFinraCsv, fetchFinraAuto } from '@/lib/leverage/finra';
 import { upsertSeries, upsertObservations } from '@/lib/leverage/store';
 import { FRED_SERIES, CFTC_MARKETS, cftcSeriesDef, FINRA_SERIES } from '@/lib/leverage/registry';
 
@@ -44,10 +44,16 @@ export async function POST(req: NextRequest) {
       }
     } else if (source === 'finra') {
       const csv = body?.csv;
-      if (typeof csv !== 'string' || !csv.trim()) {
-        return NextResponse.json({ error: 'Для FINRA нужен csv в теле запроса' }, { status: 400 });
+      // Если CSV не передан — качаем файл напрямую с сервера FINRA (auto).
+      let sourceUrl: string | undefined;
+      let parsed;
+      if (typeof csv === 'string' && csv.trim()) {
+        parsed = parseFinraCsv(csv);
+      } else {
+        const auto = await fetchFinraAuto();
+        sourceUrl = auto.sourceUrl;
+        parsed = auto;
       }
-      const parsed = parseFinraCsv(csv);
       for (const key of ['margin_debt', 'free_credit'] as const) {
         const def = FINRA_SERIES[key];
         const obs = parsed[key];
@@ -59,7 +65,7 @@ export async function POST(req: NextRequest) {
         const rows = await upsertObservations(def.id, obs);
         results.push({ id: def.id, label: def.label, rows });
       }
-      return NextResponse.json({ ok: true, source, headerUsed: parsed.headerUsed, results });
+      return NextResponse.json({ ok: true, source, sourceUrl, headerUsed: parsed.headerUsed, results });
     } else {
       return NextResponse.json({ error: 'source должен быть fred | cftc | finra' }, { status: 400 });
     }

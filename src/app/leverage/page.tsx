@@ -210,15 +210,16 @@ export default function LeveragePage() {
     finally { setBusy(null); }
   }
 
-  async function ingest(source: 'fred' | 'cftc' | 'finra') {
+  async function ingest(source: 'fred' | 'cftc' | 'finra', useCsv = false) {
     setBusy(source);
     try {
       const body: any = { source };
-      if (source === 'finra') body.csv = finraCsv;
+      if (source === 'finra' && useCsv) body.csv = finraCsv;
       const r = await fetch('/api/leverage/ingest', {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
       }).then(r => r.json());
       if (r.error) { log(`${source}: ${r.error}`); return; }
+      if (r.sourceUrl) log(`${source}: файл ${r.sourceUrl}`);
       for (const res of r.results || []) {
         log(`${source} · ${res.label}: ${res.error ? 'ОШИБКА ' + res.error : res.rows + ' строк'}`);
       }
@@ -305,21 +306,25 @@ export default function LeveragePage() {
           <button className="btn-primary" disabled={!!busy} onClick={() => ingest('cftc')}>
             {busy === 'cftc' ? 'CFTC...' : 'Загрузить CFTC (COT)'}
           </button>
-          <span className="text-xs text-neutral-500">FRED требует <code>FRED_API_KEY</code>. CFTC — публичный.</span>
+          <button className="btn-primary" disabled={!!busy} onClick={() => ingest('finra')}>
+            {busy === 'finra' ? 'FINRA...' : 'Загрузить FINRA (авто)'}
+          </button>
+          <span className="text-xs text-neutral-500">FRED требует <code>FRED_API_KEY</code>. CFTC — публичный. FINRA качается с finra.org (xlsx).</span>
         </div>
 
         <details className="mt-3">
-          <summary className="text-sm cursor-pointer text-neutral-700">FINRA Margin Debt — импорт CSV</summary>
+          <summary className="text-sm cursor-pointer text-neutral-700">FINRA Margin Debt — ручной импорт CSV (fallback)</summary>
           <p className="text-xs text-neutral-500 mt-1">
-            Скопируйте таблицу с finra.org (Margin Statistics) в CSV. Парсер ищет колонку месяца и колонки
-            «Debit Balances …» (margin debt) и «Free Credit Balances …». Форматы дат: <code>2024-01</code>, <code>Jan-24</code>, <code>01/2024</code>.
+            Запасной вариант, если авто-загрузка не сработала. Скопируйте таблицу с finra.org (Margin Statistics) в CSV.
+            Парсер ищет колонку месяца и колонки «Debit Balances …» (margin debt) и «Free Credit Balances …».
+            Форматы дат: <code>2024-01</code>, <code>Jan-24</code>, <code>01/2024</code>.
           </p>
           <textarea
             className="input w-full mt-2 font-mono text-xs" rows={5}
             placeholder={'Month,Debit Balances,Free Credit Balances\n2024-01,789000,180000\n...'}
             value={finraCsv} onChange={e => setFinraCsv(e.target.value)}
           />
-          <button className="btn mt-2" disabled={!!busy || !finraCsv.trim()} onClick={() => ingest('finra')}>
+          <button className="btn mt-2" disabled={!!busy || !finraCsv.trim()} onClick={() => ingest('finra', true)}>
             {busy === 'finra' ? 'Импорт...' : 'Импортировать FINRA CSV'}
           </button>
         </details>
