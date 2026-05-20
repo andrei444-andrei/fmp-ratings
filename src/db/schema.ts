@@ -120,6 +120,37 @@ export const epsSurprises = sqliteTable('eps_surprises', {
   dateIdx: index('idx_eps_date').on(t.date),
 }));
 
+// === Leverage Monitor (модуль /leverage) ===
+// Метаданные временного ряда: один ряд = одна метрика одного источника/сегмента.
+// id формата '<source>:<key>', например 'fred:BOGZ1FL663067003Q' или 'cftc:ES:net_pct_oi'.
+export const leverageSeries = sqliteTable('leverage_series', {
+  id: text('id').primaryKey(),
+  source: text('source').notNull(),        // fred | finra | cftc
+  segment: text('segment').notNull(),      // us_equities | futures | ...
+  label: text('label').notNull(),          // человекочитаемое имя
+  unit: text('unit'),                       // USD, % OI, index, ...
+  metric: text('metric').notNull(),         // margin_debt | net_pct_oi | ...
+  frequency: text('frequency').notNull(),   // daily | weekly | monthly | quarterly
+  lagNote: text('lag_note'),                // '~5 недель' и т.п. — для показа лага в UI
+  indexSymbol: text('index_symbol'),        // символ FMP для overlay цены (^GSPC, BTCUSD)
+  higherIsRisk: integer('higher_is_risk').notNull().default(1), // 1: рост = больше плеча/риска
+  meta: text('meta'),                       // произвольный JSON
+  updatedAt: text('updated_at'),
+}, t => ({
+  segmentIdx: index('idx_lev_series_segment').on(t.segment),
+  sourceIdx: index('idx_lev_series_source').on(t.source),
+}));
+
+// Наблюдения временного ряда. value хранится как есть в единицах ряда.
+export const leverageObservations = sqliteTable('leverage_observations', {
+  seriesId: text('series_id').notNull(),
+  date: text('date').notNull(),            // YYYY-MM-DD
+  value: real('value').notNull(),
+}, t => ({
+  pk: primaryKey({ columns: [t.seriesId, t.date] }),
+  dateIdx: index('idx_lev_obs_date').on(t.date),
+}));
+
 // Метаданные запусков pipeline
 export const runs = sqliteTable('runs', {
   id: integer('id').primaryKey({ autoIncrement: true }),
