@@ -181,8 +181,8 @@ export default function HeatmapPage() {
   // Тикеры, добавленные AI-событием (показываются в блоке «Дополнительно»).
   const [extraTickers, setExtraTickers] = useState<Set<string>>(new Set());
   // Наборы тикеров из БД (сектора/страны). Фолбэк — хардкод-дефолты.
-  const [tickerSets, setTickerSets] = useState<{ sectors: string[]; countries: string[]; extra: string[]; regionName: Record<string, string> }>(
-    { sectors: GROUP_DEFS[0].tickers, countries: GROUP_DEFS[1].tickers, extra: [], regionName: REGION_NAME }
+  const [tickerSets, setTickerSets] = useState<{ sectors: string[]; countries: string[]; extra: string[]; regionName: Record<string, string>; label: Record<string, string> }>(
+    { sectors: GROUP_DEFS[0].tickers, countries: GROUP_DEFS[1].tickers, extra: [], regionName: REGION_NAME, label: { ...REGION_NAME } }
   );
 
   // Тёмная тема для всего документа пока страница смонтирована
@@ -594,15 +594,16 @@ export default function HeatmapPage() {
       try {
         const res = await fetch('/api/ticker-sets').then(r => r.json());
         if (Array.isArray(res?.sets) && res.sets.length) {
-          const sec: string[] = [], cnt: string[] = [], ext: string[] = [], rn: Record<string, string> = {};
+          const sec: string[] = [], cnt: string[] = [], ext: string[] = [], rn: Record<string, string> = {}, lbl: Record<string, string> = {};
           for (const s of res.sets) {
             const tks = String(s.tickers).split(',').map((x: string) => x.trim().toUpperCase()).filter(Boolean);
+            for (const t of tks) lbl[t] = s.label;
             if (s.kind === 'sector') sec.push(...tks);
             else if (s.kind === 'extra') ext.push(...tks);
             else { cnt.push(...tks); for (const t of tks) rn[t] = s.label; }
           }
           sectors = sec; countries = cnt; extra = ext;
-          setTickerSets({ sectors: sec, countries: cnt, extra: ext, regionName: rn });
+          setTickerSets({ sectors: sec, countries: cnt, extra: ext, regionName: rn, label: lbl });
         }
       } catch {}
 
@@ -849,123 +850,6 @@ export default function HeatmapPage() {
           </div>
         </div>
 
-        {/* AI-исследователь события */}
-        <div className="hm-ai">
-          {!aiEvent && !aiBusy && (
-            <div className="hm-ai-bar">
-              <span className="hm-ai-spark">✦</span>
-              <input
-                className="hm-ai-input"
-                placeholder="Опиши событие, которое хочешь изучить"
-                value={aiInput}
-                onChange={e => setAiInput(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') runAiEvent(aiInput); }}
-              />
-              <button className="hm-ghost primary" onClick={() => runAiEvent(aiInput)}
-                disabled={!aiInput.trim()}>Изучить</button>
-              <div className="hm-ai-chips">
-                {AI_EXAMPLES.map(ex => (
-                  <span key={ex} className="hm-ai-chip" onClick={() => { setAiInput(ex); runAiEvent(ex); }}>
-                    {ex}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {aiBusy && (
-            <div className="hm-ai-bar">
-              <span className="hm-ai-spark spin">✦</span>
-              <span className="hm-ai-step">{aiStep || 'Определяю событие…'}</span>
-            </div>
-          )}
-
-          {aiErr && !aiBusy && (
-            <div className="hm-ai-bar">
-              <span className="hm-error">AI: {aiErr}</span>
-              <button className="hm-ghost" onClick={resetAiEvent}>Закрыть</button>
-            </div>
-          )}
-
-          {aiEvent && !aiBusy && (
-            <div className="hm-ai-result">
-              {/* Summary */}
-              <div className="hm-ai-sum">
-                <div className="hm-ai-sum-h">
-                  <div className="t">{aiEvent.summary.title}</div>
-                  <button className="hm-ghost" onClick={resetAiEvent}>✕ Сбросить</button>
-                </div>
-                <div className="hm-ai-sum-meta">
-                  {aiEvent.summary.start && (
-                    <span className="hm-ai-badge">
-                      {aiEvent.summary.start} → {aiEvent.summary.end || '?'}
-                      {aiEvent.summary.start && aiEvent.summary.end && (
-                        <> · {Math.max(0, Math.round((+new Date(aiEvent.summary.end) - +new Date(aiEvent.summary.start)) / 86400000))} дн.</>
-                      )}
-                    </span>
-                  )}
-                  <span className="hm-ai-badge">масштаб {aiEvent.summary.scale}/5</span>
-                  <span className="hm-ai-badge">{RESOLUTION_LABEL[aiEvent.summary.resolution]}</span>
-                </div>
-                {aiEvent.summary.description && (
-                  <div className="hm-ai-sum-desc">{aiEvent.summary.description}</div>
-                )}
-                {aiEvent.summary.affected_tickers.length > 0 && (
-                  <div className="hm-ai-tk">
-                    {aiEvent.summary.affected_tickers.map(t => (
-                      <span key={t} className="hm-ai-tkchip">{t}</span>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Хронология */}
-              <div className="hm-ai-timeline">
-                {aiEvent.timeline.map((it, i) => {
-                  const meta = PHASE_META[it.phase];
-                  const active = hoverPhaseDate === it.date || selectedDate === it.date;
-                  return (
-                    <div
-                      key={i}
-                      className={`hm-ai-card ${active ? 'active' : ''}`}
-                      style={{ borderLeftColor: meta.color }}
-                      onMouseEnter={() => setHoverPhaseDate(it.date)}
-                      onMouseLeave={() => setHoverPhaseDate(null)}
-                      onClick={() => setSelectedDate(it.date)}
-                    >
-                      <div className="hm-ai-card-h">
-                        <span className="ph" style={{ color: meta.color }}>{meta.label}</span>
-                        <span
-                          className={`dt clickable ${anchorDate === it.date ? 'on' : ''}`}
-                          title="Накопленная доходность от этой даты"
-                          onClick={e => { e.stopPropagation(); toggleAnchorDate(it.date); }}
-                        >{it.date}</span>
-                      </div>
-                      <div className="hm-ai-card-t">{it.title}</div>
-                      {it.description && <div className="hm-ai-card-d">{it.description}</div>}
-                      {it.tickers && it.tickers.length > 0 && (
-                        <div className="hm-ai-tk">
-                          {it.tickers.map(t => <span key={t} className="hm-ai-tkchip sm">{t}</span>)}
-                        </div>
-                      )}
-                      {it.sources && it.sources.length > 0 && (
-                        <div className="hm-ai-src">
-                          {it.sources.map((u, j) => (
-                            <a key={j} href={u} target="_blank" rel="noopener noreferrer"
-                               onClick={e => e.stopPropagation()}>
-                              {(() => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return 'источник'; } })()}
-                            </a>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-
         {/* Control row — только в режиме якоря */}
         {tradingDates.length > 0 && anchorDate && (
           <div className="hm-ctl">
@@ -1072,15 +956,12 @@ export default function HeatmapPage() {
                   const row = matrix[sym] || [];
                   const cum = activeCum[sym] ?? 0;
                   const gMap = grades[sym] || {};
-                  const region = group.key === 'regions' ? tickerSets.regionName[sym] : undefined;
+                  const tkLabel = tickerSets.label[sym];
                   return (
                     <tr key={sym}>
-                      <td className="tk">
+                      <td className="tk" title={tkLabel ? `${sym} — ${tkLabel}` : sym}>
                         <div className="hm-tkrow">
-                          <span className="hm-tk-sym">
-                            {sym}
-                            {region && <span className="hm-tk-region"> {region}</span>}
-                          </span>
+                          <span className="hm-tk-sym">{sym}</span>
                           <span className="hm-tkcum"
                             style={{ color: cum >= 0 ? 'var(--hm-pos)' : 'var(--hm-neg)' }}>
                             {fmtPct(cum, 1)}
@@ -1222,16 +1103,18 @@ export default function HeatmapPage() {
                   >{selectedDate}</span>
                   <span style={{ fontSize: 12, color: 'var(--hm-tx3)', fontWeight: 400 }}> · {weekdayShort(selectedDate)}</span>
                 </div>
-                <div className="wd">
-                  {eventsMap[selectedDate]?.length
-                    ? eventsMap[selectedDate].map((e, i) => (
-                      <span key={i}>
-                        <span style={{ color: EVENT_COLORS[e.category] }}>●</span> {e.title}
-                        {i < eventsMap[selectedDate].length - 1 ? '; ' : ''}
-                      </span>
-                    ))
-                    : <span style={{ color: 'var(--hm-tx3)' }}>событий нет в курированном списке</span>}
-                </div>
+                {eventsMap[selectedDate]?.length ? (
+                  <div className="hm-pop-evs">
+                    {eventsMap[selectedDate].map((e, i) => (
+                      <div key={i} className="hm-pop-ev">
+                        <span className="dot" style={{ background: EVENT_COLORS[e.category] }} />
+                        <span className="t">{e.title}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="wd" style={{ color: 'var(--hm-tx3)' }}>событий нет в курированном списке</div>
+                )}
               </div>
               <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                 <button
@@ -1392,6 +1275,123 @@ export default function HeatmapPage() {
           </aside>
          </div>
         )}
+        {/* AI-исследователь события */}
+        <div className="hm-ai">
+          {!aiEvent && !aiBusy && (
+            <div className="hm-ai-bar">
+              <span className="hm-ai-spark">✦</span>
+              <input
+                className="hm-ai-input"
+                placeholder="Опиши событие, которое хочешь изучить"
+                value={aiInput}
+                onChange={e => setAiInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') runAiEvent(aiInput); }}
+              />
+              <button className="hm-ghost primary" onClick={() => runAiEvent(aiInput)}
+                disabled={!aiInput.trim()}>Изучить</button>
+              <div className="hm-ai-chips">
+                {AI_EXAMPLES.map(ex => (
+                  <span key={ex} className="hm-ai-chip" onClick={() => { setAiInput(ex); runAiEvent(ex); }}>
+                    {ex}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {aiBusy && (
+            <div className="hm-ai-bar">
+              <span className="hm-ai-spark spin">✦</span>
+              <span className="hm-ai-step">{aiStep || 'Определяю событие…'}</span>
+            </div>
+          )}
+
+          {aiErr && !aiBusy && (
+            <div className="hm-ai-bar">
+              <span className="hm-error">AI: {aiErr}</span>
+              <button className="hm-ghost" onClick={resetAiEvent}>Закрыть</button>
+            </div>
+          )}
+
+          {aiEvent && !aiBusy && (
+            <div className="hm-ai-result">
+              {/* Summary */}
+              <div className="hm-ai-sum">
+                <div className="hm-ai-sum-h">
+                  <div className="t">{aiEvent.summary.title}</div>
+                  <button className="hm-ghost" onClick={resetAiEvent}>✕ Сбросить</button>
+                </div>
+                <div className="hm-ai-sum-meta">
+                  {aiEvent.summary.start && (
+                    <span className="hm-ai-badge">
+                      {aiEvent.summary.start} → {aiEvent.summary.end || '?'}
+                      {aiEvent.summary.start && aiEvent.summary.end && (
+                        <> · {Math.max(0, Math.round((+new Date(aiEvent.summary.end) - +new Date(aiEvent.summary.start)) / 86400000))} дн.</>
+                      )}
+                    </span>
+                  )}
+                  <span className="hm-ai-badge">масштаб {aiEvent.summary.scale}/5</span>
+                  <span className="hm-ai-badge">{RESOLUTION_LABEL[aiEvent.summary.resolution]}</span>
+                </div>
+                {aiEvent.summary.description && (
+                  <div className="hm-ai-sum-desc">{aiEvent.summary.description}</div>
+                )}
+                {aiEvent.summary.affected_tickers.length > 0 && (
+                  <div className="hm-ai-tk">
+                    {aiEvent.summary.affected_tickers.map(t => (
+                      <span key={t} className="hm-ai-tkchip">{t}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Хронология */}
+              <div className="hm-ai-timeline">
+                {aiEvent.timeline.map((it, i) => {
+                  const meta = PHASE_META[it.phase];
+                  const active = hoverPhaseDate === it.date || selectedDate === it.date;
+                  return (
+                    <div
+                      key={i}
+                      className={`hm-ai-card ${active ? 'active' : ''}`}
+                      style={{ borderLeftColor: meta.color }}
+                      onMouseEnter={() => setHoverPhaseDate(it.date)}
+                      onMouseLeave={() => setHoverPhaseDate(null)}
+                      onClick={() => setSelectedDate(it.date)}
+                    >
+                      <div className="hm-ai-card-h">
+                        <span className="ph" style={{ color: meta.color }}>{meta.label}</span>
+                        <span
+                          className={`dt clickable ${anchorDate === it.date ? 'on' : ''}`}
+                          title="Накопленная доходность от этой даты"
+                          onClick={e => { e.stopPropagation(); toggleAnchorDate(it.date); }}
+                        >{it.date}</span>
+                      </div>
+                      <div className="hm-ai-card-t">{it.title}</div>
+                      {it.description && <div className="hm-ai-card-d">{it.description}</div>}
+                      {it.tickers && it.tickers.length > 0 && (
+                        <div className="hm-ai-tk">
+                          {it.tickers.map(t => <span key={t} className="hm-ai-tkchip sm">{t}</span>)}
+                        </div>
+                      )}
+                      {it.sources && it.sources.length > 0 && (
+                        <div className="hm-ai-src">
+                          {it.sources.map((u, j) => (
+                            <a key={j} href={u} target="_blank" rel="noopener noreferrer"
+                               onClick={e => e.stopPropagation()}>
+                              {(() => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return 'источник'; } })()}
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
       </div>
 
       {/* Tooltip */}
