@@ -564,6 +564,30 @@ export default function HeatmapPage() {
   // ===== AI-новости для дня =====
   async function loadAiNews(date: string, force = false) {
     if (aiNews[date] && !force) return;
+
+    // Если активно AI-событие и на эту дату есть пункты хронологии — берём новости
+    // прямо из них (уже на языке браузера, со ссылками). Без вызова Marketaux.
+    if (aiEvent) {
+      const hits = aiEvent.timeline.filter(t => t.date === date);
+      if (hits.length) {
+        const items = hits.flatMap(t => {
+          const srcs = (t.sources && t.sources.length ? t.sources : ['']);
+          return srcs.map(u => ({
+            title: t.title,
+            category: 'other',
+            description: t.description || '',
+            source: (() => { try { return u ? new URL(u).hostname.replace(/^www\./, '') : undefined; } catch { return undefined; } })(),
+            url: u || undefined,
+          }));
+        });
+        setAiNews(prev => ({
+          ...prev,
+          [date]: { date, summary: '', items, source: 'AI event', cached: false } as any,
+        }));
+        return;
+      }
+    }
+
     setAiNewsLoading(prev => ({ ...prev, [date]: true }));
     setAiNewsError(prev => ({ ...prev, [date]: '' }));
     try {
@@ -672,6 +696,73 @@ export default function HeatmapPage() {
   return (
     <div className="hm-root">
       <div className="hm-inner">
+        {/* Setbar */}
+        <div className="hm-setbar">
+          <span className="hm-pill" onClick={() => setDrawer(true)} title="Изменить тикеры">
+            <b>{tickersSummary || '—'}</b>
+          </span>
+          <span className="hm-pill" onClick={() => setDrawer(true)} title="Изменить диапазон">
+            <b>{fromDate}</b> → <b>{toDate}</b>
+          </span>
+          {loadedTickers.length ? (
+            <span className="hm-muted" style={{ fontSize: 11 }}>
+              {loadedTickers.length}/{tickers.length} · {tradingDates.length} дн.
+            </span>
+          ) : (
+            <span className="hm-muted" style={{ fontSize: 11 }}>нет данных</span>
+          )}
+          <div className="hm-spacer" />
+          <button className="hm-ghost" onClick={() => setDrawer(d => !d)}>⚙</button>
+          <button className="hm-ghost" onClick={() => setSortByCum(s => !s)}
+            disabled={!loadedTickers.length}
+            title={sortByCum ? 'Снять сортировку' : 'Сортировать по доходности'}>
+            ⇅ {sortByCum ? 'по %' : ''}
+          </button>
+          <button className="hm-ghost primary" onClick={loadAll} disabled={loading || !tickers.length}>
+            {loading ? '…' : '↻ Загрузить'}
+          </button>
+        </div>
+        {(status || error) && (
+          <div className="hm-setbar" style={{ padding: '6px 14px' }}>
+            {status && <span className="hm-status">{status}</span>}
+            {error && <span className="hm-error">{error}</span>}
+          </div>
+        )}
+
+        {/* Drawer */}
+        <div className={`hm-drawer ${drawer ? 'open' : ''}`}>
+          <div className="hm-drawer-in">
+            <div className="hm-fld">
+              <label>Тикеры</label>
+              <input value={tickersInput} onChange={e => setTickersInput(e.target.value)} />
+            </div>
+            <div className="hm-fld">
+              <label>От</label>
+              <DatePicker value={fromDate} onChange={setFromDate} max={toDate} />
+            </div>
+            <div className="hm-fld">
+              <label>До</label>
+              <DatePicker value={toDate} onChange={setToDate} min={fromDate} max={todayIso()} />
+            </div>
+            <div className="hm-fld">
+              <label>Шкала ±% дневная</label>
+              <input type="number" value={clampPct} min={0.5} step={0.5}
+                onChange={e => setClampPct(parseFloat(e.target.value) || 3)} />
+            </div>
+            <div className="hm-fld">
+              <label>Шкала ±% от якоря</label>
+              <input type="number" value={clampPctAnchor} min={1} step={1}
+                onChange={e => setClampPctAnchor(parseFloat(e.target.value) || 10)} />
+            </div>
+
+            <div className="hm-drawer-full hm-fld">
+              <label>Свои события (JSON или `YYYY-MM-DD | заголовок | категория` на строку)</label>
+              <textarea value={customEventsRaw} onChange={e => setCustomEventsRaw(e.target.value)}
+                placeholder='2024-05-10 | CPI выше прогноза | macro' />
+            </div>
+          </div>
+        </div>
+
         {/* AI-исследователь события */}
         <div className="hm-ai">
           {!aiEvent && !aiBusy && (
@@ -785,78 +876,10 @@ export default function HeatmapPage() {
           )}
         </div>
 
-        {/* Setbar */}
-        <div className="hm-setbar">
-          <span className="hm-pill" onClick={() => setDrawer(true)} title="Изменить тикеры">
-            <b>{tickersSummary || '—'}</b>
-          </span>
-          <span className="hm-pill" onClick={() => setDrawer(true)} title="Изменить диапазон">
-            <b>{fromDate}</b> → <b>{toDate}</b>
-          </span>
-          {loadedTickers.length ? (
-            <span className="hm-muted" style={{ fontSize: 11 }}>
-              {loadedTickers.length}/{tickers.length} · {tradingDates.length} дн.
-            </span>
-          ) : (
-            <span className="hm-muted" style={{ fontSize: 11 }}>нет данных</span>
-          )}
-          <div className="hm-spacer" />
-          <button className="hm-ghost" onClick={() => setDrawer(d => !d)}>⚙</button>
-          <button className="hm-ghost" onClick={() => setSortByCum(s => !s)}
-            disabled={!loadedTickers.length}
-            title={sortByCum ? 'Снять сортировку' : 'Сортировать по доходности'}>
-            ⇅ {sortByCum ? 'по %' : ''}
-          </button>
-          <button className="hm-ghost primary" onClick={loadAll} disabled={loading || !tickers.length}>
-            {loading ? '…' : '↻ Загрузить'}
-          </button>
-        </div>
-        {(status || error) && (
-          <div className="hm-setbar" style={{ padding: '6px 14px' }}>
-            {status && <span className="hm-status">{status}</span>}
-            {error && <span className="hm-error">{error}</span>}
-          </div>
-        )}
-
-        {/* Drawer */}
-        <div className={`hm-drawer ${drawer ? 'open' : ''}`}>
-          <div className="hm-drawer-in">
-            <div className="hm-fld">
-              <label>Тикеры</label>
-              <input value={tickersInput} onChange={e => setTickersInput(e.target.value)} />
-            </div>
-            <div className="hm-fld">
-              <label>От</label>
-              <DatePicker value={fromDate} onChange={setFromDate} max={toDate} />
-            </div>
-            <div className="hm-fld">
-              <label>До</label>
-              <DatePicker value={toDate} onChange={setToDate} min={fromDate} max={todayIso()} />
-            </div>
-            <div className="hm-fld">
-              <label>Шкала ±% дневная</label>
-              <input type="number" value={clampPct} min={0.5} step={0.5}
-                onChange={e => setClampPct(parseFloat(e.target.value) || 3)} />
-            </div>
-            <div className="hm-fld">
-              <label>Шкала ±% от якоря</label>
-              <input type="number" value={clampPctAnchor} min={1} step={1}
-                onChange={e => setClampPctAnchor(parseFloat(e.target.value) || 10)} />
-            </div>
-
-            <div className="hm-drawer-full hm-fld">
-              <label>Свои события (JSON или `YYYY-MM-DD | заголовок | категория` на строку)</label>
-              <textarea value={customEventsRaw} onChange={e => setCustomEventsRaw(e.target.value)}
-                placeholder='2024-05-10 | CPI выше прогноза | macro' />
-            </div>
-          </div>
-        </div>
-
-        {/* Control row */}
-        {tradingDates.length > 0 && (
+        {/* Control row — только в режиме якоря */}
+        {tradingDates.length > 0 && anchorDate && (
           <div className="hm-ctl">
-            {anchorDate ? (
-              <>
+            <>
                 <div className="hm-winseg">
                   {(['1', '5', '10', 'all'] as const).map(w => (
                     <button key={w}
@@ -875,12 +898,7 @@ export default function HeatmapPage() {
                   )}
                 </span>
                 <button className="hm-ghost" onClick={() => setAnchorDate(null)}>✕ Снять якорь</button>
-              </>
-            ) : (
-              <span className="hm-mode">
-                Режим: <b>дневная доходность</b>. Клик по дате → детали справа (новости, важное, якорь). Сиреневым — «горячие» дни.
-              </span>
-            )}
+            </>
           </div>
         )}
 
