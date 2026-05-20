@@ -1003,6 +1003,122 @@ export default function HeatmapPage() {
               <span style={{ color: 'var(--hm-imp)' }}>★</span> отмечено важным
             </span>
           </div>
+        {/* AI-исследователь события */}
+        <div className="hm-ai">
+          {!aiEvent && !aiBusy && (
+            <div className="hm-ai-bar">
+              <span className="hm-ai-spark">✦</span>
+              <input
+                className="hm-ai-input"
+                placeholder="Опиши событие, которое хочешь изучить"
+                value={aiInput}
+                onChange={e => setAiInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') runAiEvent(aiInput); }}
+              />
+              <button className="hm-ghost primary" onClick={() => runAiEvent(aiInput)}
+                disabled={!aiInput.trim()}>Изучить</button>
+              <div className="hm-ai-chips">
+                {AI_EXAMPLES.map(ex => (
+                  <span key={ex} className="hm-ai-chip" onClick={() => { setAiInput(ex); runAiEvent(ex); }}>
+                    {ex}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {aiBusy && (
+            <div className="hm-ai-bar">
+              <span className="hm-ai-spark spin">✦</span>
+              <span className="hm-ai-step">{aiStep || 'Определяю событие…'}</span>
+            </div>
+          )}
+
+          {aiErr && !aiBusy && (
+            <div className="hm-ai-bar">
+              <span className="hm-error">AI: {aiErr}</span>
+              <button className="hm-ghost" onClick={resetAiEvent}>Закрыть</button>
+            </div>
+          )}
+
+          {aiEvent && !aiBusy && (
+            <div className="hm-ai-result">
+              {/* Summary */}
+              <div className="hm-ai-sum">
+                <div className="hm-ai-sum-h">
+                  <div className="t">{aiEvent.summary.title}</div>
+                  <button className="hm-ghost" onClick={resetAiEvent}>✕ Сбросить</button>
+                </div>
+                <div className="hm-ai-sum-meta">
+                  {aiEvent.summary.start && (
+                    <span className="hm-ai-badge">
+                      {aiEvent.summary.start} → {aiEvent.summary.end || '?'}
+                      {aiEvent.summary.start && aiEvent.summary.end && (
+                        <> · {Math.max(0, Math.round((+new Date(aiEvent.summary.end) - +new Date(aiEvent.summary.start)) / 86400000))} дн.</>
+                      )}
+                    </span>
+                  )}
+                  <span className="hm-ai-badge">масштаб {aiEvent.summary.scale}/5</span>
+                  <span className="hm-ai-badge">{RESOLUTION_LABEL[aiEvent.summary.resolution]}</span>
+                </div>
+                {aiEvent.summary.description && (
+                  <div className="hm-ai-sum-desc">{aiEvent.summary.description}</div>
+                )}
+                {aiEvent.summary.affected_tickers.length > 0 && (
+                  <div className="hm-ai-tk">
+                    {aiEvent.summary.affected_tickers.map(t => (
+                      <span key={t} className="hm-ai-tkchip">{t}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Хронология */}
+              <div className="hm-ai-timeline">
+                {aiEvent.timeline.map((it, i) => {
+                  const meta = PHASE_META[it.phase];
+                  const active = hoverPhaseDate === it.date || selectedDate === it.date;
+                  return (
+                    <div
+                      key={i}
+                      className={`hm-ai-card ${active ? 'active' : ''}`}
+                      style={{ borderLeftColor: meta.color }}
+                      onMouseEnter={() => setHoverPhaseDate(it.date)}
+                      onMouseLeave={() => setHoverPhaseDate(null)}
+                      onClick={() => selectDay(it.date)}
+                    >
+                      <div className="hm-ai-card-h">
+                        <span className="ph" style={{ color: meta.color }}>{meta.label}</span>
+                        <span
+                          className={`dt clickable ${anchorDate === it.date ? 'on' : ''}`}
+                          title="Накопленная доходность от этой даты"
+                          onClick={e => { e.stopPropagation(); toggleAnchorDate(it.date); }}
+                        >{it.date}</span>
+                      </div>
+                      <div className="hm-ai-card-t">{it.title}</div>
+                      {it.description && <div className="hm-ai-card-d">{it.description}</div>}
+                      {it.tickers && it.tickers.length > 0 && (
+                        <div className="hm-ai-tk">
+                          {it.tickers.map(t => <span key={t} className="hm-ai-tkchip sm">{t}</span>)}
+                        </div>
+                      )}
+                      {it.sources && it.sources.length > 0 && (
+                        <div className="hm-ai-src">
+                          {it.sources.map((u, j) => (
+                            <a key={j} href={u} target="_blank" rel="noopener noreferrer"
+                               onClick={e => e.stopPropagation()}>
+                              {(() => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return 'источник'; } })()}
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
           </div>
 
           {/* Правая колонка: лента событий ↔ детали выбранного дня */}
@@ -1250,123 +1366,6 @@ export default function HeatmapPage() {
           </aside>
          </div>
         )}
-        {/* AI-исследователь события */}
-        <div className="hm-ai">
-          {!aiEvent && !aiBusy && (
-            <div className="hm-ai-bar">
-              <span className="hm-ai-spark">✦</span>
-              <input
-                className="hm-ai-input"
-                placeholder="Опиши событие, которое хочешь изучить"
-                value={aiInput}
-                onChange={e => setAiInput(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') runAiEvent(aiInput); }}
-              />
-              <button className="hm-ghost primary" onClick={() => runAiEvent(aiInput)}
-                disabled={!aiInput.trim()}>Изучить</button>
-              <div className="hm-ai-chips">
-                {AI_EXAMPLES.map(ex => (
-                  <span key={ex} className="hm-ai-chip" onClick={() => { setAiInput(ex); runAiEvent(ex); }}>
-                    {ex}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {aiBusy && (
-            <div className="hm-ai-bar">
-              <span className="hm-ai-spark spin">✦</span>
-              <span className="hm-ai-step">{aiStep || 'Определяю событие…'}</span>
-            </div>
-          )}
-
-          {aiErr && !aiBusy && (
-            <div className="hm-ai-bar">
-              <span className="hm-error">AI: {aiErr}</span>
-              <button className="hm-ghost" onClick={resetAiEvent}>Закрыть</button>
-            </div>
-          )}
-
-          {aiEvent && !aiBusy && (
-            <div className="hm-ai-result">
-              {/* Summary */}
-              <div className="hm-ai-sum">
-                <div className="hm-ai-sum-h">
-                  <div className="t">{aiEvent.summary.title}</div>
-                  <button className="hm-ghost" onClick={resetAiEvent}>✕ Сбросить</button>
-                </div>
-                <div className="hm-ai-sum-meta">
-                  {aiEvent.summary.start && (
-                    <span className="hm-ai-badge">
-                      {aiEvent.summary.start} → {aiEvent.summary.end || '?'}
-                      {aiEvent.summary.start && aiEvent.summary.end && (
-                        <> · {Math.max(0, Math.round((+new Date(aiEvent.summary.end) - +new Date(aiEvent.summary.start)) / 86400000))} дн.</>
-                      )}
-                    </span>
-                  )}
-                  <span className="hm-ai-badge">масштаб {aiEvent.summary.scale}/5</span>
-                  <span className="hm-ai-badge">{RESOLUTION_LABEL[aiEvent.summary.resolution]}</span>
-                </div>
-                {aiEvent.summary.description && (
-                  <div className="hm-ai-sum-desc">{aiEvent.summary.description}</div>
-                )}
-                {aiEvent.summary.affected_tickers.length > 0 && (
-                  <div className="hm-ai-tk">
-                    {aiEvent.summary.affected_tickers.map(t => (
-                      <span key={t} className="hm-ai-tkchip">{t}</span>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Хронология */}
-              <div className="hm-ai-timeline">
-                {aiEvent.timeline.map((it, i) => {
-                  const meta = PHASE_META[it.phase];
-                  const active = hoverPhaseDate === it.date || selectedDate === it.date;
-                  return (
-                    <div
-                      key={i}
-                      className={`hm-ai-card ${active ? 'active' : ''}`}
-                      style={{ borderLeftColor: meta.color }}
-                      onMouseEnter={() => setHoverPhaseDate(it.date)}
-                      onMouseLeave={() => setHoverPhaseDate(null)}
-                      onClick={() => selectDay(it.date)}
-                    >
-                      <div className="hm-ai-card-h">
-                        <span className="ph" style={{ color: meta.color }}>{meta.label}</span>
-                        <span
-                          className={`dt clickable ${anchorDate === it.date ? 'on' : ''}`}
-                          title="Накопленная доходность от этой даты"
-                          onClick={e => { e.stopPropagation(); toggleAnchorDate(it.date); }}
-                        >{it.date}</span>
-                      </div>
-                      <div className="hm-ai-card-t">{it.title}</div>
-                      {it.description && <div className="hm-ai-card-d">{it.description}</div>}
-                      {it.tickers && it.tickers.length > 0 && (
-                        <div className="hm-ai-tk">
-                          {it.tickers.map(t => <span key={t} className="hm-ai-tkchip sm">{t}</span>)}
-                        </div>
-                      )}
-                      {it.sources && it.sources.length > 0 && (
-                        <div className="hm-ai-src">
-                          {it.sources.map((u, j) => (
-                            <a key={j} href={u} target="_blank" rel="noopener noreferrer"
-                               onClick={e => e.stopPropagation()}>
-                              {(() => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return 'источник'; } })()}
-                            </a>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-
       </div>
 
       {/* Tooltip */}
