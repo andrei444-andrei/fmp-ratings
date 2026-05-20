@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { fetchFredSeries } from '@/lib/leverage/fred';
 import { fetchCftcNetPctOi } from '@/lib/leverage/cftc';
 import { parseFinraCsv, fetchFinraAuto } from '@/lib/leverage/finra';
-import { upsertSeries, upsertObservations } from '@/lib/leverage/store';
+import { upsertSeries, upsertObservations, ensureLeverageTables } from '@/lib/leverage/store';
 import { FRED_SERIES, CFTC_MARKETS, cftcSeriesDef, FINRA_SERIES } from '@/lib/leverage/registry';
 
 export const runtime = 'nodejs';
@@ -17,6 +17,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const source = body?.source;
     const results: IngestResult[] = [];
+
+    await ensureLeverageTables();
 
     if (source === 'fred') {
       for (const def of FRED_SERIES) {
