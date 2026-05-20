@@ -167,6 +167,19 @@
   clip-path: polygon(100% 0, 100% 100%, 0 100%);
 }
 
+/* блоки-группы тикеров */
+.hm-table tr.hm-grp td { padding: 0; border-bottom: .5px solid var(--hm-line2); }
+.hm-table td.hm-grp-tk {
+  position: sticky; left: 0; z-index: 2; background: var(--hm-bg2);
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 10px; text-transform: uppercase; letter-spacing: .6px;
+  color: var(--hm-acc); font-weight: 600; padding: 5px 10px; white-space: nowrap;
+}
+.hm-table td.hm-grp-fill { background: var(--hm-bg2); }
+.hm-tk-region { font-size: 9.5px; color: var(--hm-tx3); font-weight: 400; }
+.hm-preset-row { display: flex; gap: 6px; margin-top: 6px; }
+.hm-preset-row .hm-ghost { font-size: 11px; padding: 3px 9px; }
+
 .hm-tkrow { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .hm-tk-sym { font-weight: 600; font-size: 12px; }
 .hm-tkcum { font-size: 10px; font-family: var(--hm-mono); }
