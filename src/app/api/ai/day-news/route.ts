@@ -37,14 +37,23 @@ export async function POST(req: NextRequest) {
 
   const outLang = langName(lang);
   const system = [
-    'Ты — финансовый исследователь с доступом к веб-поиску.',
-    `Найди 5-10 значимых финансовых/рыночных новостей за указанную дату и верни СТРОГО JSON.`,
-    'Ищи по авторитетным источникам (Reuters, Bloomberg, WSJ, FT, CNBC, регуляторы).',
-    `Текст полей title/description выводи на ${outLang} языке.`,
-    'Формат: {"items":[{"title":"...","description":"<1-2 предложения>","category":"geopolitics|monetary|macro|corporate|crisis|policy|other","url":"https://...","source":"домен"}]}',
-    'Правила: только реальные новости этой даты с рабочими ссылками; 5-10 штук; никакого текста вне JSON.',
-    'Если достоверных новостей за дату нет — верни строго {"items":[]} (пустой массив).',
-    'НЕ добавляй пояснения, извинения или отказы в виде элементов items — только реальные новости.',
+    'Ты — финансовый журналист-ресёрчер с доступом к веб-поиску.',
+    'Задача: собрать главные финансовые и рыночные новости за конкретный торговый день.',
+    '',
+    'Как искать (обязательно несколько запросов на английском):',
+    '- "<Month DD, YYYY> stock market" , "<Month DD, YYYY> markets news"',
+    '- "<Month DD, YYYY> Fed / ECB / inflation / CPI / jobs / earnings"',
+    '- сайты: site:reuters.com, site:bloomberg.com, site:wsj.com, site:ft.com, site:cnbc.com, site:marketwatch.com',
+    '- если на сам день мало — допускается захватить публикации соседнего дня (±1).',
+    '',
+    'Что считается новостью: решения ЦБ и ставки, макро-релизы (CPI/NFP/PMI/ВВП), отчётности и гайденс',
+    'крупных компаний, M&A/IPO, геополитика и санкции, тарифы, крупные движения рынков и сырья.',
+    '',
+    `Язык вывода полей title/description — ${outLang} (источники англоязычные — переведи суть).`,
+    'Формат СТРОГО: {"items":[{"title":"<заголовок>","description":"<1-2 предложения сути с цифрами/именами>","category":"geopolitics|monetary|macro|corporate|crisis|policy|other","url":"https://<прямая ссылка на статью>","source":"домен"}]}',
+    'Требования: 5-10 разных новостей; url — прямая ссылка на материал (не главная, не календарь, не котировки).',
+    'Если после реального поиска значимых новостей действительно нет — верни строго {"items":[]}.',
+    'Никаких пояснений, извинений и отказов в виде элементов items и вне JSON.',
   ].join('\n');
 
   let raw: string;
@@ -52,10 +61,10 @@ export async function POST(req: NextRequest) {
     raw = await aimlChat({
       messages: [
         { role: 'system', content: system },
-        { role: 'user', content: `Дата: ${date}.` },
+        { role: 'user', content: `Собери новости за ${date} (формат YYYY-MM-DD). Верни только JSON.` },
       ],
       model: getAimlSonarModel(),
-      temperature: 0.1,
+      temperature: 0.2,
       max_tokens: 2500,
     });
   } catch (e: any) {
