@@ -56,7 +56,6 @@ const AI_EXAMPLES = [
 
 // ===== Константы =====
 const DEFAULT_TICKERS = 'SPY,QQQ,IWM,GLD,USO,TLT,XLE,XLF,XLK,XLU';
-const AI_EVENTS_LS_KEY = 'fmp-heatmap-ai-events-v1';
 const IMPORTANT_LS_KEY = 'fmp-heatmap-important-v1';
 const PARAMS_LS_KEY = 'fmp-heatmap-params-v1';
 
@@ -184,22 +183,8 @@ export default function HeatmapPage() {
     }
   }, [fromDate, toDate, anchorDate]);
 
-  // ===== Load/save localStorage =====
+  // ===== Важные даты (localStorage) =====
   useEffect(() => {
-    try {
-      const ai = localStorage.getItem(AI_EVENTS_LS_KEY);
-      if (ai) {
-        const p = JSON.parse(ai);
-        if (Array.isArray(p)) {
-          setAiRangeEvents(p.filter((e: any) => e && typeof e.date === 'string' && typeof e.title === 'string')
-            .map((e: any) => ({
-              date: e.date, title: e.title,
-              category: normalizeCategory(e.category),
-              description: typeof e.description === 'string' ? e.description : undefined,
-            })));
-        }
-      }
-    } catch {}
     try {
       const im = localStorage.getItem(IMPORTANT_LS_KEY);
       if (im) {
@@ -209,11 +194,32 @@ export default function HeatmapPage() {
     } catch {}
   }, []);
   useEffect(() => {
-    try { localStorage.setItem(AI_EVENTS_LS_KEY, JSON.stringify(aiRangeEvents)); } catch {}
-  }, [aiRangeEvents]);
-  useEffect(() => {
     try { localStorage.setItem(IMPORTANT_LS_KEY, JSON.stringify(Array.from(importantDays))); } catch {}
   }, [importantDays]);
+
+  // ===== Лента событий — из БД (ai_events_db), перевод под язык браузера =====
+  useEffect(() => {
+    if (!fromDate || !toDate) return;
+    const lang = (typeof navigator !== 'undefined' ? navigator.language : 'ru').slice(0, 2).toLowerCase();
+    const ac = new AbortController();
+    fetch(`/api/ai/events-db/events?from=${encodeURIComponent(fromDate)}&to=${encodeURIComponent(toDate)}&limit=2000`,
+      { signal: ac.signal })
+      .then(r => r.json())
+      .then(res => {
+        const arr = Array.isArray(res?.events) ? res.events : [];
+        setAiRangeEvents(arr.map((e: any) => {
+          const tr = e.translations?.[lang];
+          return {
+            date: e.date,
+            title: String(tr?.title || e.title || '').slice(0, 200),
+            category: normalizeCategory(e.category),
+            description: (tr?.description ?? e.description) || undefined,
+          };
+        }).filter((e: any) => e.date && e.title));
+      })
+      .catch(() => {});
+    return () => ac.abort();
+  }, [fromDate, toDate]);
 
   // ===== Derived =====
   const tickers = useMemo(
