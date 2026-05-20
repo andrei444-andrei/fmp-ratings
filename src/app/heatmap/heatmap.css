@@ -281,6 +281,7 @@
   .hm-pop-body { padding: 12px 14px 16px; }
 }
 /* ===== Stage: heatmap + лента новостей ===== */
+/* align-items: stretch — лента и левая колонка одинаковой высоты */
 .hm-stage { display: grid; grid-template-columns: 1fr 360px; gap: 14px; align-items: start; }
 @media (max-width: 1180px) { .hm-stage { grid-template-columns: 1fr; } }
 .hm-panel { min-width: 0; } /* грид скроллится по X */
@@ -288,8 +289,7 @@
 .hm-feed-panel {
   background: var(--hm-surf); border: .5px solid var(--hm-line);
   border-radius: var(--hm-rad-lg); overflow: hidden;
-  position: sticky; top: 8px; max-height: 82vh;
-  display: flex; flex-direction: column;
+  display: flex; flex-direction: column; min-height: 0;
 }
 
 /* hot / selected подсветка колонок */
