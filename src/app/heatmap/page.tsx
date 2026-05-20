@@ -112,8 +112,12 @@ export default function HeatmapPage() {
   const [sortByCum, setSortByCum] = useState(false);
   const [anchorDate, setAnchorDate] = useState<string | null>(null);
   const [analysisWindow, setAnalysisWindow] = useState<'1' | '5' | '10' | 'all'>('all');
-  const [popupDate, setPopupDate] = useState<string | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [hover, setHover] = useState<{ x: number; y: number; sym: string; date: string } | null>(null);
+  // Активные категории-фильтры для ленты и подсветки (по умолчанию — все).
+  const [catFilter, setCatFilter] = useState<Set<EventCategory>>(
+    () => new Set(Object.keys(EVENT_LABELS) as EventCategory[])
+  );
 
   // ===== Важные даты + AI-события (localStorage) =====
   const [importantDays, setImportantDays] = useState<Set<string>>(new Set());
@@ -331,6 +335,68 @@ export default function HeatmapPage() {
     };
   }, [loadedTickers, activeCum, importantDays, allEvents, fromDate, toDate, tradingDates]);
 
+  // ===== Среднее дневное движение по дате (для KPI ленты и hot-дней) =====
+  const dayMove = useMemo(() => {
+    const out: Record<string, { avg: number; leader: { tk: string; v: number }; outsider: { tk: string; v: number } }> = {};
+    for (let i = 1; i < tradingDates.length; i++) {
+      const d = tradingDates[i];
+      const prev = tradingDates[i - 1];
+      const vals: { tk: string; v: number }[] = [];
+      for (const sym of loadedTickers) {
+        const m = prices[sym] || {};
+        const p = m[d], pp = m[prev];
+        if (p != null && pp != null) vals.push({ tk: sym, v: p / pp - 1 });
+      }
+      if (!vals.length) continue;
+      vals.sort((a, b) => b.v - a.v);
+      const avg = vals.reduce((s, x) => s + x.v, 0) / vals.length;
+      out[d] = { avg, leader: vals[0], outsider: vals[vals.length - 1] };
+    }
+    return out;
+  }, [tradingDates, loadedTickers, prices]);
+
+  // Порог «горячего» дня: средний |move| по всем дням × 2.2 (но не меньше 0.6%).
+  const hotThreshold = useMemo(() => {
+    const arr = Object.values(dayMove).map(x => Math.abs(x.avg));
+    if (!arr.length) return 0.006;
+    const mean = arr.reduce((s, v) => s + v, 0) / arr.length;
+    return Math.max(0.006, mean * 2.2);
+  }, [dayMove]);
+
+  const hotDays = useMemo(() => {
+    const s = new Set<string>();
+    for (const d of tradingDates) {
+      const mv = dayMove[d];
+      if (mv && Math.abs(mv.avg) >= hotThreshold) s.add(d);
+    }
+    return s;
+  }, [tradingDates, dayMove, hotThreshold]);
+
+  // Лента значимых дней: события + важные + hot. Фильтр по активным категориям.
+  const feedDays = useMemo(() => {
+    const allCats = catFilter.size === Object.keys(EVENT_LABELS).length;
+    const set = new Set<string>();
+    for (const d of tradingDates) {
+      const evs = (eventsMap[d] || []).filter(e => catFilter.has(e.category));
+      const hasEvent = evs.length > 0;
+      const hadAnyEvent = (eventsMap[d] || []).length > 0;
+      // День попадает в ленту если: есть событие активной категории,
+      // либо важный, либо hot (но если у дня есть события и все они отфильтрованы — прячем).
+      if (hasEvent) { set.add(d); continue; }
+      if (hadAnyEvent && !allCats) continue; // события есть, но не в фильтре
+      if (importantDays.has(d) || hotDays.has(d)) set.add(d);
+    }
+    return Array.from(set).sort((a, b) => b.localeCompare(a)); // свежие сверху
+  }, [tradingDates, eventsMap, importantDays, hotDays, catFilter]);
+
+  function toggleCat(c: EventCategory) {
+    setCatFilter(prev => {
+      const next = new Set(prev);
+      if (next.has(c)) next.delete(c); else next.add(c);
+      return next;
+    });
+  }
+
   // ===== Загрузка цен и grades =====
   async function loadAll() {
     setLoading(true);
@@ -528,32 +594,32 @@ export default function HeatmapPage() {
 
   function setAnchorAndClose(date: string | null) {
     setAnchorDate(date);
-    setPopupDate(null);
+    setSelectedDate(null);
   }
 
   // ===== Popup =====
   const popupAgg = useMemo(() => {
-    if (!popupDate) return null;
+    if (!selectedDate) return null;
     const vals: { tk: string; v: number }[] = [];
     for (const sym of loadedTickers) {
       const m = prices[sym] || {};
-      const idx = tradingDates.indexOf(popupDate);
+      const idx = tradingDates.indexOf(selectedDate);
       if (idx <= 0) continue;
-      const p = m[popupDate], pp = m[tradingDates[idx - 1]];
+      const p = m[selectedDate], pp = m[tradingDates[idx - 1]];
       if (p && pp) vals.push({ tk: sym, v: p / pp - 1 });
     }
     if (!vals.length) return null;
     vals.sort((a, b) => b.v - a.v);
     const avg = vals.reduce((s, x) => s + x.v, 0) / vals.length;
     return { avg, leader: vals[0], outsider: vals[vals.length - 1] };
-  }, [popupDate, prices, loadedTickers, tradingDates]);
+  }, [selectedDate, prices, loadedTickers, tradingDates]);
 
   useEffect(() => {
-    if (!popupDate) return;
+    if (!selectedDate) return;
     // Новости теперь подгружаются только по клику на кнопку «📰 Загрузить новости дня» —
     // чтобы избежать лишних AI-запросов и галлюцинаций на каждый popup.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [popupDate]);
+  }, [selectedDate]);
 
   // ===== Tooltip =====
   const tipRef = useRef<HTMLDivElement>(null);
@@ -582,7 +648,7 @@ export default function HeatmapPage() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setPopupDate(null);
+      if (e.key === 'Escape') setSelectedDate(null);
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -726,7 +792,7 @@ export default function HeatmapPage() {
               </>
             ) : (
               <span className="hm-mode">
-                Режим: <b>дневная доходность</b>. Клик по дате → карточка дня (новости, важное, якорь).
+                Режим: <b>дневная доходность</b>. Клик по дате → детали справа (новости, важное, якорь). Сиреневым — «горячие» дни.
               </span>
             )}
           </div>
@@ -762,12 +828,14 @@ export default function HeatmapPage() {
           </div>
         )}
 
-        {/* Heatmap */}
+        {/* Stage: heatmap + лента новостей */}
         {!tradingDates.length ? (
           <div className="hm-kpi" style={{ textAlign: 'center', padding: '36px 20px', color: 'var(--hm-tx3)' }}>
             Нажмите «↻ Загрузить» — получим дневные цены закрытия для выбранных тикеров и интервала.
           </div>
         ) : (
+         <div className="hm-stage">
+          <div className="hm-panel">
           <div className="hm-gridwrap" ref={scrollRef}>
             <table className="hm-table">
               <thead>
@@ -777,11 +845,13 @@ export default function HeatmapPage() {
                     const evs = eventsMap[d];
                     const imp = importantDays.has(d);
                     const isAnchor = anchorDate === d;
+                    const hot = hotDays.has(d);
+                    const sel = selectedDate === d;
                     return (
                       <th key={d}>
                         <div
-                          className={`hm-dh ${isAnchor ? 'anchor' : ''} ${imp ? 'imp' : ''}`}
-                          onClick={() => setPopupDate(d)}
+                          className={`hm-dh ${isAnchor ? 'anchor' : ''} ${imp ? 'imp' : ''} ${hot ? 'hot' : ''} ${sel ? 'sel' : ''}`}
+                          onClick={() => setSelectedDate(sel ? null : d)}
                           title={`${d} (${weekdayShort(d)})${evs ? '\n' + evs.map(e => e.title).join('\n') : ''}`}
                         >
                           <div className="hm-lane">
@@ -823,7 +893,7 @@ export default function HeatmapPage() {
                         const imp = importantDays.has(d);
                         const isAnchor = anchorDate === d;
                         const gItems = gMap[d];
-                        const cls = `${imp ? 'impcol ' : ''}${isAnchor ? 'anchorcol ' : ''}${gItems?.length ? 'hm-cell-grade ' : ''}`;
+                        const cls = `${imp ? 'impcol ' : ''}${isAnchor ? 'anchorcol ' : ''}${selectedDate === d ? 'selcol ' : ''}${hotDays.has(d) ? 'hotcol ' : ''}${gItems?.length ? 'hm-cell-grade ' : ''}`;
                         return (
                           <td
                             key={d}
@@ -835,6 +905,7 @@ export default function HeatmapPage() {
                               minWidth: 36,
                               width: 36,
                             }}
+                            onClick={() => setSelectedDate(selectedDate === d ? null : d)}
                             onMouseEnter={e => setHover({ x: e.clientX, y: e.clientY, sym, date: d })}
                             onMouseMove={e => setHover(h => h ? { ...h, x: e.clientX, y: e.clientY } : null)}
                             onMouseLeave={() => setHover(null)}
@@ -856,10 +927,6 @@ export default function HeatmapPage() {
               </tbody>
             </table>
           </div>
-        )}
-
-        {/* Legend */}
-        {tradingDates.length > 0 && (
           <div className="hm-legend">
             <span className="sc">
               <i style={{ background: 'rgba(244,98,106,.7)' }} />
@@ -879,32 +946,86 @@ export default function HeatmapPage() {
               <span style={{ color: 'var(--hm-imp)' }}>★</span> отмечено важным
             </span>
           </div>
-        )}
-      </div>
+          </div>
 
-      {/* Tooltip */}
-      <div ref={tipRef} className="hm-tip" />
-
-      {/* Popup */}
-      <div className={`hm-backdrop ${popupDate ? 'open' : ''}`}
-        onClick={e => { if (e.target === e.currentTarget) setPopupDate(null); }}>
-        {popupDate && (
-          <div className="hm-pop">
+          {/* Правая колонка: лента событий ↔ детали выбранного дня */}
+          <aside className="hm-feed-panel">
+          {!selectedDate ? (
+            <>
+              <div className="hm-feed-h">
+                <span className="t">Лента событий</span>
+                <span className="c">{feedDays.length} дн.</span>
+              </div>
+              <div className="hm-filters">
+                {(Object.keys(EVENT_LABELS) as EventCategory[]).map(k => (
+                  <span key={k}
+                    className={`hm-fchip ${catFilter.has(k) ? 'on' : 'off'}`}
+                    onClick={() => toggleCat(k)}>
+                    <span className="dot" style={{ background: EVENT_COLORS[k] }} />
+                    {EVENT_LABELS[k]}
+                  </span>
+                ))}
+              </div>
+              <div className="hm-feed">
+                {feedDays.length === 0 ? (
+                  <div className="hm-feed-empty">
+                    Значимых дней не найдено. Нажмите «🔥 Найти важные события» в настройках (⚙),
+                    отметьте дни важными или поменяйте фильтр категорий.
+                  </div>
+                ) : feedDays.map(d => {
+                  const evs = (eventsMap[d] || []).filter(e => catFilter.has(e.category));
+                  const mv = dayMove[d];
+                  const hot = hotDays.has(d);
+                  const imp = importantDays.has(d);
+                  return (
+                    <div key={d}
+                      className={`hm-fday ${hot ? 'hot' : ''}`}
+                      onClick={() => setSelectedDate(d)}>
+                      <div className="hm-fday-h">
+                        <span className="hm-fday-d">
+                          {imp && <span style={{ color: 'var(--hm-imp)' }}>★</span>}
+                          {d} <span style={{ color: 'var(--hm-tx3)' }}>· {weekdayShort(d)}</span>
+                        </span>
+                        {mv && (
+                          <span className="hm-fday-mv"
+                            style={{ color: mv.avg >= 0 ? 'var(--hm-pos)' : 'var(--hm-neg)' }}>
+                            {fmtPct(mv.avg, 1)}
+                          </span>
+                        )}
+                      </div>
+                      {evs.length ? evs.slice(0, 3).map((e, i) => (
+                        <div key={i} className="hm-fday-ev">
+                          <span className="dot" style={{ background: EVENT_COLORS[e.category] }} />
+                          <span>{e.title}</span>
+                        </div>
+                      )) : (
+                        <div className="hm-fday-ev hm-muted">
+                          <span className="dot" style={{ background: 'var(--hm-tx3)' }} />
+                          <span>Сильное движение без новостей в списке</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          ) : (
+            <div className="hm-pop-detail">
             <div className="hm-pop-h">
               <div>
-                <div className="d">{popupDate} <span style={{ fontSize: 12, color: 'var(--hm-tx3)', fontWeight: 400 }}>· {weekdayShort(popupDate)}</span></div>
+                <div className="d">{selectedDate} <span style={{ fontSize: 12, color: 'var(--hm-tx3)', fontWeight: 400 }}>· {weekdayShort(selectedDate)}</span></div>
                 <div className="wd">
-                  {eventsMap[popupDate]?.length
-                    ? eventsMap[popupDate].map((e, i) => (
+                  {eventsMap[selectedDate]?.length
+                    ? eventsMap[selectedDate].map((e, i) => (
                       <span key={i}>
                         <span style={{ color: EVENT_COLORS[e.category] }}>●</span> {e.title}
-                        {i < eventsMap[popupDate].length - 1 ? '; ' : ''}
+                        {i < eventsMap[selectedDate].length - 1 ? '; ' : ''}
                       </span>
                     ))
                     : <span style={{ color: 'var(--hm-tx3)' }}>событий нет в курированном списке</span>}
                 </div>
               </div>
-              <button className="hm-xb" onClick={() => setPopupDate(null)}>✕</button>
+              <button className="hm-xb" onClick={() => setSelectedDate(null)} title="Назад к ленте">✕</button>
             </div>
             <div className="hm-pop-body">
               {popupAgg && (
@@ -931,32 +1052,32 @@ export default function HeatmapPage() {
               )}
               <div className="hm-acts">
                 <button
-                  className={anchorDate === popupDate ? 'on-anc' : ''}
-                  onClick={() => setAnchorAndClose(anchorDate === popupDate ? null : popupDate)}>
-                  ⚓ {anchorDate === popupDate ? 'Снять якорь' : 'Накопленная с этой даты'}
+                  className={anchorDate === selectedDate ? 'on-anc' : ''}
+                  onClick={() => setAnchorAndClose(anchorDate === selectedDate ? null : selectedDate)}>
+                  ⚓ {anchorDate === selectedDate ? 'Снять якорь' : 'Накопленная с этой даты'}
                 </button>
                 <button
-                  onClick={() => loadAiNews(popupDate, true)}
-                  disabled={!!aiNewsLoading[popupDate]}>
-                  {aiNewsLoading[popupDate]
+                  onClick={() => loadAiNews(selectedDate, true)}
+                  disabled={!!aiNewsLoading[selectedDate]}>
+                  {aiNewsLoading[selectedDate]
                     ? 'Загружаю…'
-                    : aiNews[popupDate] ? '🔄 Обновить новости' : '📰 Загрузить новости дня'}
+                    : aiNews[selectedDate] ? '🔄 Обновить новости' : '📰 Загрузить новости дня'}
                 </button>
                 <button
-                  className={importantDays.has(popupDate) ? 'on-imp' : ''}
-                  onClick={() => toggleImportant(popupDate)}>
-                  {importantDays.has(popupDate) ? '★ Снять важное' : '☆ Отметить важным'}
+                  className={importantDays.has(selectedDate) ? 'on-imp' : ''}
+                  onClick={() => toggleImportant(selectedDate)}>
+                  {importantDays.has(selectedDate) ? '★ Снять важное' : '☆ Отметить важным'}
                 </button>
               </div>
               <div className="hm-nw-h">
                 <span>Новости дня</span>
                 <span className="src">
-                  {aiNews[popupDate]
-                    ? `источник: ${(aiNews[popupDate] as any).source || 'AI'}${(aiNews[popupDate] as any).cached ? ' · из кэша' : ''}`
+                  {aiNews[selectedDate]
+                    ? `источник: ${(aiNews[selectedDate] as any).source || 'AI'}${(aiNews[selectedDate] as any).cached ? ' · из кэша' : ''}`
                     : 'источник: Marketaux + AI'}
                 </span>
               </div>
-              {aiNewsLoading[popupDate] ? (
+              {aiNewsLoading[selectedDate] ? (
                 <>
                   {[0, 1, 2].map(i => (
                     <div key={i} className="hm-news-item">
@@ -968,27 +1089,27 @@ export default function HeatmapPage() {
                     </div>
                   ))}
                 </>
-              ) : aiNewsError[popupDate] ? (
+              ) : aiNewsError[selectedDate] ? (
                 <div className="hm-error" style={{ padding: '8px 0' }}>
-                  {aiNewsError[popupDate]} · <a href="#" onClick={e => { e.preventDefault(); loadAiNews(popupDate, true); }}
+                  {aiNewsError[selectedDate]} · <a href="#" onClick={e => { e.preventDefault(); loadAiNews(selectedDate, true); }}
                     style={{ color: 'var(--hm-acc)' }}>повторить</a>
                 </div>
-              ) : aiNews[popupDate] ? (
+              ) : aiNews[selectedDate] ? (
                 <>
-                  {aiNews[popupDate].summary && (
+                  {aiNews[selectedDate].summary && (
                     <div style={{ fontSize: 12.5, color: 'var(--hm-tx2)', marginBottom: 8, lineHeight: 1.5 }}>
-                      {aiNews[popupDate].summary}
+                      {aiNews[selectedDate].summary}
                     </div>
                   )}
-                  {aiNews[popupDate].items.length === 0 && (
+                  {aiNews[selectedDate].items.length === 0 && (
                     <div className="hm-muted" style={{ fontSize: 12 }}>
                       Значимых событий не найдено
-                      {(aiNews[popupDate] as any).stats?.gdeltCount != null && (
-                        <> (GDELT-статей: {(aiNews[popupDate] as any).stats.gdeltCount}).</>
+                      {(aiNews[selectedDate] as any).stats?.gdeltCount != null && (
+                        <> (GDELT-статей: {(aiNews[selectedDate] as any).stats.gdeltCount}).</>
                       )}
                     </div>
                   )}
-                  {aiNews[popupDate].items.map((it: any, i: number) => {
+                  {aiNews[selectedDate].items.map((it: any, i: number) => {
                     const cat = normalizeCategory(it.category);
                     const c = EVENT_COLORS[cat];
                     return (
@@ -1036,7 +1157,7 @@ export default function HeatmapPage() {
               {(() => {
                 const allG: { tk: string; g: GradeItem }[] = [];
                 for (const t of loadedTickers) {
-                  for (const g of (grades[t]?.[popupDate] || [])) allG.push({ tk: t, g });
+                  for (const g of (grades[t]?.[selectedDate] || [])) allG.push({ tk: t, g });
                 }
                 if (!allG.length) return null;
                 return (
@@ -1055,9 +1176,15 @@ export default function HeatmapPage() {
                 );
               })()}
             </div>
-          </div>
+            </div>
+          )}
+          </aside>
+         </div>
         )}
       </div>
+
+      {/* Tooltip */}
+      <div ref={tipRef} className="hm-tip" />
     </div>
   );
 }
