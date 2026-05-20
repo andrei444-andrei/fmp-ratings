@@ -8,7 +8,6 @@ import {
 import './heatmap.css';
 
 // ===== Типы =====
-type PriceRow = { date: string; price: number };
 type PricesBySymbol = Record<string, Record<string, number>>;
 
 type GradeItem = {
@@ -28,6 +27,7 @@ type AiNews = { date: string; summary: string; items: AiNewsItem[] };
 const DEFAULT_TICKERS = 'SPY,QQQ,IWM,GLD,USO,TLT,XLE,XLF,XLK,XLU';
 const AI_EVENTS_LS_KEY = 'fmp-heatmap-ai-events-v1';
 const IMPORTANT_LS_KEY = 'fmp-heatmap-important-v1';
+const PARAMS_LS_KEY = 'fmp-heatmap-params-v1';
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 // ===== Утилиты =====
@@ -397,67 +397,73 @@ export default function HeatmapPage() {
     });
   }
 
-  // ===== Загрузка цен и grades =====
+  // ===== Загрузка цен и grades (через серверный кэш в Turso) =====
+  // Весь датасет тянется одним запросом; результат кэшируется на сервере
+  // по ключу (тикеры+даты+grades). Повторный запрос тех же параметров не идёт в FMP.
   async function loadAll() {
+    if (!tickers.length) return;
     setLoading(true);
     setError(null);
-    setStatus('');
+    setStatus('Загрузка…');
     setAnchorDate(null);
-    const nextPrices: PricesBySymbol = {};
-    const nextGrades: GradesBySymbol = {};
-    const loaded: string[] = [];
     try {
-      for (let i = 0; i < tickers.length; i++) {
-        const sym = tickers[i];
-        setStatus(`${i + 1}/${tickers.length} ${sym} — цены…`);
-        try {
-          const res = await fetch(
-            `/api/fmp/historical-price-eod?symbol=${encodeURIComponent(sym)}` +
-            `&from=${encodeURIComponent(fromDate)}&to=${encodeURIComponent(toDate)}`
-          ).then(r => r.json());
-          if (res?.error) {
-            setError(prev => (prev ? prev + '; ' : '') + `${sym}: ${res.error}`);
-            continue;
-          }
-          const arr: PriceRow[] = Array.isArray(res) ? res : (res?.historical || []);
-          if (!arr.length) continue;
-          const map: Record<string, number> = {};
-          for (const r of arr) {
-            if (r && typeof r.date === 'string' && typeof r.price === 'number') map[r.date] = r.price;
-          }
-          nextPrices[sym] = map;
-        } catch (e: any) {
-          setError(prev => (prev ? prev + '; ' : '') + `${sym}: ${e.message}`);
-          continue;
-        }
-        if (fetchGrades) {
-          setStatus(`${i + 1}/${tickers.length} ${sym} — рейтинги…`);
-          try {
-            const gRes = await fetch(`/api/fmp/grades?symbol=${encodeURIComponent(sym)}`).then(r => r.json());
-            if (Array.isArray(gRes)) {
-              const byDate: Record<string, GradeItem[]> = {};
-              for (const g of gRes as GradeItem[]) {
-                if (!g || !g.date) continue;
-                if (g.date < fromDate || g.date > toDate) continue;
-                (byDate[g.date] = byDate[g.date] || []).push(g);
-              }
-              nextGrades[sym] = byDate;
-            }
-          } catch {}
-        }
-        loaded.push(sym);
-        await sleep(40);
-      }
-      setPrices(nextPrices);
-      setGrades(nextGrades);
-      setLoadedTickers(loaded);
-      setStatus(`✓ Загружено ${loaded.length}/${tickers.length}`);
+      const qs = new URLSearchParams({
+        tickers: tickers.join(','),
+        from: fromDate, to: toDate,
+        grades: fetchGrades ? '1' : '0',
+      });
+      const res = await fetch(`/api/heatmap/dataset?${qs.toString()}`).then(r => r.json());
+      if (res?.error) { setError(res.error); return; }
+      setPrices(res.prices || {});
+      setGrades(res.grades || {});
+      setLoadedTickers(res.loadedTickers || []);
+      try {
+        localStorage.setItem(PARAMS_LS_KEY, JSON.stringify({
+          tickers: tickersInput, from: fromDate, to: toDate, grades: fetchGrades,
+        }));
+      } catch {}
+      const n = (res.loadedTickers || []).length;
+      setStatus(`✓ Загружено ${n}/${tickers.length}${res.cached ? ' (из кэша)' : ''}` +
+        (res.errors?.length ? ` · ошибок: ${res.errors.length}` : ''));
     } catch (e: any) {
       setError(e.message);
     } finally {
       setLoading(false);
     }
   }
+
+  // При открытии страницы — авто-показ последнего сохранённого набора из кэша
+  // (без вызовов FMP). Параметры берём из localStorage прошлой сессии.
+  useEffect(() => {
+    let tk = DEFAULT_TICKERS, f = yearsAgoIso(2), t = todayIso(), g = true;
+    try {
+      const s = localStorage.getItem(PARAMS_LS_KEY);
+      if (s) {
+        const p = JSON.parse(s);
+        if (typeof p.tickers === 'string' && p.tickers.trim()) { tk = p.tickers; setTickersInput(p.tickers); }
+        if (typeof p.from === 'string') { f = p.from; setFromDate(p.from); }
+        if (typeof p.to === 'string') { t = p.to; setToDate(p.to); }
+        if (typeof p.grades === 'boolean') { g = p.grades; setFetchGrades(p.grades); }
+      }
+    } catch {}
+    const tks = tk.split(/[\s,;]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
+    if (!tks.length) return;
+    const qs = new URLSearchParams({
+      tickers: tks.join(','), from: f, to: t, grades: g ? '1' : '0', cacheOnly: '1',
+    });
+    fetch(`/api/heatmap/dataset?${qs.toString()}`)
+      .then(r => r.json())
+      .then(res => {
+        if (res && !res.error && !res.miss && (res.loadedTickers || []).length) {
+          setPrices(res.prices || {});
+          setGrades(res.grades || {});
+          setLoadedTickers(res.loadedTickers || []);
+          setStatus(`Показаны сохранённые данные (${res.loadedTickers.length} тикеров) · «↻ Загрузить» — обновить`);
+        }
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ===== AI-новости для дня =====
   async function loadAiNews(date: string, force = false) {
