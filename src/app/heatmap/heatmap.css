@@ -413,6 +413,12 @@
 .hm-ai-card-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .hm-ai-card-h .ph { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
 .hm-ai-card-h .dt { font-size: 11px; font-family: var(--hm-mono); color: var(--hm-tx3); }
+.hm-ai-card-h .dt.clickable { cursor: pointer; border-bottom: 1px dashed var(--hm-tx3); }
+.hm-ai-card-h .dt.clickable:hover { color: var(--hm-acc); border-bottom-color: var(--hm-acc); }
+.hm-ai-card-h .dt.clickable.on { color: #cfc8fb; border-bottom: 1px solid var(--hm-acc); }
+.hm-d-clickable { cursor: pointer; border-bottom: 1px dashed var(--hm-tx3); }
+.hm-d-clickable:hover { color: var(--hm-acc); border-bottom-color: var(--hm-acc); }
+.hm-d-clickable.on { color: #cfc8fb; border-bottom: 1px solid var(--hm-acc); }
 .hm-ai-card-t { font-size: 13px; font-weight: 600; margin-top: 6px; line-height: 1.35; }
 .hm-ai-card-d { font-size: 12px; color: var(--hm-tx2); margin-top: 5px; line-height: 1.45; }
 .hm-ai-src { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
