@@ -746,6 +746,13 @@ export default function HeatmapPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tradingDates.length]);
 
+  // Доскролл к колонке-якорю при его установке.
+  useEffect(() => {
+    if (!anchorDate || !scrollRef.current) return;
+    const el = scrollRef.current.querySelector('th[data-anchor="1"]') as HTMLElement | null;
+    el?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+  }, [anchorDate]);
+
   // ===== Рендер =====
   const tickersSummary = tickers.length <= 3
     ? tickers.join(', ')
@@ -894,11 +901,11 @@ export default function HeatmapPage() {
                     const hot = hotDays.has(d);
                     const sel = selectedDate === d;
                     return (
-                      <th key={d}>
+                      <th key={d} data-anchor={isAnchor ? '1' : undefined}>
                         <div
                           className={`hm-dh ${isAnchor ? 'anchor' : ''} ${imp ? 'imp' : ''} ${hot ? 'hot' : ''} ${sel ? 'sel' : ''} ${aiMarkerDates.has(d) ? 'aimark' : ''} ${hoverPhaseDate === d ? 'aimark-hot' : ''}`}
                           onClick={() => selectDay(d)}
-                          title={`${d} (${weekdayShort(d)})${evs ? '\n' + evs.map(e => e.title).join('\n') : ''}`}
+                          title={`${d} (${weekdayShort(d)})\nКлик по числу — накопленная с этой даты${evs ? '\n' + evs.map(e => e.title).join('\n') : ''}`}
                         >
                           <div className="hm-lane">
                             {imp && <span className="st">★</span>}
@@ -906,7 +913,9 @@ export default function HeatmapPage() {
                               <span key={i} className="ev" style={{ background: EVENT_COLORS[e.category] }} />
                             ))}
                           </div>
-                          <div className="dt">
+                          <div className="dt"
+                            title="Накопленная доходность от этой даты"
+                            onClick={e => { e.stopPropagation(); toggleAnchorDate(d); }}>
                             {d.slice(8, 10)}
                             <span style={{ color: 'inherit', opacity: .55, marginLeft: 2 }}>
                               {monthShort(parseInt(d.slice(5, 7), 10) - 1).slice(0, 3).toLowerCase()}
