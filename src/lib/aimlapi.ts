@@ -15,6 +15,12 @@ export function getAimlModel(): string {
   return process.env.AIMLAPI_MODEL?.trim() || 'gpt-4o-mini';
 }
 
+// Модель Perplexity Sonar (живой веб-поиск с источниками) через aimlapi.
+// Перекрывается env AIMLAPI_SONAR_MODEL.
+export function getAimlSonarModel(): string {
+  return process.env.AIMLAPI_SONAR_MODEL?.trim() || 'perplexity/sonar';
+}
+
 export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
 export async function aimlChat(opts: {
