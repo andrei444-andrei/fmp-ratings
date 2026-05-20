@@ -1,7 +1,38 @@
-import { db, schema } from '@/db/client';
+import { db, libsqlClient, schema } from '@/db/client';
 import { sql } from 'drizzle-orm';
 import type { Obs } from './stats';
 import type { SeriesDef } from './registry';
+
+// Самовосстановление: гарантируем, что таблицы модуля существуют, не требуя
+// ручного запуска /api/admin/migrate. Безопасно вызывать на каждом запросе.
+let ensured = false;
+export async function ensureLeverageTables(): Promise<void> {
+  if (ensured) return;
+  await libsqlClient.execute(`CREATE TABLE IF NOT EXISTS leverage_series (
+    id text PRIMARY KEY NOT NULL,
+    source text NOT NULL,
+    segment text NOT NULL,
+    label text NOT NULL,
+    unit text,
+    metric text NOT NULL,
+    frequency text NOT NULL,
+    lag_note text,
+    index_symbol text,
+    higher_is_risk integer NOT NULL DEFAULT 1,
+    meta text,
+    updated_at text
+  )`);
+  await libsqlClient.execute(`CREATE TABLE IF NOT EXISTS leverage_observations (
+    series_id text NOT NULL,
+    date text NOT NULL,
+    value real NOT NULL,
+    PRIMARY KEY (series_id, date)
+  )`);
+  await libsqlClient.execute(`CREATE INDEX IF NOT EXISTS idx_lev_series_segment ON leverage_series (segment)`);
+  await libsqlClient.execute(`CREATE INDEX IF NOT EXISTS idx_lev_series_source ON leverage_series (source)`);
+  await libsqlClient.execute(`CREATE INDEX IF NOT EXISTS idx_lev_obs_date ON leverage_observations (date)`);
+  ensured = true;
+}
 
 export async function upsertSeries(def: SeriesDef): Promise<void> {
   await db.insert(schema.leverageSeries).values({

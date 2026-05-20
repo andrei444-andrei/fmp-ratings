@@ -297,8 +297,8 @@ export default function LeveragePage() {
       <section className="card">
         <h3 className="font-semibold mb-2">Обновление данных (ETL)</h3>
         <div className="flex flex-wrap gap-2 items-center">
-          <button className="btn" disabled={!!busy} onClick={migrate}>
-            {busy === 'migrate' ? '...' : '0. Миграция таблиц'}
+          <button className="btn" disabled={!!busy} onClick={migrate} title="Не обязательно — таблицы создаются автоматически">
+            {busy === 'migrate' ? '...' : 'Миграция таблиц (опц.)'}
           </button>
           <button className="btn-primary" disabled={!!busy} onClick={() => ingest('fred')}>
             {busy === 'fred' ? 'FRED...' : 'Загрузить FRED'}
@@ -345,7 +345,7 @@ export default function LeveragePage() {
 
         {!data?.series.length && !loading && (
           <p className="text-sm text-neutral-600">
-            Нет данных. Нажмите «Миграция таблиц», затем «Загрузить FRED»/«Загрузить CFTC» или импортируйте FINRA CSV.
+            Нет данных. Нажмите «Загрузить FRED» / «Загрузить CFTC» / «Загрузить FINRA (авто)» — таблицы создадутся автоматически.
           </p>
         )}
 

@@ -3,6 +3,7 @@ import { db, schema } from '@/db/client';
 import { eq, asc } from 'drizzle-orm';
 import { computeStats, compositeIndex, type Obs } from '@/lib/leverage/stats';
 import { SEGMENT_LABELS } from '@/lib/leverage/registry';
+import { ensureLeverageTables } from '@/lib/leverage/store';
 
 export const runtime = 'nodejs';
 
@@ -10,6 +11,7 @@ export const runtime = 'nodejs';
 // Возвращает все ряды со статистикой (z-score, светофор, спарклайн) + композитный индекс.
 export async function GET() {
   try {
+    await ensureLeverageTables();
     const series = await db.select().from(schema.leverageSeries);
     const out: any[] = [];
     const compInput: Array<{ segment: string; zscore: number | null; higherIsRisk: boolean }> = [];
