@@ -128,6 +128,14 @@ export default function AiEventsDebugPage() {
   const [collectStatus, setCollectStatus] = useState('');
   const [dbStats, setDbStats] = useState<DbStats | null>(null);
 
+  // ===== Просмотр событий из БД =====
+  const [dbEvents, setDbEvents] = useState<Ev[] | null>(null);
+  const [dbLoading, setDbLoading] = useState(false);
+  const [vFrom, setVFrom] = useState('');
+  const [vTo, setVTo] = useState('');
+  const [vCategory, setVCategory] = useState('');
+  const [vLimit, setVLimit] = useState(500);
+
   const userResolved = useMemo(() => userTpl
     .replaceAll('{dateFrom}', dateFrom).replaceAll('{dateTo}', dateTo)
     .replaceAll('{date}', dateFrom).replaceAll('{query}', query)
@@ -149,6 +157,40 @@ export default function AiEventsDebugPage() {
       const res = await fetch('/api/ai/events-db/events?countOnly=1').then(r => r.json());
       if (res?.stats) setDbStats(res.stats);
     } catch {}
+  }
+  async function loadDbEvents() {
+    setDbLoading(true);
+    try {
+      const sp = new URLSearchParams();
+      if (vFrom) sp.set('from', vFrom);
+      if (vTo) sp.set('to', vTo);
+      if (vCategory) sp.set('category', vCategory);
+      sp.set('limit', String(vLimit));
+      const res = await fetch(`/api/ai/events-db/events?${sp.toString()}`).then(r => r.json());
+      setDbEvents(Array.isArray(res?.events) ? res.events : []);
+      if (res?.stats) setDbStats(res.stats);
+    } catch (e: any) {
+      setDbEvents([]);
+    } finally {
+      setDbLoading(false);
+    }
+  }
+  function downloadDbCsv() {
+    if (!dbEvents?.length) return;
+    const headers = ['date', 'category', 'title', 'description', 'source'];
+    const esc = (v: any) => {
+      if (v == null) return '';
+      const s = String(v);
+      return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const csv = headers.join(',') + '\n' +
+      dbEvents.map(e => headers.map(h => esc((e as any)[h])).join(',')).join('\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `events-db-${todayIso()}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 100);
   }
 
   async function saveTpl() {
@@ -422,6 +464,67 @@ export default function AiEventsDebugPage() {
                 );
               })}
             </div>
+          </div>
+        )}
+      </section>
+
+      {/* Просмотр событий из БД */}
+      <section className="card">
+        <h3 className="font-semibold mb-2">🗂 События в базе</h3>
+        <div className="flex flex-wrap gap-3 items-end">
+          <label className="flex flex-col">
+            <span className="label">Дата от</span>
+            <input type="date" className="input" value={vFrom} onChange={e => setVFrom(e.target.value)} />
+          </label>
+          <label className="flex flex-col">
+            <span className="label">Дата до</span>
+            <input type="date" className="input" value={vTo} onChange={e => setVTo(e.target.value)} />
+          </label>
+          <label className="flex flex-col">
+            <span className="label">Категория</span>
+            <select className="input" value={vCategory} onChange={e => setVCategory(e.target.value)}>
+              <option value="">все</option>
+              {Object.keys(CATEGORY_COLORS).map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </label>
+          <label className="flex flex-col">
+            <span className="label">Лимит</span>
+            <input type="number" className="input w-24" min={10} max={5000} step={100}
+              value={vLimit} onChange={e => setVLimit(parseInt(e.target.value) || 500)} />
+          </label>
+          <button className="btn-primary" onClick={loadDbEvents} disabled={dbLoading}>
+            {dbLoading ? '…загрузка' : '🔄 Показать из БД'}
+          </button>
+          <button className="btn" onClick={downloadDbCsv} disabled={!dbEvents?.length}>Скачать CSV</button>
+        </div>
+
+        {dbEvents && (
+          <div className="mt-3">
+            <p className="text-sm text-neutral-600 mb-2">Показано: {dbEvents.length}</p>
+            {!dbEvents.length ? (
+              <p className="text-sm text-neutral-500">Пусто. Запусти сбор выше или ослабь фильтры.</p>
+            ) : (
+              <div className="space-y-2 max-h-[600px] overflow-y-auto">
+                {dbEvents.map((ev, i) => {
+                  const color = CATEGORY_COLORS[ev.category] || '#525252';
+                  return (
+                    <div key={i} className="border border-neutral-200 rounded p-3">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono text-sm text-neutral-700">{ev.date}</span>
+                        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full"
+                          style={{ background: color + '22', color }}>
+                          <span className="w-2 h-2 rounded-full inline-block" style={{ background: color }} />
+                          {ev.category}
+                        </span>
+                        {ev.source && <span className="text-xs text-neutral-500">· {ev.source}</span>}
+                      </div>
+                      <div className="font-medium text-sm mt-1.5">{ev.title}</div>
+                      {ev.description && <div className="text-sm text-neutral-600 mt-1">{ev.description}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
       </section>
