@@ -21,8 +21,14 @@ type GradeItem = {
 };
 type GradesBySymbol = Record<string, Record<string, GradeItem[]>>;
 
-type AiNewsItem = { title: string; category?: string; description?: string };
-type AiNews = { date: string; summary: string; items: AiNewsItem[] };
+type AiNewsItem = { title: string; category?: string; description?: string; source?: string; url?: string };
+type AiEventNewsItem = { title: string; description?: string; sources?: { url: string; host: string }[] };
+type AiNews = {
+  date: string;
+  eventItems?: AiEventNewsItem[];   // из хронологии AI-события
+  items?: AiNewsItem[];             // дополнительные (Marketaux + AI)
+  marketauxError?: string;
+};
 
 type EventPhase = 'trigger' | 'escalation' | 'peak' | 'resolution';
 type TimelineItem = {
@@ -87,11 +93,6 @@ function yearsAgoIso(years: number): string {
   d.setFullYear(d.getFullYear() - years);
   return d.toISOString().slice(0, 10);
 }
-function addDays(iso: string, days: number): string {
-  const d = new Date(iso + 'T00:00:00Z');
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
 function cellColor(r: number | null, clamp: number): string {
   if (r == null || !isFinite(r)) return 'transparent';
   const x = Math.max(-1, Math.min(1, r / clamp));
@@ -135,7 +136,7 @@ function gradesActionColor(action?: string): string {
 export default function HeatmapPage() {
   // ===== Настройки =====
   const [tickersInput, setTickersInput] = useState(DEFAULT_TICKERS);
-  const [fromDate, setFromDate] = useState(yearsAgoIso(2));
+  const [fromDate, setFromDate] = useState(yearsAgoIso(5));
   const [toDate, setToDate] = useState(todayIso());
   const [clampPct, setClampPct] = useState(3);
   const [clampPctAnchor, setClampPctAnchor] = useState(10);
@@ -169,7 +170,6 @@ export default function HeatmapPage() {
   // ===== AI-новости =====
   const [aiNews, setAiNews] = useState<Record<string, AiNews>>({});
   const [aiNewsLoading, setAiNewsLoading] = useState<Record<string, boolean>>({});
-  const [aiNewsError, setAiNewsError] = useState<Record<string, string>>({});
 
   // ===== AI-исследователь события (Perplexity Sonar) =====
   const [aiInput, setAiInput] = useState('');
@@ -180,7 +180,6 @@ export default function HeatmapPage() {
   const [hoverPhaseDate, setHoverPhaseDate] = useState<string | null>(null);
   // Тикеры, добавленные AI-событием (показываются в блоке «Дополнительно»).
   const [extraTickers, setExtraTickers] = useState<Set<string>>(new Set());
-  const EVENT_PAD_DAYS = 7;
 
   // Тёмная тема для всего документа пока страница смонтирована
   useEffect(() => {
@@ -507,24 +506,18 @@ export default function HeatmapPage() {
       }
       setAiEvent(study);
 
-      // Авто-настройка heatmap: даты ±N дней + ДОБАВЛЕНИЕ тикеров события к текущим.
+      // Только ДОБАВЛЯЕМ тикеры события к текущим. Даты диапазона НЕ трогаем —
+      // окно показа статистики остаётся прежним (дефолт/выбранное).
       const eventTks = study.summary.affected_tickers.slice(0, 10);
-      const from = study.summary.start ? addDays(study.summary.start, -EVENT_PAD_DAYS) : fromDate;
-      const todayStr = todayIso();
-      let to = study.summary.end ? addDays(study.summary.end, EVENT_PAD_DAYS) : toDate;
-      if (to > todayStr) to = todayStr;
-      // Текущие тикеры сохраняем, новые из события добавляем как «Дополнительно».
       const current = tickers;
       const added = eventTks.filter(t => !current.includes(t));
       const union = [...current, ...added];
       if (added.length) setExtraTickers(prev => new Set([...prev, ...added]));
-      setFromDate(from);
-      setToDate(to);
       clearInterval(stepTimer);
       setAiStep('Обновляю heatmap…');
-      if (union.length) {
+      if (added.length) {
         setTickersInput(union.join(','));
-        await loadDataset(union, from, to); // тикеры без данных FMP отфильтруются здесь
+        await loadDataset(union, fromDate, toDate); // тикеры без данных FMP отфильтруются здесь
       }
     } catch (e: any) {
       setAiErr(e.message);
@@ -588,7 +581,7 @@ export default function HeatmapPage() {
   // При открытии страницы — авто-показ последнего сохранённого набора из кэша
   // (без вызовов FMP). Параметры берём из localStorage прошлой сессии.
   useEffect(() => {
-    let tk = DEFAULT_TICKERS, f = yearsAgoIso(2), t = todayIso();
+    let tk = DEFAULT_TICKERS, f = yearsAgoIso(5), t = todayIso();
     try {
       const s = localStorage.getItem(PARAMS_LS_KEY);
       if (s) {
@@ -620,47 +613,40 @@ export default function HeatmapPage() {
   async function loadAiNews(date: string, force = false) {
     if (aiNews[date] && !force) return;
 
-    // Если активно AI-событие и на эту дату есть пункты хронологии — берём новости
-    // прямо из них (уже на языке браузера, со ссылками). Без вызова Marketaux.
-    if (aiEvent) {
-      const hits = aiEvent.timeline.filter(t => t.date === date);
-      if (hits.length) {
-        const items = hits.flatMap(t => {
-          const srcs = (t.sources && t.sources.length ? t.sources : ['']);
-          return srcs.map(u => ({
-            title: t.title,
-            category: 'other',
-            description: t.description || '',
-            source: (() => { try { return u ? new URL(u).hostname.replace(/^www\./, '') : undefined; } catch { return undefined; } })(),
-            url: u || undefined,
-          }));
-        });
-        setAiNews(prev => ({
-          ...prev,
-          [date]: { date, summary: '', items, source: 'AI event', cached: false } as any,
-        }));
-        return;
-      }
-    }
+    // Блок 1 — готовые новости из хронологии активного AI-события (со ссылками).
+    const eventItems = aiEvent
+      ? aiEvent.timeline.filter(t => t.date === date).map(t => ({
+          title: t.title,
+          description: t.description || '',
+          sources: (t.sources || []).map(u => ({
+            url: u,
+            host: (() => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return 'источник'; } })(),
+          })),
+        }))
+      : [];
 
     setAiNewsLoading(prev => ({ ...prev, [date]: true }));
-    setAiNewsError(prev => ({ ...prev, [date]: '' }));
+
+    // Блок 2 — дополнительные новости дня из API (Marketaux + AI), всегда.
+    let items: any[] = [];
+    let marketauxError: string | undefined;
     try {
       const res = await fetch(
         `/api/ai/news?date=${encodeURIComponent(date)}` +
         `&tickers=${encodeURIComponent(tickersInput)}` +
         (force ? '&force=1' : '')
       ).then(r => r.json());
-      if (res?.error) {
-        setAiNewsError(prev => ({ ...prev, [date]: res.error }));
-        return;
-      }
-      setAiNews(prev => ({ ...prev, [date]: res }));
+      if (res?.error) marketauxError = res.error;
+      else items = Array.isArray(res.items) ? res.items : [];
     } catch (e: any) {
-      setAiNewsError(prev => ({ ...prev, [date]: e.message }));
-    } finally {
-      setAiNewsLoading(prev => ({ ...prev, [date]: false }));
+      marketauxError = e.message;
     }
+
+    setAiNews(prev => ({
+      ...prev,
+      [date]: { date, eventItems, items, marketauxError } as any,
+    }));
+    setAiNewsLoading(prev => ({ ...prev, [date]: false }));
   }
 
   function toggleImportant(date: string) {
@@ -672,14 +658,20 @@ export default function HeatmapPage() {
     });
   }
 
-  function setAnchorAndClose(date: string | null) {
-    setAnchorDate(date);
-    setSelectedDate(null);
+
+  // Привязка к ближайшему торговому дню (события часто на выходных/праздниках,
+  // где нет цены — иначе накопленная доходность не считается).
+  function snapToTradingDay(date: string): string {
+    if (!tradingDates.length || tradingDates.includes(date)) return date;
+    const after = tradingDates.find(d => d >= date);
+    if (after) return after;
+    return tradingDates[tradingDates.length - 1];
   }
 
   // Клик по самой дате — вкл/выкл накопленную доходность от этой даты (якорь).
   function toggleAnchorDate(date: string) {
-    setAnchorDate(prev => (prev === date ? null : date));
+    const snapped = snapToTradingDay(date);
+    setAnchorDate(prev => (prev === snapped ? null : snapped));
   }
 
   // ===== Popup =====
@@ -701,8 +693,8 @@ export default function HeatmapPage() {
 
   useEffect(() => {
     if (!selectedDate) return;
-    // Новости теперь подгружаются только по клику на кнопку «📰 Загрузить новости дня» —
-    // чтобы избежать лишних AI-запросов и галлюцинаций на каждый popup.
+    // Новости дня загружаются автоматически при выборе даты.
+    if (!aiNews[selectedDate] && !aiNewsLoading[selectedDate]) loadAiNews(selectedDate);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDate]);
 
@@ -1215,7 +1207,14 @@ export default function HeatmapPage() {
                     : <span style={{ color: 'var(--hm-tx3)' }}>событий нет в курированном списке</span>}
                 </div>
               </div>
-              <button className="hm-xb" onClick={() => setSelectedDate(null)} title="Назад к ленте">✕</button>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <button
+                  className={`hm-xb ${importantDays.has(selectedDate) ? 'on-imp' : ''}`}
+                  title={importantDays.has(selectedDate) ? 'Снять важное' : 'Отметить важным'}
+                  onClick={() => toggleImportant(selectedDate)}
+                >{importantDays.has(selectedDate) ? '★' : '☆'}</button>
+                <button className="hm-xb" onClick={() => setSelectedDate(null)} title="Назад к ленте">✕</button>
+              </div>
             </div>
             <div className="hm-pop-body">
               {popupAgg && (
@@ -1240,66 +1239,65 @@ export default function HeatmapPage() {
                   </div>
                 </div>
               )}
-              <div className="hm-acts">
-                <button
-                  className={anchorDate === selectedDate ? 'on-anc' : ''}
-                  onClick={() => setAnchorAndClose(anchorDate === selectedDate ? null : selectedDate)}>
-                  ⚓ {anchorDate === selectedDate ? 'Снять якорь' : 'Накопленная с этой даты'}
-                </button>
-                <button
-                  onClick={() => loadAiNews(selectedDate, true)}
-                  disabled={!!aiNewsLoading[selectedDate]}>
-                  {aiNewsLoading[selectedDate]
-                    ? 'Загружаю…'
-                    : aiNews[selectedDate] ? '🔄 Обновить новости' : '📰 Загрузить новости дня'}
-                </button>
-                <button
-                  className={importantDays.has(selectedDate) ? 'on-imp' : ''}
-                  onClick={() => toggleImportant(selectedDate)}>
-                  {importantDays.has(selectedDate) ? '★ Снять важное' : '☆ Отметить важным'}
-                </button>
-              </div>
               <div className="hm-nw-h">
                 <span>Новости дня</span>
                 <span className="src">
-                  {aiNews[selectedDate]
-                    ? `источник: ${(aiNews[selectedDate] as any).source || 'AI'}${(aiNews[selectedDate] as any).cached ? ' · из кэша' : ''}`
-                    : 'источник: Marketaux + AI'}
+                  хронология + Marketaux
+                  {!aiNewsLoading[selectedDate] && (
+                    <> · <a href="#" onClick={e => { e.preventDefault(); loadAiNews(selectedDate, true); }}
+                      style={{ color: 'var(--hm-acc)' }}>обновить</a></>
+                  )}
                 </span>
               </div>
-              {aiNewsLoading[selectedDate] ? (
-                <>
-                  {[0, 1, 2].map(i => (
-                    <div key={i} className="hm-news-item">
-                      <div className="hm-skel" style={{ width: 28, height: 28, borderRadius: 8, flex: '0 0 28px' }} />
+
+              {/* Блок 1 — из хронологии события */}
+              {!!aiNews[selectedDate]?.eventItems?.length && (
+                <div className="hm-nw-block">
+                  <div className="hm-nw-blabel">Из хронологии события</div>
+                  {aiNews[selectedDate].eventItems.map((it: any, i: number) => (
+                    <div key={`e${i}`} className="hm-news-item">
+                      <div className="ic" style={{ background: 'var(--hm-acc-bg)', color: 'var(--hm-acc)' }}>✦</div>
                       <div style={{ flex: 1 }}>
-                        <div className="hm-skel" style={{ width: '85%' }} />
-                        <div className="hm-skel" style={{ width: '55%', marginTop: 7 }} />
+                        <div className="ti">{it.title}</div>
+                        {it.description && (
+                          <div className="me" style={{ color: 'var(--hm-tx2)', lineHeight: 1.4 }}>{it.description}</div>
+                        )}
+                        {it.sources?.length > 0 && (
+                          <div className="hm-ai-src">
+                            {it.sources.map((s: any, j: number) => (
+                              <a key={j} href={s.url} target="_blank" rel="noopener noreferrer">{s.host}</a>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}
-                </>
-              ) : aiNewsError[selectedDate] ? (
-                <div className="hm-error" style={{ padding: '8px 0' }}>
-                  {aiNewsError[selectedDate]} · <a href="#" onClick={e => { e.preventDefault(); loadAiNews(selectedDate, true); }}
-                    style={{ color: 'var(--hm-acc)' }}>повторить</a>
                 </div>
-              ) : aiNews[selectedDate] ? (
-                <>
-                  {aiNews[selectedDate].summary && (
-                    <div style={{ fontSize: 12.5, color: 'var(--hm-tx2)', marginBottom: 8, lineHeight: 1.5 }}>
-                      {aiNews[selectedDate].summary}
-                    </div>
-                  )}
-                  {aiNews[selectedDate].items.length === 0 && (
-                    <div className="hm-muted" style={{ fontSize: 12 }}>
-                      Значимых событий не найдено
-                      {(aiNews[selectedDate] as any).stats?.gdeltCount != null && (
-                        <> (GDELT-статей: {(aiNews[selectedDate] as any).stats.gdeltCount}).</>
-                      )}
-                    </div>
-                  )}
-                  {aiNews[selectedDate].items.map((it: any, i: number) => {
+              )}
+
+              {/* Блок 2 — дополнительные новости (Marketaux + AI) */}
+              <div className="hm-nw-block">
+                <div className="hm-nw-blabel">Дополнительно — Marketaux + AI</div>
+                {aiNewsLoading[selectedDate] ? (
+                  <>
+                    {[0, 1, 2].map(i => (
+                      <div key={i} className="hm-news-item">
+                        <div className="hm-skel" style={{ width: 28, height: 28, borderRadius: 8, flex: '0 0 28px' }} />
+                        <div style={{ flex: 1 }}>
+                          <div className="hm-skel" style={{ width: '85%' }} />
+                          <div className="hm-skel" style={{ width: '55%', marginTop: 7 }} />
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                ) : aiNews[selectedDate]?.marketauxError ? (
+                  <div className="hm-error" style={{ padding: '8px 0' }}>
+                    {aiNews[selectedDate].marketauxError} · <a href="#"
+                      onClick={e => { e.preventDefault(); loadAiNews(selectedDate, true); }}
+                      style={{ color: 'var(--hm-acc)' }}>повторить</a>
+                  </div>
+                ) : aiNews[selectedDate]?.items?.length ? (
+                  aiNews[selectedDate].items.map((it: any, i: number) => {
                     const cat = normalizeCategory(it.category);
                     const c = EVENT_COLORS[cat];
                     return (
@@ -1334,14 +1332,11 @@ export default function HeatmapPage() {
                         </div>
                       </div>
                     );
-                  })}
-                </>
-              ) : (
-                <div className="hm-muted" style={{ fontSize: 12 }}>
-                  Нажмите «📰 Загрузить новости дня» выше — статьи берутся из Marketaux,
-                  AI выбирает 3-5 значимых и описывает на русском.
-                </div>
-              )}
+                  })
+                ) : (
+                  <div className="hm-muted" style={{ fontSize: 12 }}>Дополнительных новостей не найдено.</div>
+                )}
+              </div>
 
               {/* Рейтинги аналитиков на эту дату — поверх любых тикеров */}
               {(() => {
