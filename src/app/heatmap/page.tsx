@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import {
   MARKET_EVENTS, EVENT_COLORS, EVENT_LABELS, normalizeCategory,
   eventsByDate, type MarketEvent, type EventCategory,
@@ -58,6 +58,27 @@ const AI_EXAMPLES = [
 const DEFAULT_TICKERS = 'SPY,QQQ,IWM,GLD,USO,TLT,XLE,XLF,XLK,XLU';
 const IMPORTANT_LS_KEY = 'fmp-heatmap-important-v1';
 const PARAMS_LS_KEY = 'fmp-heatmap-params-v1';
+
+// Группы тикеров для разбивки строк heatmap на блоки.
+const GROUP_DEFS: { key: string; label: string; tickers: string[] }[] = [
+  { key: 'sectors', label: 'Сектора США',
+    tickers: ['SPY','QQQ','IWM','XLE','XLF','XLK','XLV','XLI','XLY','XLP','XLU','XLB','XLRE','XLC'] },
+  { key: 'regions', label: 'Регионы мира',
+    tickers: ['VTI','VGK','FXI','MCHI','KWEB','EWJ','INDA','EWY','EWZ','EWG','EWU','EWQ'] },
+];
+const GROUP_LABELS: Record<string, string> = {
+  sectors: 'Сектора США', regions: 'Регионы мира',
+  extra: 'Дополнительно (из события)', other: 'Прочее',
+};
+const GROUP_ORDER = ['sectors', 'regions', 'extra', 'other'];
+// Регион → название (для подписи строки в блоке «Регионы мира»).
+const REGION_NAME: Record<string, string> = {
+  VTI: 'США', SPY: 'США', VGK: 'Европа', EWG: 'Германия', EWU: 'Британия', EWQ: 'Франция',
+  FXI: 'Китай', MCHI: 'Китай', KWEB: 'Китай (tech)', EWJ: 'Япония', INDA: 'Индия',
+  EWY: 'Корея', EWZ: 'Бразилия',
+};
+const PRESET_SECTORS = 'SPY,QQQ,IWM,XLE,XLF,XLK,XLV,XLI,XLY,XLP,XLU,XLB,XLRE,XLC';
+const PRESET_REGIONS = 'VTI,VGK,FXI,EWJ,INDA,EWY';
 
 // ===== Утилиты =====
 function todayIso(): string { return new Date().toISOString().slice(0, 10); }
@@ -157,6 +178,8 @@ export default function HeatmapPage() {
   const [aiStep, setAiStep] = useState('');
   const [aiErr, setAiErr] = useState<string | null>(null);
   const [hoverPhaseDate, setHoverPhaseDate] = useState<string | null>(null);
+  // Тикеры, добавленные AI-событием (показываются в блоке «Дополнительно»).
+  const [extraTickers, setExtraTickers] = useState<Set<string>>(new Set());
   const EVENT_PAD_DAYS = 7;
 
   // Тёмная тема для всего документа пока страница смонтирована
@@ -353,6 +376,26 @@ export default function HeatmapPage() {
     return [...loadedTickers].sort((a, b) => (activeCum[b] ?? 0) - (activeCum[a] ?? 0));
   }, [loadedTickers, sortByCum, activeCum]);
 
+  // Классификация тикера по группе.
+  function classifyTicker(sym: string): string {
+    if (extraTickers.has(sym)) return 'extra';
+    for (const g of GROUP_DEFS) if (g.tickers.includes(sym)) return g.key;
+    return 'other';
+  }
+  // Строки, разбитые на блоки-группы (сектора / регионы / дополнительно / прочее).
+  const groupedTickers = useMemo(() => {
+    const buckets: Record<string, string[]> = {};
+    for (const sym of orderedTickers) {
+      const k = classifyTicker(sym);
+      (buckets[k] = buckets[k] || []).push(sym);
+    }
+    return GROUP_ORDER
+      .filter(k => buckets[k]?.length)
+      .map(k => ({ key: k, label: GROUP_LABELS[k], tickers: buckets[k] }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderedTickers, extraTickers]);
+  const multiGroup = groupedTickers.length > 1;
+
   // KPIs
   const kpi = useMemo(() => {
     const arr = loadedTickers.map(t => ({ t, c: activeCum[t] ?? 0 }))
@@ -464,19 +507,24 @@ export default function HeatmapPage() {
       }
       setAiEvent(study);
 
-      // Авто-настройка heatmap: тикеры, даты ±N дней.
-      const tks = study.summary.affected_tickers.slice(0, 10);
+      // Авто-настройка heatmap: даты ±N дней + ДОБАВЛЕНИЕ тикеров события к текущим.
+      const eventTks = study.summary.affected_tickers.slice(0, 10);
       const from = study.summary.start ? addDays(study.summary.start, -EVENT_PAD_DAYS) : fromDate;
       const todayStr = todayIso();
       let to = study.summary.end ? addDays(study.summary.end, EVENT_PAD_DAYS) : toDate;
       if (to > todayStr) to = todayStr;
-      if (tks.length) {
-        setTickersInput(tks.join(','));
-        setFromDate(from);
-        setToDate(to);
-        clearInterval(stepTimer);
-        setAiStep('Обновляю heatmap…');
-        await loadDataset(tks, from, to); // тикеры без данных FMP отфильтруются здесь
+      // Текущие тикеры сохраняем, новые из события добавляем как «Дополнительно».
+      const current = tickers;
+      const added = eventTks.filter(t => !current.includes(t));
+      const union = [...current, ...added];
+      if (added.length) setExtraTickers(prev => new Set([...prev, ...added]));
+      setFromDate(from);
+      setToDate(to);
+      clearInterval(stepTimer);
+      setAiStep('Обновляю heatmap…');
+      if (union.length) {
+        setTickersInput(union.join(','));
+        await loadDataset(union, from, to); // тикеры без данных FMP отфильтруются здесь
       }
     } catch (e: any) {
       setAiErr(e.message);
@@ -492,6 +540,7 @@ export default function HeatmapPage() {
     setAiErr(null);
     setAiInput('');
     setHoverPhaseDate(null);
+    setExtraTickers(new Set());
   }
 
   // Даты хронологии активного AI-события (для маркеров на сетке).
@@ -746,6 +795,14 @@ export default function HeatmapPage() {
             <div className="hm-fld">
               <label>Тикеры</label>
               <input value={tickersInput} onChange={e => setTickersInput(e.target.value)} />
+              <div className="hm-preset-row">
+                <button type="button" className="hm-ghost" onClick={() => setTickersInput(PRESET_SECTORS)}>
+                  Сектора США
+                </button>
+                <button type="button" className="hm-ghost" onClick={() => setTickersInput(PRESET_REGIONS)}>
+                  Регионы мира
+                </button>
+              </div>
             </div>
             <div className="hm-fld">
               <label>От</label>
@@ -985,15 +1042,27 @@ export default function HeatmapPage() {
                 </tr>
               </thead>
               <tbody>
-                {orderedTickers.map(sym => {
+                {groupedTickers.map(group => (
+                  <Fragment key={group.key}>
+                    {multiGroup && (
+                      <tr className="hm-grp">
+                        <td className="tk hm-grp-tk">{group.label}</td>
+                        <td className="hm-grp-fill" colSpan={tradingDates.length} />
+                      </tr>
+                    )}
+                    {group.tickers.map(sym => {
                   const row = matrix[sym] || [];
                   const cum = activeCum[sym] ?? 0;
                   const gMap = grades[sym] || {};
+                  const region = group.key === 'regions' ? REGION_NAME[sym] : undefined;
                   return (
                     <tr key={sym}>
                       <td className="tk">
                         <div className="hm-tkrow">
-                          <span className="hm-tk-sym">{sym}</span>
+                          <span className="hm-tk-sym">
+                            {sym}
+                            {region && <span className="hm-tk-region"> {region}</span>}
+                          </span>
                           <span className="hm-tkcum"
                             style={{ color: cum >= 0 ? 'var(--hm-pos)' : 'var(--hm-neg)' }}>
                             {fmtPct(cum, 1)}
@@ -1035,7 +1104,9 @@ export default function HeatmapPage() {
                       })}
                     </tr>
                   );
-                })}
+                    })}
+                  </Fragment>
+                ))}
               </tbody>
             </table>
           </div>
