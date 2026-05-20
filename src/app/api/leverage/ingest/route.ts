@@ -4,6 +4,22 @@ import { fetchCftcNetPctOi } from '@/lib/leverage/cftc';
 import { parseFinraCsv, fetchFinraAuto } from '@/lib/leverage/finra';
 import { upsertSeries, upsertObservations, ensureLeverageTables } from '@/lib/leverage/store';
 import { FRED_SERIES, CFTC_MARKETS, cftcSeriesDef, FINRA_SERIES } from '@/lib/leverage/registry';
+import { recomputeMarginDebtToWilshire, MARGIN_DEBT_TO_WILSHIRE } from '@/lib/leverage/derived';
+
+// Пересчитывает производный ряд margin debt / Wilshire 5000 (best-effort).
+async function recomputeDerived(results: IngestResult[]): Promise<void> {
+  try {
+    const r = await recomputeMarginDebtToWilshire();
+    results.push({
+      id: MARGIN_DEBT_TO_WILSHIRE.id,
+      label: MARGIN_DEBT_TO_WILSHIRE.label,
+      rows: r.rows,
+      error: r.reason,
+    });
+  } catch (e: any) {
+    results.push({ id: MARGIN_DEBT_TO_WILSHIRE.id, label: MARGIN_DEBT_TO_WILSHIRE.label, rows: 0, error: e.message });
+  }
+}
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -32,6 +48,7 @@ export async function POST(req: NextRequest) {
           results.push({ id: def.id, label: def.label, rows: 0, error: e.message });
         }
       }
+      await recomputeDerived(results);
     } else if (source === 'cftc') {
       for (const m of CFTC_MARKETS) {
         const def = cftcSeriesDef(m);
@@ -67,6 +84,7 @@ export async function POST(req: NextRequest) {
         const rows = await upsertObservations(def.id, obs);
         results.push({ id: def.id, label: def.label, rows });
       }
+      await recomputeDerived(results);
       return NextResponse.json({ ok: true, source, sourceUrl, headerUsed: parsed.headerUsed, results });
     } else {
       return NextResponse.json({ error: 'source должен быть fred | cftc | finra' }, { status: 400 });
