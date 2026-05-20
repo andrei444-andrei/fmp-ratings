@@ -1,0 +1,184 @@
+'use client';
+
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { cellColor, textColorOn } from '@/lib/superinvestor/compute';
+import { INVESTOR_TYPE_LABEL, type InvestorType, type LeaderboardRow } from '@/lib/superinvestor/types';
+import { pctP, pctFu, money, fixed } from '@/lib/superinvestor/format';
+
+type SortKey = 'alphaPct' | 'alphaAnnPct' | 'copyReturnPct' | 'spyReturnPct' | 'winRatePct' | 'sharpe' | 'maxDrawdownPct' | 'closedTrades' | 'aum';
+
+const TYPES: InvestorType[] = ['value', 'activist', 'macro', 'concentrated'];
+
+export default function LeaderboardPage() {
+  const router = useRouter();
+  const [years, setYears] = useState(3);
+  const [rows, setRows] = useState<LeaderboardRow[]>([]);
+  const [pending, setPending] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [activeTypes, setActiveTypes] = useState<Set<InvestorType>>(new Set(TYPES));
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'alphaPct', dir: -1 });
+  const [total, setTotal] = useState(10);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    setRows([]);
+    setError(null);
+
+    async function load() {
+      try {
+        const res = await fetch(`/api/superinvestor/leaderboard?years=${years}`).then(r => r.json());
+        if (!alive) return;
+        if (res.error) { setError(res.error); setLoading(false); return; }
+        setRows(res.rows || []);
+        setPending(res.pending || []);
+        setTotal(res.total || 10);
+        setLoading(false);
+        if ((res.pending || []).length > 0) {
+          timer.current = setTimeout(load, 4000); // дозапрос холодных позиций
+        }
+      } catch (e: any) {
+        if (alive) { setError(e.message); setLoading(false); }
+      }
+    }
+    load();
+    return () => { alive = false; if (timer.current) clearTimeout(timer.current); };
+  }, [years]);
+
+  const clamp = useMemo(() => {
+    const m = Math.max(0.2, ...rows.map(r => Math.abs(r.alphaPct) / 100));
+    return m;
+  }, [rows]);
+
+  const visible = useMemo(() => {
+    const f = rows.filter(r => activeTypes.has(r.investor.type));
+    const k = sort.key;
+    return [...f].sort((a, b) => ((a[k] as number) - (b[k] as number)) * sort.dir);
+  }, [rows, activeTypes, sort]);
+
+  function toggleType(t: InvestorType) {
+    setActiveTypes(prev => {
+      const next = new Set(prev);
+      if (next.has(t)) next.delete(t); else next.add(t);
+      return next.size ? next : new Set(TYPES);
+    });
+  }
+  function th(key: SortKey, label: string, cls = '') {
+    const on = sort.key === key;
+    return (
+      <th className={`sortable ${cls}`} onClick={() => setSort(s => ({ key, dir: s.key === key && s.dir === -1 ? 1 : -1 }))}>
+        {label}{on && <span className="arr">{sort.dir === -1 ? '↓' : '↑'}</span>}
+      </th>
+    );
+  }
+
+  return (
+    <main>
+      <div className="si-top">
+        <div className="si-title">Super<b>investors</b> · copy-α vs SPY</div>
+        <div className="si-sub">
+          Доходность стратегии «копируем 13F-портфель на дату подачи филинга» против SPY за выбранное окно.
+        </div>
+      </div>
+
+      <div className="si-method">
+        <h4>Методология</h4>
+        <ul>
+          <li>Каждый квартал виртуальный портфель ребалансируется под раскрытые в <b>13F</b> веса позиций на <b>дату подачи филинга</b> (не на конец квартала — филинг публикуется с лагом ~45 дней).</li>
+          <li><b>copy α</b> = совокупная доходность copy-стратегии − доходность SPY за то же окно. Цвет ячейки = насыщенность α (тот же градиент, что в heatmap).</li>
+          <li><b>Win rate</b> — доля прибыльных закрытых сделок. <b>Sharpe</b> — годовой по месячным доходностям copy. <b>Max DD</b> — макс. просадка copy-кривой.</li>
+          <li>Источник: FMP institutional-ownership (Form 13F) + дневные цены закрытия. Учитываются только длинные позиции в акциях США.</li>
+        </ul>
+      </div>
+
+      <div className="si-bar">
+        <span className="lbl">Период</span>
+        <div className="si-seg">
+          {[1, 3, 5].map(y => (
+            <button key={y} className={years === y ? 'on' : ''} onClick={() => setYears(y)}>{y}г</button>
+          ))}
+        </div>
+        <span className="lbl" style={{ marginLeft: 8 }}>Тип</span>
+        {TYPES.map(t => (
+          <button key={t} className={`si-tab ${activeTypes.has(t) ? 'on' : ''}`} style={{ padding: '4px 11px' }} onClick={() => toggleType(t)}>
+            {INVESTOR_TYPE_LABEL[t]}
+          </button>
+        ))}
+        <span className="si-spacer" />
+        {pending.length > 0 && !error && (
+          <span className="si-mut">обновляется {rows.length}/{total}…</span>
+        )}
+      </div>
+
+      {error ? (
+        <div className="si-panel"><div className="si-state si-err">Ошибка: {error}<br /><span className="si-mut">Раздел требует FMP-ключ с доступом к institutional-ownership (Form 13F).</span></div></div>
+      ) : loading && !rows.length ? (
+        <div className="si-panel"><div className="si-state">Считаем copy-стратегии по 13F… первый расчёт может занять время (затем кэш).</div></div>
+      ) : (
+        <div className="si-tblwrap">
+          <table className="si-tbl">
+            <thead>
+              <tr>
+                <th className="l">#</th>
+                <th className="l">Инвестор</th>
+                {th('alphaPct', 'copy α vs SPY')}
+                {th('alphaAnnPct', 'α / год')}
+                {th('copyReturnPct', 'copy ret')}
+                {th('spyReturnPct', 'SPY ret')}
+                {th('winRatePct', 'win rate')}
+                {th('sharpe', 'sharpe')}
+                {th('maxDrawdownPct', 'max DD')}
+                {th('closedTrades', 'сделок')}
+                {th('aum', 'AUM')}
+                <th className="l">топ-холдинги</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((r, i) => {
+                const aFrac = r.alphaPct / 100;
+                const maxW = Math.max(...r.topHoldings.map(h => h.weight), 0.01);
+                return (
+                  <tr key={r.investor.slug} className="clk" onClick={() => router.push(`/superinvestor/${r.investor.slug}`)}>
+                    <td className="l si-rank">{i + 1}</td>
+                    <td className="l">
+                      <span className="si-sym">{r.investor.name}</span>{' '}
+                      <span className={`si-badge ${r.investor.type}`}>{INVESTOR_TYPE_LABEL[r.investor.type]}</span>
+                      <div className="si-nm" style={{ fontSize: 11 }}>{r.investor.fund}</div>
+                    </td>
+                    <td className="si-alpha" style={{ background: cellColor(aFrac, clamp), color: textColorOn(aFrac, clamp) }}>
+                      {pctP(r.alphaPct)}
+                    </td>
+                    <td className={r.alphaAnnPct >= 0 ? 'si-pos' : 'si-neg'}>{pctP(r.alphaAnnPct)}</td>
+                    <td className={r.copyReturnPct >= 0 ? 'si-pos' : 'si-neg'}>{pctP(r.copyReturnPct)}</td>
+                    <td className="si-mut">{pctP(r.spyReturnPct)}</td>
+                    <td>{pctFu(r.winRatePct / 100)}</td>
+                    <td>{fixed(r.sharpe, 2)}</td>
+                    <td className="si-neg">{pctP(r.maxDrawdownPct)}</td>
+                    <td>{r.closedTrades}</td>
+                    <td className="si-mut">{money(r.aum)}</td>
+                    <td className="l">
+                      <span className="si-spark" title={r.topHoldings.map(h => `${h.symbol} ${pctFu(h.weight)}`).join(' · ')}>
+                        {r.topHoldings.map((h, k) => (
+                          <i key={k} style={{ height: Math.max(3, (h.weight / maxW) * 18) }} />
+                        ))}
+                      </span>{' '}
+                      <span className="si-nm" style={{ fontSize: 10.5 }}>
+                        {r.topHoldings.slice(0, 3).map(h => h.symbol).join(' ')}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+              {!visible.length && (
+                <tr><td colSpan={12} className="l si-state">Нет инвесторов под фильтр.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </main>
+  );
+}
