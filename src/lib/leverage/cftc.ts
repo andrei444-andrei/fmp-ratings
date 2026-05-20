@@ -15,7 +15,8 @@ export async function fetchCftcNetPctOi(market: CftcMarketDef, limit = 520): Pro
     'open_interest_all',
   ].join(','));
   params.set('$where', `upper(market_and_exchange_names) like '${market.where}'`);
-  params.set('$order', 'report_date_as_yyyy_mm_dd ASC');
+  // DESC + limit → берём ПОСЛЕДНИЕ `limit` отчётов (а не самые старые).
+  params.set('$order', 'report_date_as_yyyy_mm_dd DESC');
   params.set('$limit', String(limit));
 
   const headers: Record<string, string> = {};
