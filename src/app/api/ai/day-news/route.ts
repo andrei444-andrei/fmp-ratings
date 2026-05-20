@@ -43,6 +43,8 @@ export async function POST(req: NextRequest) {
     `Текст полей title/description выводи на ${outLang} языке.`,
     'Формат: {"items":[{"title":"...","description":"<1-2 предложения>","category":"geopolitics|monetary|macro|corporate|crisis|policy|other","url":"https://...","source":"домен"}]}',
     'Правила: только реальные новости этой даты с рабочими ссылками; 5-10 штук; никакого текста вне JSON.',
+    'Если достоверных новостей за дату нет — верни строго {"items":[]} (пустой массив).',
+    'НЕ добавляй пояснения, извинения или отказы в виде элементов items — только реальные новости.',
   ].join('\n');
 
   let raw: string;
@@ -67,6 +69,8 @@ export async function POST(req: NextRequest) {
   }
   const arr = Array.isArray(parsed?.items) ? parsed.items
     : Array.isArray(parsed) ? parsed : [];
+  // Sonar иногда вместо пустого списка возвращает текст-отказ как «новость» — отсекаем.
+  const REFUSAL = /(не удалось|не могу|не уда[её]тся|отсутству|не содерж|нерелевант|без риска|пуст(ой|ые)\s+результат|no\s+(reliable|relevant|results)|cannot|could ?n.?t|unable|i'?m sorry|insufficient)/i;
   const items = arr.map((it: any) => {
     const url = typeof it?.url === 'string' && /^https?:\/\//.test(it.url) ? it.url : undefined;
     let host = typeof it?.source === 'string' ? it.source : undefined;
@@ -77,7 +81,7 @@ export async function POST(req: NextRequest) {
       category: typeof it?.category === 'string' ? it.category : 'other',
       url, source: host,
     };
-  }).filter((x: any) => x.title);
+  }).filter((x: any) => x.title && !REFUSAL.test(x.title) && !REFUSAL.test(x.description));
 
   const payload = { date, items, source: 'perplexity' };
   try { await setCachedNews(`sonar:${date}:${lang.slice(0, 2)}`, 'perplexity', payload); } catch {}
