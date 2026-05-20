@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
-type Ev = { date: string; title: string; description: string; category: string; source?: string };
+type EvTr = { title: string; description?: string };
+type Ev = { date: string; title: string; description: string; category: string; source?: string; translations?: Record<string, EvTr> };
 type Template = {
   id?: number; name: string; system: string; userTpl: string;
   model?: string; query?: string; categories?: string; temperature?: number; maxTokens?: number;
@@ -25,30 +26,6 @@ const MODELS = [
   'gemini-2.0-flash', 'deepseek-chat'];
 
 // ===== Шаблоны RU / EN =====
-const DEFAULT_SYSTEM_RU = `Ты — летописец финансово-значимых событий. Возвращаешь конкретные ПРИЧИНЫ (что произошло в мире), а не реакцию рынков.
-
-СТРОГИЕ ПРАВИЛА:
-- Только реальные события, которые ты уверенно помнишь. Не выдумывай.
-- ЗАПРЕЩЕНО описывать реакцию рынка (рост/падение акций, индексов, нефти, золота, доходностей, "риск-офф", "фиксация прибыли", "инвесторы реагируют"). Пользователь видит реакцию сам.
-- Описывай факты: кто, что сделал, где, когда, ключевые цифры (CPI %, ставка, погибшие, объёмы).
-- source — название источника/издания/органа, если уверен; иначе пропусти поле.
-- Каждое событие — отдельный день с точной датой.
-
-Категории (выбери одну на событие): geopolitics, monetary, macro, crisis, policy, corporate, pandemic, other.
-
-Отвечай СТРОГО JSON без пояснений вне него:
-{ "events": [
-  { "date": "YYYY-MM-DD",
-    "title": "<название с фактами, 100-250 символов>",
-    "description": "<чёткие детали события, 200-500 символов>",
-    "category": "<одна из категорий>",
-    "source": "<источник, если есть>" }
-] }`;
-
-const DEFAULT_USER_RU = `Найди главные финансово-значимые события за период {dateFrom} — {dateTo}.
-Тема/фокус: {query}
-Верни 10-20 событий, отсортированных по дате (возрастание).`;
-
 const DEFAULT_SYSTEM_EN = `You are a chronicler of market-moving events. Return concrete CAUSES (what happened in the world), NOT market reactions.
 
 STRICT RULES:
@@ -102,9 +79,10 @@ export default function AiEventsDebugPage() {
   const [customModel, setCustomModel] = useState(false);
   const [temperature, setTemperature] = useState(0.2);
   const [maxTokens, setMaxTokens] = useState(6000);
-  const [system, setSystem] = useState(DEFAULT_SYSTEM_RU);
-  const [userTpl, setUserTpl] = useState(DEFAULT_USER_RU);
-  const [query, setQuery] = useState('геополитика, ФРС, макроданные, кризисы');
+  const [system, setSystem] = useState(DEFAULT_SYSTEM_EN);
+  const [userTpl, setUserTpl] = useState(DEFAULT_USER_EN);
+  const [query, setQuery] = useState('geopolitics, Fed, macro data, crises');
+  const [langs, setLangs] = useState('en,ru');  // языки хранения в БД (перевод AI)
   const [dateFrom, setDateFrom] = useState(yearsAgoIso(1));
   const [dateTo, setDateTo] = useState(todayIso());
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
@@ -135,6 +113,12 @@ export default function AiEventsDebugPage() {
   const [vTo, setVTo] = useState('');
   const [vCategory, setVCategory] = useState('');
   const [vLimit, setVLimit] = useState(500);
+  const [viewLang, setViewLang] = useState('ru');  // язык отображения карточек из БД
+
+  const langList = useMemo(
+    () => Array.from(new Set(langs.split(/[\s,;]+/).map(s => s.trim().toLowerCase()).filter(Boolean))),
+    [langs]
+  );
 
   const userResolved = useMemo(() => userTpl
     .replaceAll('{dateFrom}', dateFrom).replaceAll('{dateTo}', dateTo)
@@ -184,11 +168,20 @@ export default function AiEventsDebugPage() {
       return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
     };
     const csv = headers.join(',') + '\n' +
-      dbEvents.map(e => headers.map(h => esc((e as any)[h])).join(',')).join('\n');
+      dbEvents.map(e => {
+        const tr = e.translations?.[viewLang];
+        const row: Record<string, any> = {
+          date: e.date, category: e.category,
+          title: tr?.title || e.title,
+          description: tr?.description || e.description,
+          source: e.source,
+        };
+        return headers.map(h => esc(row[h])).join(',');
+      }).join('\n');
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `events-db-${todayIso()}.csv`;
+    a.download = `events-db-${viewLang}-${todayIso()}.csv`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 100);
   }
@@ -231,9 +224,8 @@ export default function AiEventsDebugPage() {
     } catch (e: any) { setTplMsg(`Ошибка: ${e.message}`); }
   }
 
-  function applyLang(lang: 'ru' | 'en') {
-    if (lang === 'ru') { setSystem(DEFAULT_SYSTEM_RU); setUserTpl(DEFAULT_USER_RU); }
-    else { setSystem(DEFAULT_SYSTEM_EN); setUserTpl(DEFAULT_USER_EN); }
+  function resetPrompt() {
+    setSystem(DEFAULT_SYSTEM_EN); setUserTpl(DEFAULT_USER_EN);
   }
 
   // ===== Тест одного запроса =====
@@ -270,7 +262,7 @@ export default function AiEventsDebugPage() {
       try {
         const res = await fetch('/api/ai/events-db/collect', {
           method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ system: systemResolved, user: u, model, temperature, maxTokens }),
+          body: JSON.stringify({ system: systemResolved, user: u, model, temperature, maxTokens, langs: langList }),
         }).then(r => r.json());
         if (res?.error) { setCollectStatus(`${q.label}: ${res.error}`); }
         else { totalFound += res.found || 0; totalInserted += res.inserted || 0; }
@@ -396,13 +388,7 @@ export default function AiEventsDebugPage() {
             </select>
           </label>
           <button className="btn" onClick={deleteTpl} disabled={!tplName.trim()}>Удалить</button>
-          <div className="flex flex-col">
-            <span className="label">Язык шаблона</span>
-            <div className="flex gap-1">
-              <button className="btn" onClick={() => applyLang('ru')}>RU</button>
-              <button className="btn" onClick={() => applyLang('en')}>EN</button>
-            </div>
-          </div>
+          <button className="btn" onClick={resetPrompt} title="Английский дефолтный промпт">↺ Дефолт (EN)</button>
           {tplMsg && <span className="text-xs text-blue-700 self-center">{tplMsg}</span>}
         </div>
       </section>
@@ -427,9 +413,9 @@ export default function AiEventsDebugPage() {
       <section className="card border-blue-200" style={{ background: '#f8fafc' }}>
         <h3 className="font-semibold mb-1">📦 Сбор событий в базу данных (поквартально)</h3>
         <p className="text-xs text-neutral-500 mb-3">
-          Для каждого квартала диапазона делается отдельный запрос (≈10-20 событий/квартал), результаты
-          пишутся в Turso (<code>ai_events_db</code>) с дедупом по (дата + заголовок). Поля: date, category,
-          title, description, source. Повторный запуск только добавляет новое.
+          Промпт английский → события на английском, затем AI переводит на языки из поля «Языки»
+          (по умолчанию en, ru) и пишет в Turso (<code>ai_events_db</code>) с дедупом по (дата + заголовок).
+          Поля: date, category, title, description, source + переводы. Повторный запуск только добавляет новое.
         </p>
         <div className="flex flex-wrap gap-3 items-end">
           <label className="flex flex-col">
@@ -441,6 +427,11 @@ export default function AiEventsDebugPage() {
             <span className="label">Год до</span>
             <input type="number" className="input w-24" value={yearTo} min={2000} max={currentYear()}
               onChange={e => setYearTo(parseInt(e.target.value) || currentYear())} />
+          </label>
+          <label className="flex flex-col">
+            <span className="label">Языки (перевод AI)</span>
+            <input className="input w-40" value={langs} placeholder="en,ru"
+              onChange={e => setLangs(e.target.value)} />
           </label>
           <button className="btn-primary" onClick={collectToDb} disabled={collecting}>
             {collecting ? '⏳ Сбор…' : '▶ Запустить сбор в БД'}
@@ -492,6 +483,12 @@ export default function AiEventsDebugPage() {
             <input type="number" className="input w-24" min={10} max={5000} step={100}
               value={vLimit} onChange={e => setVLimit(parseInt(e.target.value) || 500)} />
           </label>
+          <label className="flex flex-col">
+            <span className="label">Язык показа</span>
+            <select className="input w-24" value={viewLang} onChange={e => setViewLang(e.target.value)}>
+              {(langList.length ? langList : ['en', 'ru']).map(l => <option key={l} value={l}>{l}</option>)}
+            </select>
+          </label>
           <button className="btn-primary" onClick={loadDbEvents} disabled={dbLoading}>
             {dbLoading ? '…загрузка' : '🔄 Показать из БД'}
           </button>
@@ -507,6 +504,10 @@ export default function AiEventsDebugPage() {
               <div className="space-y-2 max-h-[600px] overflow-y-auto">
                 {dbEvents.map((ev, i) => {
                   const color = CATEGORY_COLORS[ev.category] || '#525252';
+                  const tr = ev.translations?.[viewLang];
+                  const title = tr?.title || ev.title;
+                  const description = tr?.description || ev.description;
+                  const fallback = !!ev.translations && !ev.translations[viewLang];
                   return (
                     <div key={i} className="border border-neutral-200 rounded p-3">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -517,9 +518,10 @@ export default function AiEventsDebugPage() {
                           {ev.category}
                         </span>
                         {ev.source && <span className="text-xs text-neutral-500">· {ev.source}</span>}
+                        {fallback && <span className="text-[10px] text-amber-600">нет перевода [{viewLang}] — показан оригинал</span>}
                       </div>
-                      <div className="font-medium text-sm mt-1.5">{ev.title}</div>
-                      {ev.description && <div className="text-sm text-neutral-600 mt-1">{ev.description}</div>}
+                      <div className="font-medium text-sm mt-1.5">{title}</div>
+                      {description && <div className="text-sm text-neutral-600 mt-1">{description}</div>}
                     </div>
                   );
                 })}
