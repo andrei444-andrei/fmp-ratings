@@ -52,7 +52,7 @@ export default function AiEventsDebugPage() {
   const [model, setModel] = useState('perplexity/sonar-pro');
   const [customModel, setCustomModel] = useState(false);
   const [temperature, setTemperature] = useState(0.2);
-  const [maxTokens, setMaxTokens] = useState(2500);
+  const [maxTokens, setMaxTokens] = useState(6000);
   const [system, setSystem] = useState(DEFAULT_SYSTEM);
   const [userTpl, setUserTpl] = useState(DEFAULT_USER);
   const [query, setQuery] = useState('геополитика, ФРС, макроданные, кризисы');
@@ -65,6 +65,7 @@ export default function AiEventsDebugPage() {
   const [events, setEvents] = useState<Ev[] | null>(null);
   const [raw, setRaw] = useState<string>('');
   const [showRaw, setShowRaw] = useState(false);
+  const [truncated, setTruncated] = useState(false);
 
   const userResolved = useMemo(() => {
     return userTpl
@@ -101,6 +102,7 @@ export default function AiEventsDebugPage() {
       }
       setEvents(res.events || []);
       setRaw(res.raw || '');
+      setTruncated(!!res.truncated);
       // Если событий нет — сразу раскрыть сырой ответ для диагностики.
       setShowRaw(!(res.events && res.events.length));
     } catch (e: any) {
@@ -182,8 +184,8 @@ export default function AiEventsDebugPage() {
           </label>
           <label className="flex flex-col">
             <span className="label">max_tokens</span>
-            <input type="number" className="input w-24" step={100} min={200} max={8000}
-              value={maxTokens} onChange={e => setMaxTokens(parseInt(e.target.value) || 2000)} />
+            <input type="number" className="input w-24" step={500} min={200} max={32000}
+              value={maxTokens} onChange={e => setMaxTokens(parseInt(e.target.value) || 4000)} />
           </label>
           <label className="flex flex-col">
             <span className="label">Тема / фокус ({'{query}'})</span>
@@ -241,6 +243,13 @@ export default function AiEventsDebugPage() {
             <button className="btn" onClick={() => setShowRaw(s => !s)}>{showRaw ? 'Скрыть' : 'Показать'} сырой JSON</button>
             <button className="btn" onClick={downloadJson} disabled={!events.length}>Скачать JSON</button>
           </div>
+
+          {truncated && (
+            <div className="text-xs rounded p-2 mb-3" style={{ background: '#fef3c7', color: '#92400e' }}>
+              ⚠️ Ответ обрезан по лимиту <b>max_tokens</b> — события восстановлены из неполного JSON
+              (последнее могло потеряться). Подними max_tokens (например 8000) или попроси в промпте меньше событий.
+            </div>
+          )}
 
           {showRaw && (
             <pre className="bg-neutral-900 text-neutral-100 rounded p-2 text-xs overflow-auto max-h-80 mb-3">{raw}</pre>
