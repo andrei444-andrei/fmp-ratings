@@ -9,6 +9,12 @@ export function getAimlApiKey(): string {
   return k;
 }
 
+// Единая модель для всех AI-запросов. Задаётся через env AIMLAPI_MODEL,
+// иначе — gpt-4o-mini. Явный параметр model в вызове перекрывает.
+export function getAimlModel(): string {
+  return process.env.AIMLAPI_MODEL?.trim() || 'gpt-4o-mini';
+}
+
 export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
 export async function aimlChat(opts: {
@@ -20,7 +26,7 @@ export async function aimlChat(opts: {
 }): Promise<string> {
   const key = getAimlApiKey();
   const body: any = {
-    model: opts.model || 'gpt-4o-mini',
+    model: opts.model || getAimlModel(),
     messages: opts.messages,
     temperature: opts.temperature ?? 0.2,
     max_tokens: opts.max_tokens ?? 600,

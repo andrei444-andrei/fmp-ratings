@@ -12,7 +12,11 @@ const CATEGORY_COLORS: Record<string, string> = {
   pandemic: '#ea580c', other: '#525252',
 };
 
-const MODELS = ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1', 'gpt-4.1-mini',
+const MODELS = [
+  // Web-search модели — для СВЕЖИХ дат (знают актуальные события):
+  'perplexity/sonar', 'perplexity/sonar-pro', 'perplexity/sonar-reasoning',
+  // Обычные LLM — только для ИСТОРИЧЕСКИХ дат в пределах их обучения:
+  'gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini',
   'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022',
   'gemini-2.0-flash', 'deepseek-chat'];
 
@@ -96,6 +100,8 @@ export default function AiEventsDebugPage() {
       }
       setEvents(res.events || []);
       setRaw(res.raw || '');
+      // Если событий нет — сразу раскрыть сырой ответ для диагностики.
+      setShowRaw(!(res.events && res.events.length));
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -132,6 +138,12 @@ export default function AiEventsDebugPage() {
           <code>{' {date}'}</code>, <code>{' {query}'}</code>, <code>{' {categories}'}</code> (в system-промпте — тоже <code>{'{categories}'}</code>).
           Ответ ожидается как JSON <code>{'{ events: [{date,title,description,category}] }'}</code>. Использует <code>AIMLAPI_KEY</code>.
         </p>
+        <div className="text-xs rounded p-2 mb-3" style={{ background: '#fef3c7', color: '#92400e' }}>
+          ⚠️ Обычные LLM (gpt-4o, claude) знают события только до своего обучения (~2024).
+          Для <b>свежих дат</b> (2025+) бери web-search модель: <code>perplexity/sonar</code> или
+          <code> perplexity/sonar-pro</code> — они ищут в актуальных источниках. На исторических
+          датах (2020–2023) подойдёт любая модель.
+        </div>
 
         <div className="flex flex-wrap gap-3 items-end">
           <label className="flex flex-col">
@@ -210,7 +222,13 @@ export default function AiEventsDebugPage() {
             <pre className="bg-neutral-900 text-neutral-100 rounded p-2 text-xs overflow-auto max-h-80 mb-3">{raw}</pre>
           )}
 
-          {!events.length && <p className="text-sm text-neutral-500">AI не вернул событий.</p>}
+          {!events.length && (
+            <p className="text-sm text-neutral-500">
+              AI не вернул событий. Смотри сырой JSON выше — если там есть массив под другим ключом,
+              сообщи; если пусто/отказ — попробуй модель помощнее (gpt-4o, claude-3-5-sonnet) или
+              смягчи формулировки промпта.
+            </p>
+          )}
 
           <div className="space-y-2">
             {events.map((ev, i) => {

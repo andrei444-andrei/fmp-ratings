@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { aimlChat } from '@/lib/aimlapi';
+import { aimlChat, getAimlModel } from '@/lib/aimlapi';
 
 // POST /api/ai/events-search
 // body: { system, user, model?, temperature?, maxTokens? }
@@ -15,20 +15,29 @@ export async function POST(req: NextRequest) {
     if (!user.trim() && !system.trim()) {
       return NextResponse.json({ error: 'system или user промпт обязателен' }, { status: 400 });
     }
-    const model = typeof j?.model === 'string' && j.model.trim() ? j.model.trim() : 'gpt-4o-mini';
+    const model = typeof j?.model === 'string' && j.model.trim() ? j.model.trim() : undefined;
     const temperature = Number.isFinite(j?.temperature) ? Number(j.temperature) : 0.2;
     const maxTokens = Number.isFinite(j?.maxTokens) ? Number(j.maxTokens) : 2000;
 
-    const raw = await aimlChat({
-      messages: [
-        ...(system.trim() ? [{ role: 'system' as const, content: system }] : []),
-        { role: 'user' as const, content: user },
-      ],
-      model,
-      temperature,
-      max_tokens: maxTokens,
-      response_format: { type: 'json_object' },
-    });
+    const messages = [
+      ...(system.trim() ? [{ role: 'system' as const, content: system }] : []),
+      { role: 'user' as const, content: user },
+    ];
+    let raw: string;
+    try {
+      raw = await aimlChat({
+        messages, model, temperature, max_tokens: maxTokens,
+        response_format: { type: 'json_object' },
+      });
+    } catch (e: any) {
+      // Часть моделей (напр. perplexity/sonar) не поддерживают json_object —
+      // повторяем без response_format, парсер вытащит JSON из текста.
+      if (/response_format|json|not\s+support|400/i.test(e?.message || '')) {
+        raw = await aimlChat({ messages, model, temperature, max_tokens: maxTokens });
+      } else {
+        throw e;
+      }
+    }
 
     let parsed: any = null;
     try { parsed = JSON.parse(raw); }
@@ -40,11 +49,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'не удалось распарсить JSON из ответа', raw }, { status: 502 });
     }
 
-    // Поддержим оба формата: { events: [...] } и просто [...]
-    const arr = Array.isArray(parsed) ? parsed
-      : Array.isArray(parsed.events) ? parsed.events
-      : Array.isArray(parsed.items) ? parsed.items
-      : [];
+    // Ищем массив событий в любом разумном месте ответа.
+    let arr: any[] = [];
+    if (Array.isArray(parsed)) {
+      arr = parsed;
+    } else if (parsed && typeof parsed === 'object') {
+      const knownKeys = ['events', 'items', 'results', 'data', 'list'];
+      for (const k of knownKeys) {
+        if (Array.isArray(parsed[k])) { arr = parsed[k]; break; }
+      }
+      // Фолбэк: первое значение-массив объектов в корне.
+      if (!arr.length) {
+        for (const v of Object.values(parsed)) {
+          if (Array.isArray(v) && v.length && typeof v[0] === 'object') { arr = v as any[]; break; }
+        }
+      }
+    }
     const events = arr.map((e: any) => ({
       date: typeof e?.date === 'string' ? e.date : '',
       title: typeof e?.title === 'string' ? e.title : '',
@@ -56,7 +76,7 @@ export async function POST(req: NextRequest) {
       events,
       summary: typeof parsed.summary === 'string' ? parsed.summary : undefined,
       raw,
-      model,
+      model: model || getAimlModel(),
     });
   } catch (e: any) {
     return NextResponse.json({ error: e.message || String(e) }, { status: 500 });
