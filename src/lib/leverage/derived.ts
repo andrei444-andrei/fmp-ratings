@@ -23,8 +23,10 @@ export const MARGIN_DEBT_PCT_MKTCAP: SeriesDef = {
 
 const MARGIN_ID = 'finra:margin_debt';
 const MKTCAP_ID = 'fred:NCBEILQ027S';
-// Прежний вариант (нормировка на индекс Wilshire) — удаляем, чтобы не дублировался.
-const OBSOLETE_ID = 'derived:margin_debt_to_wilshire';
+// Устаревшие ряды, которые надо вычистить из БД:
+//   - прежний производный (нормировка на индекс Wilshire);
+//   - сам Wilshire (FRED ID WILL5000IND больше не существует, давал ошибку).
+const OBSOLETE_IDS = ['derived:margin_debt_to_wilshire', 'fred:WILL5000IND'];
 
 async function loadObs(seriesId: string): Promise<Obs[]> {
   const rows = await db
@@ -38,9 +40,11 @@ async function loadObs(seriesId: string): Promise<Obs[]> {
 // Для каждой даты margin debt берём капитализацию на эту дату или ближайшую
 // предшествующую (market cap квартальный, margin debt месячный — идём указателем).
 export async function recomputeMarginDebtPctMktcap(): Promise<{ rows: number; reason?: string }> {
-  // чистим устаревший ряд (отношение к Wilshire)
-  await db.delete(schema.leverageObservations).where(eq(schema.leverageObservations.seriesId, OBSOLETE_ID));
-  await db.delete(schema.leverageSeries).where(eq(schema.leverageSeries.id, OBSOLETE_ID));
+  // чистим устаревшие ряды
+  for (const id of OBSOLETE_IDS) {
+    await db.delete(schema.leverageObservations).where(eq(schema.leverageObservations.seriesId, id));
+    await db.delete(schema.leverageSeries).where(eq(schema.leverageSeries.id, id));
+  }
 
   const margin = await loadObs(MARGIN_ID);
   const cap = await loadObs(MKTCAP_ID);
