@@ -88,11 +88,6 @@ const PRESET_REGIONS = 'VTI,VGK,FXI,EWJ,INDA,EWY';
 
 // ===== Утилиты =====
 function todayIso(): string { return new Date().toISOString().slice(0, 10); }
-function yearsAgoIso(years: number): string {
-  const d = new Date();
-  d.setFullYear(d.getFullYear() - years);
-  return d.toISOString().slice(0, 10);
-}
 function cellColor(r: number | null, clamp: number): string {
   if (r == null || !isFinite(r)) return 'transparent';
   const x = Math.max(-1, Math.min(1, r / clamp));
@@ -136,7 +131,7 @@ function gradesActionColor(action?: string): string {
 export default function HeatmapPage() {
   // ===== Настройки =====
   const [tickersInput, setTickersInput] = useState(DEFAULT_TICKERS);
-  const [fromDate, setFromDate] = useState(yearsAgoIso(3));
+  const [fromDate, setFromDate] = useState('2010-01-01');
   const [toDate, setToDate] = useState(todayIso());
   const [clampPct, setClampPct] = useState(3);
   const [clampPctAnchor, setClampPctAnchor] = useState(10);
@@ -582,8 +577,8 @@ export default function HeatmapPage() {
       } catch {}
 
       // 2. По умолчанию: тикеры из наборов БД (сектора + страны + доп.),
-      //    диапазон — последние 3 года. localStorage НЕ используется (детерминированный дефолт).
-      const f = yearsAgoIso(3), t = todayIso();
+      //    диапазон — с 2010 года. localStorage НЕ используется (детерминированный дефолт).
+      const f = '2010-01-01', t = todayIso();
       const tk = [...sectors, ...countries, ...extra].join(',') || DEFAULT_TICKERS;
       setTickersInput(tk);
       setFromDate(f);

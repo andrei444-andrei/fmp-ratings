@@ -282,14 +282,15 @@
 }
 /* ===== Stage: heatmap + лента новостей ===== */
 /* align-items: stretch — лента и левая колонка одинаковой высоты */
-.hm-stage { display: grid; grid-template-columns: 1fr 360px; gap: 14px; align-items: start; }
+/* Высота ленты привязана к левой колонке (графику); прокрутка — внутри блока */
+.hm-stage { display: grid; grid-template-columns: 1fr 360px; gap: 14px; align-items: stretch; }
 @media (max-width: 1180px) { .hm-stage { grid-template-columns: 1fr; } }
 .hm-panel { min-width: 0; } /* грид скроллится по X */
-/* Лента ограничена по высоте и прокручивается внутри — не вылезает за сетку */
 .hm-feed-panel {
   background: var(--hm-surf); border: .5px solid var(--hm-line);
   border-radius: var(--hm-rad-lg); overflow: hidden;
   display: flex; flex-direction: column; min-height: 0;
+  max-height: 100%;
 }
 
 /* hot / selected подсветка колонок */
@@ -316,7 +317,7 @@
 .hm-fchip.off { opacity: .4; }
 
 /* лента: список дней */
-.hm-feed { overflow-y: auto; flex: 1 1 auto; }
+.hm-feed { overflow-y: auto; flex: 1 1 auto; min-height: 0; }
 .hm-feed-empty { padding: 26px 16px; text-align: center; color: var(--hm-tx3);
   font-size: 12px; line-height: 1.6; }
 .hm-fday { padding: 11px 14px; border-bottom: .5px solid var(--hm-line);
@@ -333,7 +334,7 @@
 .hm-fday-ev .dot { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 6px; margin-top: 5px; }
 
 /* детали выбранного дня внутри панели */
-.hm-pop-detail { overflow-y: auto; flex: 1 1 auto; }
+.hm-pop-detail { overflow-y: auto; flex: 1 1 auto; min-height: 0; }
 .hm-pop-detail .hm-pop-h { padding: 13px 14px; }
 .hm-pop-detail .hm-pop-body { padding: 13px 14px 16px; }
 .hm-feed-panel .hm-acts button { min-width: 0; }
@@ -375,7 +376,7 @@
 .hm-dp-grid button.dis { opacity: .25; cursor: not-allowed; }
 
 /* ===== AI-исследователь события ===== */
-.hm-ai { margin-bottom: 10px; }
+.hm-ai { margin-top: 16px; margin-bottom: 10px; }
 .hm-ai-bar {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   background: linear-gradient(180deg, rgba(124,108,240,.08), var(--hm-surf));
