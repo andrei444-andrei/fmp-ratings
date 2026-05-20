@@ -19,16 +19,25 @@ export async function POST(req: NextRequest) {
     const temperature = Number.isFinite(j?.temperature) ? Number(j.temperature) : 0.2;
     const maxTokens = Number.isFinite(j?.maxTokens) ? Number(j.maxTokens) : 2000;
 
-    const raw = await aimlChat({
-      messages: [
-        ...(system.trim() ? [{ role: 'system' as const, content: system }] : []),
-        { role: 'user' as const, content: user },
-      ],
-      model,
-      temperature,
-      max_tokens: maxTokens,
-      response_format: { type: 'json_object' },
-    });
+    const messages = [
+      ...(system.trim() ? [{ role: 'system' as const, content: system }] : []),
+      { role: 'user' as const, content: user },
+    ];
+    let raw: string;
+    try {
+      raw = await aimlChat({
+        messages, model, temperature, max_tokens: maxTokens,
+        response_format: { type: 'json_object' },
+      });
+    } catch (e: any) {
+      // Часть моделей (напр. perplexity/sonar) не поддерживают json_object —
+      // повторяем без response_format, парсер вытащит JSON из текста.
+      if (/response_format|json|not\s+support|400/i.test(e?.message || '')) {
+        raw = await aimlChat({ messages, model, temperature, max_tokens: maxTokens });
+      } else {
+        throw e;
+      }
+    }
 
     let parsed: any = null;
     try { parsed = JSON.parse(raw); }
