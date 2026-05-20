@@ -3,7 +3,7 @@
 
 export type SeriesDef = {
   id: string;
-  source: 'fred' | 'finra' | 'cftc';
+  source: 'fred' | 'finra' | 'cftc' | 'manual';
   segment: string;
   label: string;
   unit: string;

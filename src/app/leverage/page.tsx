@@ -1,473 +1,332 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-
-// ---- типы ответа API ----
-type Stats = {
-  latest: { date: string; value: number } | null;
-  prev: { date: string; value: number } | null;
-  zscore: number | null;
-  yoyPct: number | null;
-  changePct: number | null;
-  level: 'green' | 'amber' | 'red' | 'na';
-  windowN: number;
-  sparkline: number[];
-};
-type SeriesRow = {
-  id: string;
-  source: string;
-  segment: string;
-  segmentLabel: string;
-  label: string;
-  unit: string | null;
-  metric: string;
-  frequency: string;
-  lagNote: string | null;
-  indexSymbol: string | null;
-  higherIsRisk: boolean;
-  updatedAt: string | null;
-  count: number;
-  stats: Stats;
-};
-type Composite = {
-  value: number | null;
-  bySegment: Record<string, number | null>;
-  level: 'green' | 'amber' | 'red' | 'na';
-};
-type Overview = { series: SeriesRow[]; composite: Composite; segments: Record<string, { label: string; items: string[] }> };
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 type Obs = { date: string; value: number };
-type Detail = {
-  id: string; label: string; unit: string | null; metric: string; segment: string;
-  frequency: string; lagNote: string | null; indexSymbol: string | null; higherIsRisk: boolean;
-  stats: Stats; observations: Obs[];
+type Region = {
+  code: string;
+  name: string;
+  color: string;
+  lagNote: string | null;
+  updatedAt: string | null;
+  observations: Obs[];
 };
 
-const LEVEL_COLOR: Record<string, string> = {
-  green: '#16a34a', amber: '#d97706', red: '#dc2626', na: '#9ca3af',
-};
-const LEVEL_LABEL: Record<string, string> = {
-  green: 'норма', amber: 'повышено', red: 'аномалия', na: 'нет данных',
-};
+const REGION_OPTIONS = [
+  { code: 'KR', name: 'Южная Корея' },
+  { code: 'JP', name: 'Япония' },
+  { code: 'CN', name: 'Китай' },
+  { code: 'EU', name: 'Еврозона' },
+];
 
-const fmtNum = (v: number | null | undefined, digits = 2) =>
-  v == null || !Number.isFinite(v) ? '—' : v.toLocaleString('en-US', { maximumFractionDigits: digits });
 const fmtPct = (v: number | null | undefined) =>
-  v == null || !Number.isFinite(v) ? '—' : (v > 0 ? '+' : '') + v.toFixed(1) + '%';
-const fmtZ = (v: number | null | undefined) =>
-  v == null || !Number.isFinite(v) ? '—' : (v > 0 ? '+' : '') + v.toFixed(2);
+  v == null || !Number.isFinite(v) ? '—' : v.toFixed(2) + '%';
+const tms = (d: string) => new Date(d).getTime();
 
-// ---- мини-спарклайн ----
-function Sparkline({ data, color }: { data: number[]; color: string }) {
-  if (!data || data.length < 2) return <span className="text-xs text-neutral-400">—</span>;
-  const w = 120, h = 28, pad = 2;
-  const min = Math.min(...data), max = Math.max(...data);
-  const span = max - min || 1;
-  const pts = data.map((v, i) => {
-    const x = pad + (i / (data.length - 1)) * (w - 2 * pad);
-    const y = h - pad - ((v - min) / span) * (h - 2 * pad);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(' ');
-  return (
-    <svg width={w} height={h} className="block">
-      <polyline points={pts} fill="none" stroke={color} strokeWidth={1.5} />
-    </svg>
-  );
-}
+// ===== Интерактивный мультилинейный график (SVG + hover-крестик + тултип) =====
+function MdmcChart({ regions, visible }: { regions: Region[]; visible: Record<string, boolean> }) {
+  const W = 960, H = 420, padL = 48, padR = 16, padT = 16, padB = 28;
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [hoverX, setHoverX] = useState<number | null>(null);
 
-// ---- линейный график (одна или две нормализованные линии) ----
-function LineChart({
-  primary, overlay, primaryLabel, overlayLabel,
-}: {
-  primary: Obs[]; overlay?: Obs[]; primaryLabel: string; overlayLabel?: string;
-}) {
-  const w = 760, h = 280, padL = 8, padR = 8, padT = 14, padB = 22;
-  if (!primary.length) return <div className="text-sm text-neutral-500">нет данных</div>;
+  const shown = regions.filter(r => visible[r.code] && r.observations.length);
 
-  const dates = primary.map(o => o.date);
-  const t0 = new Date(dates[0]).getTime();
-  const t1 = new Date(dates[dates.length - 1]).getTime();
-  const tSpan = t1 - t0 || 1;
-  const xOf = (d: string) => padL + ((new Date(d).getTime() - t0) / tSpan) * (w - padL - padR);
+  const scales = useMemo(() => {
+    let tMin = Infinity, tMax = -Infinity, vMin = Infinity, vMax = -Infinity;
+    for (const r of shown) for (const o of r.observations) {
+      const t = tms(o.date);
+      if (t < tMin) tMin = t; if (t > tMax) tMax = t;
+      if (o.value < vMin) vMin = o.value; if (o.value > vMax) vMax = o.value;
+    }
+    if (!Number.isFinite(tMin)) return null;
+    if (tMax === tMin) tMax = tMin + 1;
+    const pad = (vMax - vMin) * 0.08 || 1;
+    vMin -= pad; vMax += pad;
+    return { tMin, tMax, vMin, vMax };
+  }, [shown]);
 
-  function pathFor(data: Obs[], color: string) {
-    const ys = data.map(o => o.value);
-    const min = Math.min(...ys), max = Math.max(...ys);
-    const span = max - min || 1;
-    const yOf = (v: number) => padT + (1 - (v - min) / span) * (h - padT - padB);
-    const d = data
-      .filter(o => o.date >= dates[0] && o.date <= dates[dates.length - 1])
-      .map((o, i) => `${i === 0 ? 'M' : 'L'}${xOf(o.date).toFixed(1)},${yOf(o.value).toFixed(1)}`)
-      .join(' ');
-    return { d, color, min, max };
+  if (!scales) {
+    return <div className="text-sm text-neutral-500 py-12 text-center">Нет данных для графика. Загрузите США или импортируйте регион.</div>;
+  }
+  const { tMin, tMax, vMin, vMax } = scales;
+  const xOf = (t: number) => padL + (t - tMin) / (tMax - tMin) * (W - padL - padR);
+  const yOf = (v: number) => padT + (1 - (v - vMin) / (vMax - vMin)) * (H - padT - padB);
+
+  // годовые тики по X
+  const xticks: { x: number; label: string }[] = [];
+  const y0 = new Date(tMin).getFullYear(), y1 = new Date(tMax).getFullYear();
+  const step = Math.max(1, Math.ceil((y1 - y0) / 10));
+  for (let y = y0; y <= y1; y += step) xticks.push({ x: xOf(tms(`${y}-01-01`)), label: String(y) });
+
+  // тики по Y (% )
+  const yticks: number[] = [];
+  const yn = 5;
+  for (let i = 0; i <= yn; i++) yticks.push(vMin + (vMax - vMin) * i / yn);
+
+  // hover: ближайшая точка каждого ряда к наведённому времени
+  let hover: { x: number; items: { code: string; name: string; color: string; date: string; value: number; cy: number }[] } | null = null;
+  if (hoverX != null) {
+    const t = tMin + (hoverX - padL) / (W - padL - padR) * (tMax - tMin);
+    const items = shown.map(r => {
+      let best = r.observations[0], bd = Infinity;
+      for (const o of r.observations) { const d = Math.abs(tms(o.date) - t); if (d < bd) { bd = d; best = o; } }
+      return { code: r.code, name: r.name, color: r.color, date: best.date, value: best.value, cy: yOf(best.value) };
+    });
+    hover = { x: hoverX, items };
   }
 
-  const p = pathFor(primary, '#2563eb');
-  const ov = overlay && overlay.length ? pathFor(overlay, '#9ca3af') : null;
-
-  // подписи годов по оси X
-  const ticks: { x: number; label: string }[] = [];
-  const startYr = new Date(dates[0]).getFullYear();
-  const endYr = new Date(dates[dates.length - 1]).getFullYear();
-  const stepYr = Math.max(1, Math.ceil((endYr - startYr) / 8));
-  for (let y = startYr; y <= endYr; y += stepYr) {
-    ticks.push({ x: xOf(`${y}-01-01`), label: String(y) });
+  function onMove(e: React.MouseEvent) {
+    const rect = wrapRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const px = (e.clientX - rect.left) / rect.width * W;
+    setHoverX(Math.max(padL, Math.min(W - padR, px)));
   }
 
   return (
-    <div className="overflow-x-auto">
-      <svg width={w} height={h} className="block max-w-full">
-        <line x1={padL} y1={h - padB} x2={w - padR} y2={h - padB} stroke="#e5e7eb" />
-        {ticks.map((tk, i) => (
+    <div ref={wrapRef} className="relative" onMouseMove={onMove} onMouseLeave={() => setHoverX(null)}>
+      <svg viewBox={`0 0 ${W} ${H}`} className="block w-full" style={{ height: 'auto' }}>
+        {/* сетка Y */}
+        {yticks.map((v, i) => (
           <g key={i}>
-            <line x1={tk.x} y1={padT} x2={tk.x} y2={h - padB} stroke="#f3f4f6" />
-            <text x={tk.x} y={h - 6} fontSize={10} fill="#9ca3af" textAnchor="middle">{tk.label}</text>
+            <line x1={padL} y1={yOf(v)} x2={W - padR} y2={yOf(v)} stroke="#f1f5f9" />
+            <text x={padL - 6} y={yOf(v) + 3} fontSize={10} fill="#94a3b8" textAnchor="end">{v.toFixed(1)}%</text>
           </g>
         ))}
-        {ov && <path d={ov.d} fill="none" stroke={ov.color} strokeWidth={1.3} strokeDasharray="4 3" />}
-        <path d={p.d} fill="none" stroke={p.color} strokeWidth={1.8} />
-      </svg>
-      <div className="flex gap-4 text-xs mt-1">
-        <span className="flex items-center gap-1"><span style={{ background: '#2563eb' }} className="inline-block w-3 h-0.5" /> {primaryLabel}</span>
-        {ov && overlayLabel && (
-          <span className="flex items-center gap-1"><span style={{ background: '#9ca3af' }} className="inline-block w-3 h-0.5" /> {overlayLabel} (форма)</span>
+        {/* тики X */}
+        {xticks.map((t, i) => (
+          <text key={i} x={t.x} y={H - 8} fontSize={10} fill="#94a3b8" textAnchor="middle">{t.label}</text>
+        ))}
+        {/* линии регионов */}
+        {shown.map(r => (
+          <polyline
+            key={r.code}
+            points={r.observations.map(o => `${xOf(tms(o.date)).toFixed(1)},${yOf(o.value).toFixed(1)}`).join(' ')}
+            fill="none" stroke={r.color} strokeWidth={1.8}
+          />
+        ))}
+        {/* hover-крестик и точки */}
+        {hover && (
+          <g>
+            <line x1={hover.x} y1={padT} x2={hover.x} y2={H - padB} stroke="#cbd5e1" strokeDasharray="3 3" />
+            {hover.items.map(it => (
+              <circle key={it.code} cx={hover!.x} cy={it.cy} r={3.5} fill={it.color} stroke="#fff" strokeWidth={1} />
+            ))}
+          </g>
         )}
-      </div>
+      </svg>
+      {hover && hover.items.length > 0 && (
+        <div
+          className="absolute pointer-events-none bg-white border border-neutral-200 rounded shadow-md text-xs p-2"
+          style={{
+            left: `calc(${(hover.x / W) * 100}% + 8px)`,
+            top: 8,
+            transform: (hover.x / W) > 0.7 ? 'translateX(-100%) translateX(-16px)' : undefined,
+          }}
+        >
+          <div className="font-medium mb-1">{hover.items[0].date}</div>
+          {hover.items.map(it => (
+            <div key={it.code} className="flex items-center gap-2 whitespace-nowrap">
+              <span className="inline-block w-2 h-2 rounded-full" style={{ background: it.color }} />
+              <span className="text-neutral-600">{it.name}</span>
+              <span className="font-mono ml-auto">{fmtPct(it.value)}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-// ---- клиентские трансформации ряда для переключателя видов ----
-function transform(obs: Obs[], view: 'abs' | 'yoy' | 'z', freq: string): Obs[] {
-  if (view === 'abs') return obs;
-  if (view === 'yoy') {
-    const out: Obs[] = [];
-    for (let i = 0; i < obs.length; i++) {
-      const target = new Date(obs[i].date);
-      target.setFullYear(target.getFullYear() - 1);
-      const tt = target.getTime();
-      let best: Obs | null = null, bd = Infinity;
-      for (let j = 0; j <= i; j++) {
-        const diff = Math.abs(new Date(obs[j].date).getTime() - tt);
-        if (diff < bd) { bd = diff; best = obs[j]; }
-      }
-      if (best && bd <= 45 * 864e5 && Math.abs(best.value) > 1e-9) {
-        out.push({ date: obs[i].date, value: (obs[i].value - best.value) / Math.abs(best.value) * 100 });
-      }
-    }
-    return out;
-  }
-  // rolling z-score
-  const win = freq === 'daily' ? 5 * 252 : freq === 'weekly' ? 5 * 52 : freq === 'monthly' ? 60 : 20;
-  const out: Obs[] = [];
-  for (let i = 0; i < obs.length; i++) {
-    const slice = obs.slice(Math.max(0, i - win + 1), i + 1).map(o => o.value);
-    if (slice.length < 4) continue;
-    const mean = slice.reduce((a, b) => a + b, 0) / slice.length;
-    const sd = Math.sqrt(slice.reduce((a, b) => a + (b - mean) ** 2, 0) / slice.length);
-    if (sd < 1e-9) continue;
-    out.push({ date: obs[i].date, value: (obs[i].value - mean) / sd });
-  }
-  return out;
-}
-
 export default function LeveragePage() {
-  const [data, setData] = useState<Overview | null>(null);
+  const [regions, setRegions] = useState<Region[]>([]);
+  const [visible, setVisible] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // ETL
   const [busy, setBusy] = useState<string | null>(null);
-  const [ingestLog, setIngestLog] = useState<string[]>([]);
-  const [finraCsv, setFinraCsv] = useState('');
-  const log = (m: string) => setIngestLog(prev => [`[${new Date().toLocaleTimeString()}] ${m}`, ...prev].slice(0, 50));
+  const [log, setLog] = useState<string[]>([]);
+  const addLog = (m: string) => setLog(p => [`[${new Date().toLocaleTimeString()}] ${m}`, ...p].slice(0, 30));
 
-  // drill-down
-  const [selected, setSelected] = useState<string | null>(null);
-  const [detail, setDetail] = useState<Detail | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [view, setView] = useState<'abs' | 'yoy' | 'z'>('abs');
-  const [overlay, setOverlay] = useState<Obs[]>([]);
+  // импорт региона
+  const [impCode, setImpCode] = useState('KR');
+  const [impCsv, setImpCsv] = useState('');
 
-  const loadOverview = useCallback(async () => {
-    setLoading(true); setError(null);
+  const load = useCallback(async () => {
+    setLoading(true);
     try {
-      const r = await fetch('/api/leverage/overview').then(r => r.json());
-      if (r.error) setError(r.error);
-      else setData(r);
-    } catch (e: any) { setError(e.message); }
+      const r = await fetch('/api/leverage/mdmc').then(r => r.json());
+      if (r.error) { addLog('overview: ' + r.error); setRegions([]); }
+      else {
+        const regs: Region[] = r.regions || [];
+        setRegions(regs);
+        setVisible(prev => {
+          const next = { ...prev };
+          for (const reg of regs) if (!(reg.code in next)) next[reg.code] = true;
+          return next;
+        });
+      }
+    } catch (e: any) { addLog('overview: ' + e.message); }
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { loadOverview(); }, [loadOverview]);
+  useEffect(() => { load(); }, [load]);
 
-  async function migrate() {
-    setBusy('migrate');
+  // США: FRED (market cap) + FINRA (margin debt) → автопересчёт mdmc:US
+  async function loadUS() {
+    setBusy('US');
     try {
-      const r = await fetch('/api/admin/migrate', { method: 'POST' }).then(r => r.json());
-      log(r.ok ? `Миграция ок (${r.executed} стейтментов)` : `Миграция: ошибки ${r.failed ?? '?'}`);
-    } catch (e: any) { log(`Миграция: ${e.message}`); }
-    finally { setBusy(null); }
-  }
-
-  async function ingest(source: 'fred' | 'cftc' | 'finra', useCsv = false) {
-    setBusy(source);
-    try {
-      const body: any = { source };
-      if (source === 'finra' && useCsv) body.csv = finraCsv;
-      const r = await fetch('/api/leverage/ingest', {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+      addLog('США: загрузка FRED (market cap)...');
+      const fred = await fetch('/api/leverage/ingest', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ source: 'fred' }),
       }).then(r => r.json());
-      if (r.error) { log(`${source}: ${r.error}`); return; }
-      if (r.sourceUrl) log(`${source}: файл ${r.sourceUrl}`);
-      for (const res of r.results || []) {
-        log(`${source} · ${res.label}: ${res.error ? 'ОШИБКА ' + res.error : res.rows + ' строк'}`);
-      }
-      await loadOverview();
-    } catch (e: any) { log(`${source}: ${e.message}`); }
+      if (fred.error) addLog('FRED: ' + fred.error);
+      addLog('США: загрузка FINRA (margin debt, авто)...');
+      const finra = await fetch('/api/leverage/ingest', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ source: 'finra' }),
+      }).then(r => r.json());
+      if (finra.error) addLog('FINRA: ' + finra.error);
+      const us = (finra.results || []).find((x: any) => x.id === 'mdmc:US');
+      if (us) addLog(us.error ? 'США %: ' + us.error : `США %: ${us.rows} точек`);
+      await load();
+    } catch (e: any) { addLog('США: ' + e.message); }
     finally { setBusy(null); }
   }
 
-  // загрузка drill-down + overlay
-  useEffect(() => {
-    if (!selected) { setDetail(null); setOverlay([]); return; }
-    let cancelled = false;
-    (async () => {
-      setDetailLoading(true);
-      try {
-        const d: Detail = await fetch(`/api/leverage/series/${encodeURIComponent(selected)}`).then(r => r.json());
-        if (cancelled) return;
-        setDetail(d);
-        setOverlay([]);
-        if (d.indexSymbol && d.observations.length) {
-          const from = d.observations[0].date;
-          const to = d.observations[d.observations.length - 1].date;
-          try {
-            const px = await fetch(`/api/fmp/historical-price-eod?symbol=${encodeURIComponent(d.indexSymbol)}&from=${from}&to=${to}`).then(r => r.json());
-            if (!cancelled && Array.isArray(px)) {
-              const ov = px
-                .filter((r: any) => r && r.date && Number.isFinite(Number(r.price)))
-                .map((r: any) => ({ date: String(r.date).slice(0, 10), value: Number(r.price) }))
-                .sort((a: Obs, b: Obs) => a.date.localeCompare(b.date));
-              setOverlay(ov);
-            }
-          } catch { /* overlay опционален */ }
-        }
-      } catch { if (!cancelled) setDetail(null); }
-      finally { if (!cancelled) setDetailLoading(false); }
-    })();
-    return () => { cancelled = true; };
-  }, [selected]);
+  async function importRegion() {
+    if (!impCode.trim() || !impCsv.trim()) return;
+    setBusy('import');
+    try {
+      const r = await fetch('/api/leverage/region', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ code: impCode, csv: impCsv }),
+      }).then(r => r.json());
+      if (r.error) addLog(`${impCode}: ` + r.error);
+      else { addLog(`${impCode}: ${r.rows} точек (режим: ${r.mode})`); setImpCsv(''); await load(); }
+    } catch (e: any) { addLog(`${impCode}: ` + e.message); }
+    finally { setBusy(null); }
+  }
 
-  const transformed = useMemo(() => {
-    if (!detail) return [];
-    return transform(detail.observations, view, detail.frequency);
-  }, [detail, view]);
+  async function removeRegion(code: string) {
+    if (code === 'US') { addLog('США пересчитывается автоматически; удалять смысла нет'); return; }
+    setBusy('del-' + code);
+    try {
+      await fetch(`/api/leverage/region?code=${encodeURIComponent(code)}`, { method: 'DELETE' });
+      addLog(`${code}: удалён`);
+      await load();
+    } catch (e: any) { addLog(`${code}: ` + e.message); }
+    finally { setBusy(null); }
+  }
 
-  const last12 = useMemo(() => {
-    if (!detail) return [];
-    return detail.observations.slice(-12).reverse();
-  }, [detail]);
+  const latest = (r: Region) => r.observations.length ? r.observations[r.observations.length - 1] : null;
 
   return (
     <main>
       <section className="card">
-        <div className="flex items-start justify-between flex-wrap gap-3">
-          <div>
-            <h2 className="text-lg font-semibold">Leverage Monitor</h2>
-            <p className="text-xs text-neutral-500 mt-1 max-w-2xl">
-              Термометр кредитного плеча по классам активов. Sprint 1: FINRA margin debt (US),
-              FRED (broker-dealer receivables, total credit, Wilshire), CFTC COT (net positioning по фьючерсам).
-              Светофор — по 5-летнему Z-score с учётом направления риска. У каждого ряда показан лаг данных.
-            </p>
-          </div>
-          {data?.composite && (
-            <div className="text-center px-4 py-2 rounded-lg border" style={{ borderColor: LEVEL_COLOR[data.composite.level] }}>
-              <div className="text-xs text-neutral-500">Global Leverage Index</div>
-              <div className="text-2xl font-bold" style={{ color: LEVEL_COLOR[data.composite.level] }}>
-                {fmtZ(data.composite.value)}
-              </div>
-              <div className="text-xs" style={{ color: LEVEL_COLOR[data.composite.level] }}>{LEVEL_LABEL[data.composite.level]}</div>
-            </div>
-          )}
+        <h2 className="text-lg font-semibold">Margin Debt / Market Cap по регионам</h2>
+        <p className="text-xs text-neutral-500 mt-1 max-w-3xl">
+          Маржинальный долг как % от капитализации рынка, в динамике. США считается автоматически
+          (FINRA margin debt / FRED Z.1 market cap). Другие регионы — импортом CSV
+          (<code>date, margin_debt, market_cap</code> либо <code>date, pct</code>). Наведите курсор на график.
+        </p>
+        <div className="flex flex-wrap gap-2 items-center mt-3">
+          <button className="btn-primary" disabled={!!busy} onClick={loadUS}>
+            {busy === 'US' ? 'Загрузка США...' : 'Загрузить / обновить США'}
+          </button>
+          <button className="btn" disabled={loading} onClick={load}>{loading ? '...' : 'Обновить график'}</button>
+          <span className="text-xs text-neutral-500">США требует <code>FRED_API_KEY</code>. FINRA качается с finra.org.</span>
         </div>
       </section>
 
-      {/* ETL */}
+      {/* График */}
       <section className="card">
-        <h3 className="font-semibold mb-2">Обновление данных (ETL)</h3>
-        <div className="flex flex-wrap gap-2 items-center">
-          <button className="btn" disabled={!!busy} onClick={migrate} title="Не обязательно — таблицы создаются автоматически">
-            {busy === 'migrate' ? '...' : 'Миграция таблиц (опц.)'}
-          </button>
-          <button className="btn-primary" disabled={!!busy} onClick={() => ingest('fred')}>
-            {busy === 'fred' ? 'FRED...' : 'Загрузить FRED'}
-          </button>
-          <button className="btn-primary" disabled={!!busy} onClick={() => ingest('cftc')}>
-            {busy === 'cftc' ? 'CFTC...' : 'Загрузить CFTC (COT)'}
-          </button>
-          <button className="btn-primary" disabled={!!busy} onClick={() => ingest('finra')}>
-            {busy === 'finra' ? 'FINRA...' : 'Загрузить FINRA (авто)'}
-          </button>
-          <span className="text-xs text-neutral-500">FRED требует <code>FRED_API_KEY</code>. CFTC — публичный. FINRA качается с finra.org (xlsx).</span>
+        <div className="flex flex-wrap gap-3 items-center mb-2">
+          {regions.map(r => {
+            const lv = latest(r);
+            const on = visible[r.code];
+            return (
+              <button
+                key={r.code}
+                onClick={() => setVisible(v => ({ ...v, [r.code]: !v[r.code] }))}
+                className={`flex items-center gap-1.5 text-sm px-2 py-1 rounded border ${on ? 'bg-white' : 'bg-neutral-100 opacity-50'}`}
+              >
+                <span className="inline-block w-3 h-3 rounded-full" style={{ background: r.color }} />
+                <span>{r.name}</span>
+                <span className="font-mono text-neutral-500">{fmtPct(lv?.value)}</span>
+              </button>
+            );
+          })}
         </div>
+        <MdmcChart regions={regions} visible={visible} />
+      </section>
 
-        <details className="mt-3">
-          <summary className="text-sm cursor-pointer text-neutral-700">FINRA Margin Debt — ручной импорт CSV (fallback)</summary>
-          <p className="text-xs text-neutral-500 mt-1">
-            Запасной вариант, если авто-загрузка не сработала. Скопируйте таблицу с finra.org (Margin Statistics) в CSV.
-            Парсер ищет колонку месяца и колонки «Debit Balances …» (margin debt) и «Free Credit Balances …».
-            Форматы дат: <code>2024-01</code>, <code>Jan-24</code>, <code>01/2024</code>.
-          </p>
-          <textarea
-            className="input w-full mt-2 font-mono text-xs" rows={5}
-            placeholder={'Month,Debit Balances,Free Credit Balances\n2024-01,789000,180000\n...'}
-            value={finraCsv} onChange={e => setFinraCsv(e.target.value)}
-          />
-          <button className="btn mt-2" disabled={!!busy || !finraCsv.trim()} onClick={() => ingest('finra', true)}>
-            {busy === 'finra' ? 'Импорт...' : 'Импортировать FINRA CSV'}
-          </button>
-        </details>
+      {/* Управление регионами */}
+      <section className="card">
+        <h3 className="font-semibold mb-2">Добавить / обновить регион (CSV)</h3>
+        <p className="text-xs text-neutral-500 mb-2">
+          Колонки: <code>date</code> + <code>margin_debt</code> + <code>market_cap</code> (посчитаем %), либо <code>date</code> + <code>pct</code> (готовый %).
+          Даты: <code>2024-01</code>, <code>Jan-24</code>, <code>01/2024</code>.
+        </p>
+        <div className="flex flex-wrap gap-2 items-end">
+          <label className="flex flex-col">
+            <span className="label">Регион</span>
+            <input
+              list="region-codes" className="input w-40" value={impCode}
+              onChange={e => setImpCode(e.target.value.toUpperCase())} placeholder="KR"
+            />
+            <datalist id="region-codes">
+              {REGION_OPTIONS.map(o => <option key={o.code} value={o.code}>{o.name}</option>)}
+            </datalist>
+          </label>
+        </div>
+        <textarea
+          className="input w-full mt-2 font-mono text-xs" rows={5}
+          placeholder={'date,margin_debt,market_cap\n2024-01,18500,2100000\n2024-02,19000,2150000'}
+          value={impCsv} onChange={e => setImpCsv(e.target.value)}
+        />
+        <button className="btn-primary mt-2" disabled={!!busy || !impCsv.trim() || !impCode.trim()} onClick={importRegion}>
+          {busy === 'import' ? 'Импорт...' : 'Импортировать регион'}
+        </button>
 
-        {ingestLog.length > 0 && (
-          <div className="log mt-3">{ingestLog.join('\n')}</div>
+        {regions.length > 0 && (
+          <table className="w-full text-sm mt-4">
+            <thead>
+              <tr className="bg-neutral-100 text-left">
+                <th className="p-2 border">Регион</th>
+                <th className="p-2 border">Последнее</th>
+                <th className="p-2 border">Дата</th>
+                <th className="p-2 border">Точек</th>
+                <th className="p-2 border">Лаг</th>
+                <th className="p-2 border"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {regions.map(r => {
+                const lv = latest(r);
+                return (
+                  <tr key={r.code} className="hover:bg-neutral-50">
+                    <td className="p-2 border">
+                      <span className="inline-block w-2.5 h-2.5 rounded-full mr-1.5 align-middle" style={{ background: r.color }} />
+                      {r.name} <span className="text-neutral-400 font-mono">{r.code}</span>
+                    </td>
+                    <td className="p-2 border font-mono">{fmtPct(lv?.value)}</td>
+                    <td className="p-2 border text-xs">{lv?.date ?? '—'}</td>
+                    <td className="p-2 border">{r.observations.length}</td>
+                    <td className="p-2 border text-xs text-neutral-500">{r.lagNote}</td>
+                    <td className="p-2 border">
+                      {r.code !== 'US' && (
+                        <button className="btn" disabled={!!busy} onClick={() => removeRegion(r.code)}>
+                          {busy === 'del-' + r.code ? '...' : 'Удалить'}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         )}
       </section>
 
-      {error && <section className="card"><p className="text-sm text-red-600">{error}</p></section>}
-
-      {/* Overview thermometer */}
-      <section className="card">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="font-semibold">Overview — термометр</h3>
-          <button className="btn" onClick={loadOverview} disabled={loading}>{loading ? '...' : 'Обновить'}</button>
-        </div>
-
-        {!data?.series.length && !loading && (
-          <p className="text-sm text-neutral-600">
-            Нет данных. Нажмите «Загрузить FRED» / «Загрузить CFTC» / «Загрузить FINRA (авто)» — таблицы создадутся автоматически.
-          </p>
-        )}
-
-        {Object.entries(data?.segments ?? {}).map(([seg, info]) => {
-          const rows = (data?.series ?? []).filter(s => s.segment === seg);
-          const segScore = data?.composite.bySegment[seg];
-          return (
-            <div key={seg} className="mb-4">
-              <div className="flex items-center gap-2 mb-1">
-                <h4 className="font-medium text-sm">{info.label}</h4>
-                <span className="text-xs text-neutral-500">сегмент-score: {fmtZ(segScore)}</span>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-neutral-100 text-left">
-                      <th className="p-2 border"></th>
-                      <th className="p-2 border">Метрика</th>
-                      <th className="p-2 border">12М</th>
-                      <th className="p-2 border">Значение</th>
-                      <th className="p-2 border">Z (5y)</th>
-                      <th className="p-2 border">YoY</th>
-                      <th className="p-2 border">Δ посл.</th>
-                      <th className="p-2 border">Дата</th>
-                      <th className="p-2 border">Лаг</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map(s => (
-                      <tr
-                        key={s.id}
-                        className={`hover:bg-neutral-50 cursor-pointer ${selected === s.id ? 'bg-blue-50' : ''}`}
-                        onClick={() => setSelected(s.id)}
-                      >
-                        <td className="p-2 border">
-                          <span className="inline-block w-3 h-3 rounded-full align-middle"
-                                style={{ background: LEVEL_COLOR[s.stats.level] }}
-                                title={LEVEL_LABEL[s.stats.level]} />
-                        </td>
-                        <td className="p-2 border">{s.label}</td>
-                        <td className="p-2 border"><Sparkline data={s.stats.sparkline} color={LEVEL_COLOR[s.stats.level]} /></td>
-                        <td className="p-2 border font-mono whitespace-nowrap">
-                          {fmtNum(s.stats.latest?.value)} <span className="text-neutral-400 text-xs">{s.unit}</span>
-                        </td>
-                        <td className="p-2 border font-mono" style={{ color: LEVEL_COLOR[s.stats.level] }}>{fmtZ(s.stats.zscore)}</td>
-                        <td className="p-2 border font-mono">{fmtPct(s.stats.yoyPct)}</td>
-                        <td className="p-2 border font-mono">{fmtPct(s.stats.changePct)}</td>
-                        <td className="p-2 border text-xs whitespace-nowrap">{s.stats.latest?.date ?? '—'}</td>
-                        <td className="p-2 border text-xs text-neutral-500">{s.lagNote}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          );
-        })}
-      </section>
-
-      {/* Drill-down */}
-      {selected && (
-        <section className="card">
-          <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
-            <h3 className="font-semibold">{detail?.label ?? selected}</h3>
-            <div className="flex gap-2 items-center">
-              <div className="flex rounded border overflow-hidden text-sm">
-                {(['abs', 'yoy', 'z'] as const).map(v => (
-                  <button key={v}
-                          className={`px-2 py-1 ${view === v ? 'bg-blue-600 text-white' : 'bg-white hover:bg-neutral-100'}`}
-                          onClick={() => setView(v)}>
-                    {v === 'abs' ? 'Абсолют' : v === 'yoy' ? 'YoY %' : 'Z-score'}
-                  </button>
-                ))}
-              </div>
-              <a className="btn" href={`/api/leverage/series/${encodeURIComponent(selected)}?format=csv`}>CSV</a>
-              <button className="btn" onClick={() => setSelected(null)}>Закрыть</button>
-            </div>
-          </div>
-
-          {detailLoading && <p className="text-sm text-blue-600">Загрузка...</p>}
-          {detail && !detailLoading && (
-            <>
-              <p className="text-xs text-neutral-500 mb-2">
-                {detail.metric} · {detail.frequency} · лаг {detail.lagNote ?? '—'} ·
-                {' '}наблюдений: {detail.observations.length}
-                {detail.indexSymbol && view === 'abs' && overlay.length ? ` · overlay: ${detail.indexSymbol}` : ''}
-              </p>
-              <LineChart
-                primary={transformed}
-                overlay={view === 'abs' ? overlay : undefined}
-                primaryLabel={view === 'abs' ? (detail.unit ?? 'значение') : view === 'yoy' ? 'YoY %' : 'Z-score'}
-                overlayLabel={detail.indexSymbol ?? undefined}
-              />
-
-              <h4 className="font-medium text-sm mt-4 mb-1">Последние 12 наблюдений</h4>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-neutral-100 text-left">
-                      <th className="p-2 border">Дата</th>
-                      <th className="p-2 border">Значение</th>
-                      <th className="p-2 border">Δ к пред.</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {last12.map((o, i) => {
-                      const prev = last12[i + 1];
-                      const delta = prev && Math.abs(prev.value) > 1e-9 ? (o.value - prev.value) / Math.abs(prev.value) * 100 : null;
-                      return (
-                        <tr key={o.date} className="hover:bg-neutral-50">
-                          <td className="p-2 border text-xs">{o.date}</td>
-                          <td className="p-2 border font-mono">{fmtNum(o.value)} <span className="text-neutral-400 text-xs">{detail.unit}</span></td>
-                          <td className={`p-2 border font-mono ${delta == null ? '' : delta > 0 ? 'text-green-700' : delta < 0 ? 'text-red-700' : ''}`}>{fmtPct(delta)}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
-        </section>
+      {log.length > 0 && (
+        <section className="card"><div className="log">{log.join('\n')}</div></section>
       )}
     </main>
   );

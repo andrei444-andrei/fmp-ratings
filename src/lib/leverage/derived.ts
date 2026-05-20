@@ -9,10 +9,10 @@ import { upsertSeries, upsertObservations } from './store';
 // о чём говорит; деление на капитализацию убирает рыночный тренд.
 // Формула: FINRA margin debt / market cap * 100 (оба в USD mln).
 export const MARGIN_DEBT_PCT_MKTCAP: SeriesDef = {
-  id: 'derived:margin_debt_pct_mktcap',
+  id: 'mdmc:US',
   source: 'finra',
-  segment: 'us_equities',
-  label: 'Margin Debt / Market Cap',
+  segment: 'mdmc',
+  label: 'США',
   unit: '% mkt cap',
   metric: 'margin_debt_pct_mktcap',
   frequency: 'monthly',
@@ -25,8 +25,9 @@ const MARGIN_ID = 'finra:margin_debt';
 const MKTCAP_ID = 'fred:NCBEILQ027S';
 // Устаревшие ряды, которые надо вычистить из БД:
 //   - прежний производный (нормировка на индекс Wilshire);
-//   - сам Wilshire (FRED ID WILL5000IND больше не существует, давал ошибку).
-const OBSOLETE_IDS = ['derived:margin_debt_to_wilshire', 'fred:WILL5000IND'];
+//   - сам Wilshire (FRED ID WILL5000IND больше не существует, давал ошибку);
+//   - старый id производного % (до перехода на региональную схему mdmc:US).
+const OBSOLETE_IDS = ['derived:margin_debt_to_wilshire', 'fred:WILL5000IND', 'derived:margin_debt_pct_mktcap'];
 
 async function loadObs(seriesId: string): Promise<Obs[]> {
   const rows = await db
