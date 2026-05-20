@@ -4,20 +4,20 @@ import { fetchCftcNetPctOi } from '@/lib/leverage/cftc';
 import { parseFinraCsv, fetchFinraAuto } from '@/lib/leverage/finra';
 import { upsertSeries, upsertObservations, ensureLeverageTables } from '@/lib/leverage/store';
 import { FRED_SERIES, CFTC_MARKETS, cftcSeriesDef, FINRA_SERIES } from '@/lib/leverage/registry';
-import { recomputeMarginDebtToWilshire, MARGIN_DEBT_TO_WILSHIRE } from '@/lib/leverage/derived';
+import { recomputeMarginDebtPctMktcap, MARGIN_DEBT_PCT_MKTCAP } from '@/lib/leverage/derived';
 
-// Пересчитывает производный ряд margin debt / Wilshire 5000 (best-effort).
+// Пересчитывает производный ряд margin debt / market cap (best-effort).
 async function recomputeDerived(results: IngestResult[]): Promise<void> {
   try {
-    const r = await recomputeMarginDebtToWilshire();
+    const r = await recomputeMarginDebtPctMktcap();
     results.push({
-      id: MARGIN_DEBT_TO_WILSHIRE.id,
-      label: MARGIN_DEBT_TO_WILSHIRE.label,
+      id: MARGIN_DEBT_PCT_MKTCAP.id,
+      label: MARGIN_DEBT_PCT_MKTCAP.label,
       rows: r.rows,
       error: r.reason,
     });
   } catch (e: any) {
-    results.push({ id: MARGIN_DEBT_TO_WILSHIRE.id, label: MARGIN_DEBT_TO_WILSHIRE.label, rows: 0, error: e.message });
+    results.push({ id: MARGIN_DEBT_PCT_MKTCAP.id, label: MARGIN_DEBT_PCT_MKTCAP.label, rows: 0, error: e.message });
   }
 }
 
