@@ -798,36 +798,6 @@ export default function HeatmapPage() {
           </div>
         )}
 
-        {/* KPIs */}
-        {kpi && (
-          <div className="hm-kpis">
-            <div className="hm-kpi">
-              <div className="k">{anchorDate ? 'Сильнее на событие' : 'Лидер периода'}</div>
-              <div className="v" style={{ color: kpi.leader.c >= 0 ? 'var(--hm-pos)' : 'var(--hm-neg)' }}>
-                {kpi.leader.t} {fmtPct(kpi.leader.c, 1)}
-              </div>
-              <div className="vsub">{anchorDate ? `с ${anchorDate}` : 'весь период'}</div>
-            </div>
-            <div className="hm-kpi">
-              <div className="k">{anchorDate ? 'Слабее на событие' : 'Аутсайдер периода'}</div>
-              <div className="v" style={{ color: kpi.outsider.c >= 0 ? 'var(--hm-pos)' : 'var(--hm-neg)' }}>
-                {kpi.outsider.t} {fmtPct(kpi.outsider.c, 1)}
-              </div>
-              <div className="vsub">{anchorDate ? `с ${anchorDate}` : 'весь период'}</div>
-            </div>
-            <div className="hm-kpi">
-              <div className="k">Разброс реакции</div>
-              <div className="v">{(kpi.spread * 100).toFixed(1)} пп</div>
-              <div className="vsub">лучший − худший</div>
-            </div>
-            <div className="hm-kpi">
-              <div className="k">Отмечено важным</div>
-              <div className="v" style={{ color: 'var(--hm-imp)' }}>{kpi.important}</div>
-              <div className="vsub">из {kpi.eventsInRange} событий</div>
-            </div>
-          </div>
-        )}
-
         {/* Stage: heatmap + лента новостей */}
         {!tradingDates.length ? (
           <div className="hm-kpi" style={{ textAlign: 'center', padding: '36px 20px', color: 'var(--hm-tx3)' }}>
@@ -836,6 +806,29 @@ export default function HeatmapPage() {
         ) : (
          <div className="hm-stage">
           <div className="hm-panel">
+          {kpi && (
+            <div className="hm-kpis">
+              <div className="hm-kpi">
+                <div className="k">{anchorDate ? 'Сильнее на событие' : 'Лидер периода'}</div>
+                <div className="v" style={{ color: kpi.leader.c >= 0 ? 'var(--hm-pos)' : 'var(--hm-neg)' }}>
+                  {kpi.leader.t} {fmtPct(kpi.leader.c, 1)}
+                </div>
+                <div className="vsub">{anchorDate ? `с ${anchorDate}` : 'весь период'}</div>
+              </div>
+              <div className="hm-kpi">
+                <div className="k">{anchorDate ? 'Слабее на событие' : 'Аутсайдер периода'}</div>
+                <div className="v" style={{ color: kpi.outsider.c >= 0 ? 'var(--hm-pos)' : 'var(--hm-neg)' }}>
+                  {kpi.outsider.t} {fmtPct(kpi.outsider.c, 1)}
+                </div>
+                <div className="vsub">{anchorDate ? `с ${anchorDate}` : 'весь период'}</div>
+              </div>
+              <div className="hm-kpi">
+                <div className="k">Разброс реакции</div>
+                <div className="v">{(kpi.spread * 100).toFixed(1)} пп</div>
+                <div className="vsub">лучший − худший</div>
+              </div>
+            </div>
+          )}
           <div className="hm-gridwrap" ref={scrollRef}>
             <table className="hm-table">
               <thead>
