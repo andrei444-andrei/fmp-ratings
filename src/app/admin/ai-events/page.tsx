@@ -49,7 +49,8 @@ function yearsAgoIso(y: number): string {
 }
 
 export default function AiEventsDebugPage() {
-  const [model, setModel] = useState('gpt-4o-mini');
+  const [model, setModel] = useState('perplexity/sonar-pro');
+  const [customModel, setCustomModel] = useState(false);
   const [temperature, setTemperature] = useState(0.2);
   const [maxTokens, setMaxTokens] = useState(2500);
   const [system, setSystem] = useState(DEFAULT_SYSTEM);
@@ -148,8 +149,31 @@ export default function AiEventsDebugPage() {
         <div className="flex flex-wrap gap-3 items-end">
           <label className="flex flex-col">
             <span className="label">Модель</span>
-            <input className="input w-56" list="models" value={model} onChange={e => setModel(e.target.value)} />
-            <datalist id="models">{MODELS.map(m => <option key={m} value={m} />)}</datalist>
+            {customModel ? (
+              <input className="input w-56" value={model} autoFocus
+                placeholder="напр. perplexity/sonar-pro"
+                onChange={e => setModel(e.target.value)} />
+            ) : (
+              <select className="input w-56" value={model}
+                onChange={e => {
+                  if (e.target.value === '__custom__') { setCustomModel(true); }
+                  else setModel(e.target.value);
+                }}>
+                <optgroup label="Web-search (свежие даты)">
+                  {MODELS.filter(m => m.startsWith('perplexity/')).map(m => <option key={m} value={m}>{m}</option>)}
+                </optgroup>
+                <optgroup label="LLM (исторические даты)">
+                  {MODELS.filter(m => !m.startsWith('perplexity/')).map(m => <option key={m} value={m}>{m}</option>)}
+                </optgroup>
+                <option value="__custom__">✏️ свой…</option>
+              </select>
+            )}
+            {customModel && (
+              <button type="button" className="text-[10px] text-blue-600 hover:underline mt-1 self-start"
+                onClick={() => { setCustomModel(false); setModel('perplexity/sonar-pro'); }}>
+                ← к списку
+              </button>
+            )}
           </label>
           <label className="flex flex-col">
             <span className="label">temperature</span>
