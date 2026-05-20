@@ -1,3 +1,4 @@
+import * as XLSX from 'xlsx';
 import type { Obs } from './stats';
 
 // Парсер CSV статистики FINRA Margin Statistics.
@@ -72,8 +73,11 @@ export function parseFinraCsv(text: string): FinraParseResult {
   const lines = text.split(/\r?\n/).filter(l => l.trim().length);
   if (!lines.length) throw new Error('Пустой CSV');
 
-  // Находим строку заголовка: первая, где есть «debit» или «margin» или «credit».
-  let headerIdx = lines.findIndex(l => /debit|margin|credit/i.test(l));
+  // Находим строку заголовка. Ищем строку колонок, а не заголовок-титул:
+  // у настоящего заголовка есть «debit»/«free credit»/«balance». «Margin» одиночно
+  // не годится — оно встречается в титуле вроде «FINRA Margin Statistics».
+  let headerIdx = lines.findIndex(l => /debit|free credit|balance/i.test(l));
+  if (headerIdx < 0) headerIdx = lines.findIndex(l => /margin debt/i.test(l));
   if (headerIdx < 0) headerIdx = 0;
   const header = splitCsvLine(lines[headerIdx]);
 
@@ -108,4 +112,53 @@ export function parseFinraCsv(text: string): FinraParseResult {
     rowsParsed: margin.length + free.length,
     headerUsed: header,
   };
+}
+
+// --- Автоматическая загрузка с сервера FINRA ---
+// FINRA публикует данные Excel-файлом (.xlsx) по версионируемому пути, поэтому
+// мы сначала находим ссылку на файл на странице margin-statistics, затем качаем его.
+// Путь можно переопределить через FINRA_DATA_URL (если знаете прямой URL .xlsx/.csv).
+const FINRA_PAGE_URL = 'https://www.finra.org/rules-guidance/key-topics/margin-accounts/margin-statistics';
+
+async function resolveFinraDataUrl(): Promise<string> {
+  const override = process.env.FINRA_DATA_URL;
+  if (override) return override;
+
+  const res = await fetch(FINRA_PAGE_URL, {
+    cache: 'no-store',
+    headers: { 'user-agent': 'Mozilla/5.0 (leverage-monitor)' },
+  });
+  if (!res.ok) throw new Error(`FINRA page ${res.status}`);
+  const html = await res.text();
+  // ищем ссылку на .xlsx (или .csv) с упоминанием margin
+  const m =
+    html.match(/href="([^"]*margin[^"]*\.(?:xlsx|csv))"/i) ||
+    html.match(/href="([^"]*\.(?:xlsx|csv))"/i);
+  if (!m) throw new Error('Не нашёл ссылку на файл данных на странице FINRA; задайте FINRA_DATA_URL');
+  return new URL(m[1], FINRA_PAGE_URL).href;
+}
+
+// Скачивает и парсит файл FINRA (xlsx или csv) и возвращает тот же результат,
+// что и parseFinraCsv.
+export async function fetchFinraAuto(): Promise<FinraParseResult & { sourceUrl: string }> {
+  const url = await resolveFinraDataUrl();
+  const res = await fetch(url, {
+    cache: 'no-store',
+    headers: { 'user-agent': 'Mozilla/5.0 (leverage-monitor)' },
+  });
+  if (!res.ok) throw new Error(`FINRA file ${res.status}: ${url}`);
+
+  let csvText: string;
+  if (/\.csv(\?|$)/i.test(url)) {
+    csvText = await res.text();
+  } else {
+    const buf = Buffer.from(await res.arrayBuffer());
+    const wb = XLSX.read(buf, { type: 'buffer' });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    if (!sheet) throw new Error('FINRA xlsx: пустой файл');
+    csvText = XLSX.utils.sheet_to_csv(sheet);
+  }
+
+  const parsed = parseFinraCsv(csvText);
+  return { ...parsed, sourceUrl: url };
 }
