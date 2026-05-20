@@ -24,6 +24,36 @@ type GradesBySymbol = Record<string, Record<string, GradeItem[]>>;
 type AiNewsItem = { title: string; category?: string; description?: string };
 type AiNews = { date: string; summary: string; items: AiNewsItem[] };
 
+type EventPhase = 'trigger' | 'escalation' | 'peak' | 'resolution';
+type TimelineItem = {
+  phase: EventPhase; date: string; title: string;
+  description?: string; tickers?: string[]; sources?: string[];
+};
+type EventStudy = {
+  summary: {
+    title: string; start: string; end: string; scale: number;
+    resolution: 'received' | 'none' | 'partial'; description: string;
+    affected_tickers: string[];
+  };
+  timeline: TimelineItem[];
+};
+
+const PHASE_META: Record<EventPhase, { label: string; color: string }> = {
+  trigger:    { label: 'Триггер',   color: '#9aa0ad' },
+  escalation: { label: 'Эскалация', color: '#f5d08a' },
+  peak:       { label: 'Пик',       color: '#f4626a' },
+  resolution: { label: 'Развязка',  color: '#34d399' },
+};
+const RESOLUTION_LABEL: Record<string, string> = {
+  received: 'развязка получена', none: 'развязка не наступила', partial: 'частичная развязка',
+};
+const AI_EXAMPLES = [
+  'Крах SVB, март 2023',
+  'GameStop short squeeze, январь 2021',
+  'COVID crash, февраль-март 2020',
+  'Корейский margin debt, 2026',
+];
+
 // ===== Константы =====
 const DEFAULT_TICKERS = 'SPY,QQQ,IWM,GLD,USO,TLT,XLE,XLF,XLK,XLU';
 const AI_EVENTS_LS_KEY = 'fmp-heatmap-ai-events-v1';
@@ -35,6 +65,11 @@ function todayIso(): string { return new Date().toISOString().slice(0, 10); }
 function yearsAgoIso(years: number): string {
   const d = new Date();
   d.setFullYear(d.getFullYear() - years);
+  return d.toISOString().slice(0, 10);
+}
+function addDays(iso: string, days: number): string {
+  const d = new Date(iso + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
 function cellColor(r: number | null, clamp: number): string {
@@ -115,6 +150,15 @@ export default function HeatmapPage() {
   const [aiNews, setAiNews] = useState<Record<string, AiNews>>({});
   const [aiNewsLoading, setAiNewsLoading] = useState<Record<string, boolean>>({});
   const [aiNewsError, setAiNewsError] = useState<Record<string, string>>({});
+
+  // ===== AI-исследователь события (Perplexity Sonar) =====
+  const [aiInput, setAiInput] = useState('');
+  const [aiEvent, setAiEvent] = useState<EventStudy | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiStep, setAiStep] = useState('');
+  const [aiErr, setAiErr] = useState<string | null>(null);
+  const [hoverPhaseDate, setHoverPhaseDate] = useState<string | null>(null);
+  const EVENT_PAD_DAYS = 7;
 
   // Тёмная тема для всего документа пока страница смонтирована
   useEffect(() => {
@@ -386,37 +430,105 @@ export default function HeatmapPage() {
   // ===== Загрузка цен и grades (через серверный кэш в Turso) =====
   // Весь датасет тянется одним запросом; результат кэшируется на сервере
   // по ключу (тикеры+даты+grades). Повторный запрос тех же параметров не идёт в FMP.
-  async function loadAll() {
-    if (!tickers.length) return;
+  // ===== AI-исследователь: запрос события и авто-настройка heatmap =====
+  async function runAiEvent(text: string) {
+    const description = text.trim();
+    if (!description || aiBusy) return;
+    setAiBusy(true);
+    setAiErr(null);
+    setAiEvent(null);
+    const steps = ['Определяю событие…', 'Ищу новости…', 'Собираю хронологию…', 'Обновляю heatmap…'];
+    let si = 0;
+    setAiStep(steps[0]);
+    const stepTimer = setInterval(() => {
+      si = Math.min(si + 1, steps.length - 2);
+      setAiStep(steps[si]);
+    }, 2500);
+    try {
+      const lang = typeof navigator !== 'undefined' ? navigator.language : 'ru';
+      const res = await fetch('/api/ai/event-timeline', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ description, lang }),
+      }).then(r => r.json());
+      if (res?.error) { setAiErr(res.error); return; }
+      const study = res as EventStudy;
+      if (!study?.summary || !Array.isArray(study.timeline)) {
+        setAiErr('AI вернул пустой результат'); return;
+      }
+      setAiEvent(study);
+
+      // Авто-настройка heatmap: тикеры, даты ±N дней.
+      const tks = study.summary.affected_tickers.slice(0, 10);
+      const from = study.summary.start ? addDays(study.summary.start, -EVENT_PAD_DAYS) : fromDate;
+      const todayStr = todayIso();
+      let to = study.summary.end ? addDays(study.summary.end, EVENT_PAD_DAYS) : toDate;
+      if (to > todayStr) to = todayStr;
+      if (tks.length) {
+        setTickersInput(tks.join(','));
+        setFromDate(from);
+        setToDate(to);
+        clearInterval(stepTimer);
+        setAiStep('Обновляю heatmap…');
+        await loadDataset(tks, from, to); // тикеры без данных FMP отфильтруются здесь
+      }
+    } catch (e: any) {
+      setAiErr(e.message);
+    } finally {
+      clearInterval(stepTimer);
+      setAiBusy(false);
+      setAiStep('');
+    }
+  }
+
+  function resetAiEvent() {
+    setAiEvent(null);
+    setAiErr(null);
+    setAiInput('');
+    setHoverPhaseDate(null);
+  }
+
+  // Даты хронологии активного AI-события (для маркеров на сетке).
+  const aiMarkerDates = useMemo(() => {
+    const s = new Set<string>();
+    if (aiEvent) for (const t of aiEvent.timeline) if (t.date) s.add(t.date);
+    return s;
+  }, [aiEvent]);
+
+  // Загрузка датасета с явными параметрами (используется и кнопкой, и AI-режимом).
+  async function loadDataset(tickersArr: string[], from: string, to: string): Promise<number> {
+    if (!tickersArr.length) return 0;
     setLoading(true);
     setError(null);
     setStatus('Загрузка…');
     setAnchorDate(null);
     try {
       const qs = new URLSearchParams({
-        tickers: tickers.join(','),
-        from: fromDate, to: toDate,
-        grades: fetchGrades ? '1' : '0',
+        tickers: tickersArr.join(','), from, to, grades: fetchGrades ? '1' : '0',
       });
       const res = await fetch(`/api/heatmap/dataset?${qs.toString()}`).then(r => r.json());
-      if (res?.error) { setError(res.error); return; }
+      if (res?.error) { setError(res.error); return 0; }
       setPrices(res.prices || {});
       setGrades(res.grades || {});
       setLoadedTickers(res.loadedTickers || []);
       try {
         localStorage.setItem(PARAMS_LS_KEY, JSON.stringify({
-          tickers: tickersInput, from: fromDate, to: toDate, grades: fetchGrades,
+          tickers: tickersArr.join(','), from, to, grades: fetchGrades,
         }));
       } catch {}
       const n = (res.loadedTickers || []).length;
-      setStatus(`✓ Загружено ${n}/${tickers.length}${res.cached ? ' (из кэша)' : ''}` +
+      setStatus(`✓ Загружено ${n}/${tickersArr.length}${res.cached ? ' (из кэша)' : ''}` +
         (res.errors?.length ? ` · ошибок: ${res.errors.length}` : ''));
+      return n;
     } catch (e: any) {
       setError(e.message);
+      return 0;
     } finally {
       setLoading(false);
     }
   }
+
+  function loadAll() { return loadDataset(tickers, fromDate, toDate); }
 
   // При открытии страницы — авто-показ последнего сохранённого набора из кэша
   // (без вызовов FMP). Параметры берём из localStorage прошлой сессии.
@@ -560,6 +672,119 @@ export default function HeatmapPage() {
   return (
     <div className="hm-root">
       <div className="hm-inner">
+        {/* AI-исследователь события */}
+        <div className="hm-ai">
+          {!aiEvent && !aiBusy && (
+            <div className="hm-ai-bar">
+              <span className="hm-ai-spark">✦</span>
+              <input
+                className="hm-ai-input"
+                placeholder="Опиши событие, которое хочешь изучить"
+                value={aiInput}
+                onChange={e => setAiInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') runAiEvent(aiInput); }}
+              />
+              <button className="hm-ghost primary" onClick={() => runAiEvent(aiInput)}
+                disabled={!aiInput.trim()}>Изучить</button>
+              <div className="hm-ai-chips">
+                {AI_EXAMPLES.map(ex => (
+                  <span key={ex} className="hm-ai-chip" onClick={() => { setAiInput(ex); runAiEvent(ex); }}>
+                    {ex}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {aiBusy && (
+            <div className="hm-ai-bar">
+              <span className="hm-ai-spark spin">✦</span>
+              <span className="hm-ai-step">{aiStep || 'Определяю событие…'}</span>
+            </div>
+          )}
+
+          {aiErr && !aiBusy && (
+            <div className="hm-ai-bar">
+              <span className="hm-error">AI: {aiErr}</span>
+              <button className="hm-ghost" onClick={resetAiEvent}>Закрыть</button>
+            </div>
+          )}
+
+          {aiEvent && !aiBusy && (
+            <div className="hm-ai-result">
+              {/* Summary */}
+              <div className="hm-ai-sum">
+                <div className="hm-ai-sum-h">
+                  <div className="t">{aiEvent.summary.title}</div>
+                  <button className="hm-ghost" onClick={resetAiEvent}>✕ Сбросить</button>
+                </div>
+                <div className="hm-ai-sum-meta">
+                  {aiEvent.summary.start && (
+                    <span className="hm-ai-badge">
+                      {aiEvent.summary.start} → {aiEvent.summary.end || '?'}
+                      {aiEvent.summary.start && aiEvent.summary.end && (
+                        <> · {Math.max(0, Math.round((+new Date(aiEvent.summary.end) - +new Date(aiEvent.summary.start)) / 86400000))} дн.</>
+                      )}
+                    </span>
+                  )}
+                  <span className="hm-ai-badge">масштаб {aiEvent.summary.scale}/5</span>
+                  <span className="hm-ai-badge">{RESOLUTION_LABEL[aiEvent.summary.resolution]}</span>
+                </div>
+                {aiEvent.summary.description && (
+                  <div className="hm-ai-sum-desc">{aiEvent.summary.description}</div>
+                )}
+                {aiEvent.summary.affected_tickers.length > 0 && (
+                  <div className="hm-ai-tk">
+                    {aiEvent.summary.affected_tickers.map(t => (
+                      <span key={t} className="hm-ai-tkchip">{t}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Хронология */}
+              <div className="hm-ai-timeline">
+                {aiEvent.timeline.map((it, i) => {
+                  const meta = PHASE_META[it.phase];
+                  const active = hoverPhaseDate === it.date || selectedDate === it.date;
+                  return (
+                    <div
+                      key={i}
+                      className={`hm-ai-card ${active ? 'active' : ''}`}
+                      style={{ borderLeftColor: meta.color }}
+                      onMouseEnter={() => setHoverPhaseDate(it.date)}
+                      onMouseLeave={() => setHoverPhaseDate(null)}
+                      onClick={() => setSelectedDate(it.date)}
+                    >
+                      <div className="hm-ai-card-h">
+                        <span className="ph" style={{ color: meta.color }}>{meta.label}</span>
+                        <span className="dt">{it.date}</span>
+                      </div>
+                      <div className="hm-ai-card-t">{it.title}</div>
+                      {it.description && <div className="hm-ai-card-d">{it.description}</div>}
+                      {it.tickers && it.tickers.length > 0 && (
+                        <div className="hm-ai-tk">
+                          {it.tickers.map(t => <span key={t} className="hm-ai-tkchip sm">{t}</span>)}
+                        </div>
+                      )}
+                      {it.sources && it.sources.length > 0 && (
+                        <div className="hm-ai-src">
+                          {it.sources.map((u, j) => (
+                            <a key={j} href={u} target="_blank" rel="noopener noreferrer"
+                               onClick={e => e.stopPropagation()}>
+                              {(() => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return 'источник'; } })()}
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* Setbar */}
         <div className="hm-setbar">
           <span className="hm-pill" onClick={() => setDrawer(true)} title="Изменить тикеры">
@@ -704,7 +929,7 @@ export default function HeatmapPage() {
                     return (
                       <th key={d}>
                         <div
-                          className={`hm-dh ${isAnchor ? 'anchor' : ''} ${imp ? 'imp' : ''} ${hot ? 'hot' : ''} ${sel ? 'sel' : ''}`}
+                          className={`hm-dh ${isAnchor ? 'anchor' : ''} ${imp ? 'imp' : ''} ${hot ? 'hot' : ''} ${sel ? 'sel' : ''} ${aiMarkerDates.has(d) ? 'aimark' : ''} ${hoverPhaseDate === d ? 'aimark-hot' : ''}`}
                           onClick={() => setSelectedDate(sel ? null : d)}
                           title={`${d} (${weekdayShort(d)})${evs ? '\n' + evs.map(e => e.title).join('\n') : ''}`}
                         >
@@ -747,7 +972,7 @@ export default function HeatmapPage() {
                         const imp = importantDays.has(d);
                         const isAnchor = anchorDate === d;
                         const gItems = gMap[d];
-                        const cls = `${imp ? 'impcol ' : ''}${isAnchor ? 'anchorcol ' : ''}${selectedDate === d ? 'selcol ' : ''}${hotDays.has(d) ? 'hotcol ' : ''}${gItems?.length ? 'hm-cell-grade ' : ''}`;
+                        const cls = `${imp ? 'impcol ' : ''}${isAnchor ? 'anchorcol ' : ''}${selectedDate === d ? 'selcol ' : ''}${hotDays.has(d) ? 'hotcol ' : ''}${aiMarkerDates.has(d) ? 'aimarkcol ' : ''}${hoverPhaseDate === d ? 'aimarkcol-hot ' : ''}${gItems?.length ? 'hm-cell-grade ' : ''}`;
                         return (
                           <td
                             key={d}
