@@ -32,6 +32,7 @@
 | **aimlapi.com** (LLM-агрегатор, OpenAI-совместимый) | `AIMLAPI_KEY` | `src/lib/aimlapi.ts` | `/api/ai/news`, `/api/ai/events-month`, `/api/ai/keywords`, `/api/ai/cluster-events`, `/api/ai/find-events` | `/heatmap` (popup новостей), `/market-events` (двухшаговый поиск) |
 | **Marketaux News API** | `MARKETAUX_KEY` (+ опц. `MARKETAUX_MONTHLY_CAP`, default 8000) | `src/lib/marketaux.ts` | `/api/ai/news` (заголовки), `/api/events/month-news`, `/api/events/usage`, `/api/marketaux/debug` | `/heatmap` (новости дня + поиск событий), `/admin/marketaux` (отладка) |
 | **GDELT 2.0 DOC** (бесплатный) | — (без ключа) | `src/lib/gdelt.ts` | `/api/news/gdelt`, `/api/gdelt/debug` | `/market-events` (поиск архивных статей), `/admin/gdelt` (отладка) |
+| **NewsAPI.ai / Event Registry** | `NEWSAPI_AI_KEY` | `src/lib/newsapi-ai.ts` | `/api/newsapi-ai/debug` | `/admin/newsapi-ai` (отладка; `event/getEvents` = автокластеризованные события по охвату) |
 
 **Где задать переменные:**
 - Локально: `cp .env.example .env.local` → заполнить.
