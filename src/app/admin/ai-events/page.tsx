@@ -96,6 +96,8 @@ export default function AiEventsDebugPage() {
       }
       setEvents(res.events || []);
       setRaw(res.raw || '');
+      // Если событий нет — сразу раскрыть сырой ответ для диагностики.
+      setShowRaw(!(res.events && res.events.length));
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -210,7 +212,13 @@ export default function AiEventsDebugPage() {
             <pre className="bg-neutral-900 text-neutral-100 rounded p-2 text-xs overflow-auto max-h-80 mb-3">{raw}</pre>
           )}
 
-          {!events.length && <p className="text-sm text-neutral-500">AI не вернул событий.</p>}
+          {!events.length && (
+            <p className="text-sm text-neutral-500">
+              AI не вернул событий. Смотри сырой JSON выше — если там есть массив под другим ключом,
+              сообщи; если пусто/отказ — попробуй модель помощнее (gpt-4o, claude-3-5-sonnet) или
+              смягчи формулировки промпта.
+            </p>
+          )}
 
           <div className="space-y-2">
             {events.map((ev, i) => {
