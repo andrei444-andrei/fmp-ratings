@@ -40,17 +40,19 @@ export async function POST(req: NextRequest) {
     'Ты — финансовый журналист-ресёрчер с доступом к веб-поиску.',
     'Задача: собрать главные финансовые и рыночные новости за конкретный торговый день.',
     '',
-    'Как искать (обязательно несколько запросов на английском):',
-    '- "<Month DD, YYYY> stock market" , "<Month DD, YYYY> markets news"',
-    '- "<Month DD, YYYY> Fed / ECB / inflation / CPI / jobs / earnings"',
-    '- сайты: site:reuters.com, site:bloomberg.com, site:wsj.com, site:ft.com, site:cnbc.com, site:marketwatch.com',
+    'Поиск веди ТОЛЬКО на английском и ТОЛЬКО по англоязычным источникам:',
+    '- запросы на английском: "<Month DD, YYYY> stock market", "... Fed / ECB / inflation / CPI / jobs / earnings"',
+    '- источники: reuters.com, bloomberg.com, wsj.com, ft.com, cnbc.com, marketwatch.com, apnews.com',
+    '- ЗАПРЕЩЕНО использовать русскоязычные/локальные источники (домены .ru, ru.*, lenta, ria, tass, rbc,',
+    '  vedomosti, kommersant, interfax, profile.ru, euronews ru и т.п.). Только англоязычные оригиналы.',
     '- если на сам день мало — допускается захватить публикации соседнего дня (±1).',
     '',
     'Что считается новостью: решения ЦБ и ставки, макро-релизы (CPI/NFP/PMI/ВВП), отчётности и гайденс',
     'крупных компаний, M&A/IPO, геополитика и санкции, тарифы, крупные движения рынков и сырья.',
     '',
-    `Язык вывода полей title/description — ${outLang} (источники англоязычные — переведи суть).`,
-    'Формат СТРОГО: {"items":[{"title":"<заголовок>","description":"<1-2 предложения сути с цифрами/именами>","category":"geopolitics|monetary|macro|corporate|crisis|policy|other","url":"https://<прямая ссылка на статью>","source":"домен"}]}',
+    `Затем ПЕРЕВЕДИ заголовок и описание каждой новости на ${outLang} язык (источник — англоязычный оригинал).`,
+    'В поле source оставляй домен англоязычного источника (например reuters.com), url — прямая ссылка на ту же статью.',
+    'Формат СТРОГО: {"items":[{"title":"<перевод заголовка>","description":"<перевод 1-2 предложений сути с цифрами/именами>","category":"geopolitics|monetary|macro|corporate|crisis|policy|other","url":"https://<прямая ссылка на статью>","source":"домен"}]}',
     'Требования: 5-10 разных новостей; url — прямая ссылка на материал (не главная, не календарь, не котировки).',
     'Если после реального поиска значимых новостей действительно нет — верни строго {"items":[]}.',
     'Никаких пояснений, извинений и отказов в виде элементов items и вне JSON.',
@@ -80,6 +82,8 @@ export async function POST(req: NextRequest) {
     : Array.isArray(parsed) ? parsed : [];
   // Sonar иногда вместо пустого списка возвращает текст-отказ как «новость» — отсекаем.
   const REFUSAL = /(не удалось|не могу|не уда[её]тся|отсутству|не содерж|нерелевант|без риска|пуст(ой|ые)\s+результат|no\s+(reliable|relevant|results)|cannot|could ?n.?t|unable|i'?m sorry|insufficient)/i;
+  // Только англоязычные источники: отсекаем .ru и известные русскоязычные домены.
+  const RU_SOURCE = /(^|\.)ru$|^ru\.|(lenta|ria|tass|rbc|vedomosti|kommersant|interfax|profile|gazeta|iz\.ru|rt\.com|sputnik)/i;
   const items = arr.map((it: any) => {
     const url = typeof it?.url === 'string' && /^https?:\/\//.test(it.url) ? it.url : undefined;
     let host = typeof it?.source === 'string' ? it.source : undefined;
@@ -90,7 +94,10 @@ export async function POST(req: NextRequest) {
       category: typeof it?.category === 'string' ? it.category : 'other',
       url, source: host,
     };
-  }).filter((x: any) => x.title && !REFUSAL.test(x.title) && !REFUSAL.test(x.description));
+  }).filter((x: any) =>
+    x.title && !REFUSAL.test(x.title) && !REFUSAL.test(x.description) &&
+    !(x.source && RU_SOURCE.test(x.source))
+  );
 
   const payload = { date, items, source: 'perplexity' };
   try { await setCachedNews(`sonar:${date}:${lang.slice(0, 2)}`, 'perplexity', payload); } catch {}
