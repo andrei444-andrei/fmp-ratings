@@ -15,8 +15,8 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const row = await req.json();
-    if (!row || (row.kind !== 'sector' && row.kind !== 'country')) {
-      return NextResponse.json({ error: 'kind должен быть sector|country' }, { status: 400 });
+    if (!row || !['sector', 'country', 'extra'].includes(row.kind)) {
+      return NextResponse.json({ error: 'kind должен быть sector|country|extra' }, { status: 400 });
     }
     await upsert(row);
     return NextResponse.json({ sets: await listSets() });

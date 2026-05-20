@@ -74,7 +74,7 @@ const GROUP_DEFS: { key: string; label: string; tickers: string[] }[] = [
 ];
 const GROUP_LABELS: Record<string, string> = {
   sectors: 'Сектора США', regions: 'Регионы мира',
-  extra: 'Дополнительно (из события)', other: 'Прочее',
+  extra: 'Дополнительно', other: 'Прочее',
 };
 const GROUP_ORDER = ['sectors', 'regions', 'extra', 'other'];
 // Регион → название (для подписи строки в блоке «Регионы мира»).
@@ -136,7 +136,7 @@ function gradesActionColor(action?: string): string {
 export default function HeatmapPage() {
   // ===== Настройки =====
   const [tickersInput, setTickersInput] = useState(DEFAULT_TICKERS);
-  const [fromDate, setFromDate] = useState(yearsAgoIso(5));
+  const [fromDate, setFromDate] = useState(yearsAgoIso(3));
   const [toDate, setToDate] = useState(todayIso());
   const [clampPct, setClampPct] = useState(3);
   const [clampPctAnchor, setClampPctAnchor] = useState(10);
@@ -181,8 +181,8 @@ export default function HeatmapPage() {
   // Тикеры, добавленные AI-событием (показываются в блоке «Дополнительно»).
   const [extraTickers, setExtraTickers] = useState<Set<string>>(new Set());
   // Наборы тикеров из БД (сектора/страны). Фолбэк — хардкод-дефолты.
-  const [tickerSets, setTickerSets] = useState<{ sectors: string[]; countries: string[]; regionName: Record<string, string> }>(
-    { sectors: GROUP_DEFS[0].tickers, countries: GROUP_DEFS[1].tickers, regionName: REGION_NAME }
+  const [tickerSets, setTickerSets] = useState<{ sectors: string[]; countries: string[]; extra: string[]; regionName: Record<string, string> }>(
+    { sectors: GROUP_DEFS[0].tickers, countries: GROUP_DEFS[1].tickers, extra: [], regionName: REGION_NAME }
   );
 
   // Тёмная тема для всего документа пока страница смонтирована
@@ -381,7 +381,7 @@ export default function HeatmapPage() {
 
   // Классификация тикера по группе (наборы из БД).
   function classifyTicker(sym: string): string {
-    if (extraTickers.has(sym)) return 'extra';
+    if (extraTickers.has(sym) || tickerSets.extra.includes(sym)) return 'extra';
     if (tickerSets.sectors.includes(sym)) return 'sectors';
     if (tickerSets.countries.includes(sym)) return 'regions';
     return 'other';
@@ -587,39 +587,29 @@ export default function HeatmapPage() {
   // из наборов (если нет сохранённых параметров), и авто-показ из кэша без FMP.
   useEffect(() => {
     (async () => {
-      // 1. Наборы тикеров (сектора/страны) из БД.
+      // 1. Наборы тикеров (сектора / страны / доп.) из БД.
       let sectors: string[] = tickerSets.sectors;
       let countries: string[] = tickerSets.countries;
+      let extra: string[] = tickerSets.extra;
       try {
         const res = await fetch('/api/ticker-sets').then(r => r.json());
         if (Array.isArray(res?.sets) && res.sets.length) {
-          const sec: string[] = [], cnt: string[] = [], rn: Record<string, string> = {};
+          const sec: string[] = [], cnt: string[] = [], ext: string[] = [], rn: Record<string, string> = {};
           for (const s of res.sets) {
             const tks = String(s.tickers).split(',').map((x: string) => x.trim().toUpperCase()).filter(Boolean);
             if (s.kind === 'sector') sec.push(...tks);
+            else if (s.kind === 'extra') ext.push(...tks);
             else { cnt.push(...tks); for (const t of tks) rn[t] = s.label; }
           }
-          sectors = sec; countries = cnt;
-          setTickerSets({ sectors: sec, countries: cnt, regionName: rn });
+          sectors = sec; countries = cnt; extra = ext;
+          setTickerSets({ sectors: sec, countries: cnt, extra: ext, regionName: rn });
         }
       } catch {}
 
-      // 2. Параметры: сохранённые (приоритет) или дефолт из наборов.
-      let tk = '', f = yearsAgoIso(5), t = todayIso();
-      let hasSaved = false;
-      try {
-        const s = localStorage.getItem(PARAMS_LS_KEY);
-        if (s) {
-          const p = JSON.parse(s);
-          if (typeof p.tickers === 'string' && p.tickers.trim()) { tk = p.tickers; hasSaved = true; }
-          if (typeof p.from === 'string') f = p.from;
-          if (typeof p.to === 'string') t = p.to;
-        }
-      } catch {}
-      if (!hasSaved) {
-        const fromSets = [...sectors, ...countries].join(',');
-        tk = fromSets || DEFAULT_TICKERS;
-      }
+      // 2. По умолчанию: тикеры из наборов БД (сектора + страны + доп.),
+      //    диапазон — последние 3 года. localStorage НЕ используется (детерминированный дефолт).
+      const f = yearsAgoIso(3), t = todayIso();
+      const tk = [...sectors, ...countries, ...extra].join(',') || DEFAULT_TICKERS;
       setTickersInput(tk);
       setFromDate(f);
       setToDate(t);
@@ -660,15 +650,16 @@ export default function HeatmapPage() {
 
     setAiNewsLoading(prev => ({ ...prev, [date]: true }));
 
-    // Блок 2 — дополнительные новости дня из API (Marketaux + AI), всегда.
+    // Блок 2 — дополнительные новости дня через Perplexity (5-10), на языке браузера.
+    const lang = typeof navigator !== 'undefined' ? navigator.language : 'ru';
     let items: any[] = [];
     let marketauxError: string | undefined;
     try {
-      const res = await fetch(
-        `/api/ai/news?date=${encodeURIComponent(date)}` +
-        `&tickers=${encodeURIComponent(tickersInput)}` +
-        (force ? '&force=1' : '')
-      ).then(r => r.json());
+      const res = await fetch('/api/ai/day-news', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ date, lang, force }),
+      }).then(r => r.json());
       if (res?.error) marketauxError = res.error;
       else items = Array.isArray(res.items) ? res.items : [];
     } catch (e: any) {
@@ -1277,7 +1268,7 @@ export default function HeatmapPage() {
               <div className="hm-nw-h">
                 <span>Новости дня</span>
                 <span className="src">
-                  хронология + Marketaux
+                  хронология + Perplexity
                   {!aiNewsLoading[selectedDate] && (
                     <> · <a href="#" onClick={e => { e.preventDefault(); loadAiNews(selectedDate, true); }}
                       style={{ color: 'var(--hm-acc)' }}>обновить</a></>
@@ -1312,7 +1303,7 @@ export default function HeatmapPage() {
 
               {/* Блок 2 — дополнительные новости (Marketaux + AI) */}
               <div className="hm-nw-block">
-                <div className="hm-nw-blabel">Дополнительно — Marketaux + AI</div>
+                <div className="hm-nw-blabel">Дополнительно — Perplexity</div>
                 {aiNewsLoading[selectedDate] ? (
                   <>
                     {[0, 1, 2].map(i => (

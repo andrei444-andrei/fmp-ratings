@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
-type Row = { id?: number; kind: 'sector' | 'country'; label: string; tickers: string; sortOrder?: number };
+type Row = { id?: number; kind: 'sector' | 'country' | 'extra'; label: string; tickers: string; sortOrder?: number };
 
 export default function TickerSetsPage() {
   const [rows, setRows] = useState<Row[]>([]);
@@ -34,6 +34,7 @@ export default function TickerSetsPage() {
 
   const sectors = rows.filter(r => r.kind === 'sector');
   const countries = rows.filter(r => r.kind === 'country');
+  const extras = rows.filter(r => r.kind === 'extra');
 
   function Group({ title, list }: { title: string; list: Row[] }) {
     return (
@@ -80,6 +81,7 @@ export default function TickerSetsPage() {
 
       {!loading && <Group title="Сектора США" list={sectors} />}
       {!loading && <Group title="Регионы / страны" list={countries} />}
+      {!loading && <Group title="Доп. тикеры" list={extras} />}
 
       <section className="card">
         <h3 className="font-semibold mb-2">Добавить набор</h3>
@@ -90,6 +92,7 @@ export default function TickerSetsPage() {
               onChange={e => setDraft(d => ({ ...d, kind: e.target.value as Row['kind'] }))}>
               <option value="sector">Сектор</option>
               <option value="country">Страна / регион</option>
+              <option value="extra">Доп. тикер</option>
             </select>
           </label>
           <label className="flex flex-col">

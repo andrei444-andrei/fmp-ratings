@@ -3,9 +3,10 @@
 
 import { libsqlClient } from '@/db/client';
 
+export type TickerSetKind = 'sector' | 'country' | 'extra';
 export type TickerSetRow = {
   id?: number;
-  kind: 'sector' | 'country';
+  kind: TickerSetKind;
   label: string;
   tickers: string;     // CSV, например 'FXI,MCHI'
   sortOrder?: number;
@@ -34,6 +35,10 @@ const SEED: TickerSetRow[] = [
   { kind: 'country', label: 'Япония', tickers: 'EWJ' },
   { kind: 'country', label: 'Индия', tickers: 'INDA' },
   { kind: 'country', label: 'Корея', tickers: 'EWY' },
+  // Дополнительные тикеры
+  { kind: 'extra', label: 'Золото', tickers: 'GLD' },
+  { kind: 'extra', label: 'Нефть', tickers: 'USO' },
+  { kind: 'extra', label: 'Treasuries 20Y', tickers: 'TLT' },
 ];
 
 let ensured = false;
@@ -67,7 +72,7 @@ export async function listSets(): Promise<TickerSetRow[]> {
   );
   return (r.rows || []).map((row: any) => ({
     id: Number(row.id),
-    kind: String(row.kind) as 'sector' | 'country',
+    kind: String(row.kind) as TickerSetKind,
     label: String(row.label),
     tickers: String(row.tickers),
     sortOrder: Number(row.sort_order),
