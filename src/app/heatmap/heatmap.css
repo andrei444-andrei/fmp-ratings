@@ -235,6 +235,12 @@
   font-size: 11px; color: var(--hm-tx3); text-transform: uppercase;
   letter-spacing: .5px; margin: 6px 0 8px; }
 .hm-nw-h .src { text-transform: none; letter-spacing: 0; color: var(--hm-tx3); }
+.hm-nw-block { margin-bottom: 10px; }
+.hm-nw-blabel {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--hm-acc); font-weight: 600; margin: 8px 0 4px;
+}
+.hm-xb.on-imp { color: var(--hm-imp); }
 .hm-news-item { display: flex; gap: 10px; padding: 10px 0;
   border-bottom: .5px solid var(--hm-line); }
 .hm-news-item:last-child { border-bottom: 0; }
