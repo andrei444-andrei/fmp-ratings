@@ -57,6 +57,18 @@ export const FRED_SERIES: SeriesDef[] = [
     indexSymbol: '^GSPC',
     higherIsRisk: false,
   },
+  {
+    // Долларовая капитализация рынка США (Z.1) — знаменатель для margin debt / market cap.
+    id: 'fred:NCBEILQ027S',
+    source: 'fred',
+    segment: 'macro',
+    label: 'US Corporate Equities Market Value (FRED)',
+    unit: 'USD mln',
+    metric: 'market_cap',
+    frequency: 'quarterly',
+    lagNote: '~1 квартал',
+    higherIsRisk: false,
+  },
 ];
 
 // CFTC Commitments of Traders (legacy futures-only, Socrata 6dca-aqww).
