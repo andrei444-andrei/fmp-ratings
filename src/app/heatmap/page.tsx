@@ -180,6 +180,10 @@ export default function HeatmapPage() {
   const [hoverPhaseDate, setHoverPhaseDate] = useState<string | null>(null);
   // Тикеры, добавленные AI-событием (показываются в блоке «Дополнительно»).
   const [extraTickers, setExtraTickers] = useState<Set<string>>(new Set());
+  // Наборы тикеров из БД (сектора/страны). Фолбэк — хардкод-дефолты.
+  const [tickerSets, setTickerSets] = useState<{ sectors: string[]; countries: string[]; regionName: Record<string, string> }>(
+    { sectors: GROUP_DEFS[0].tickers, countries: GROUP_DEFS[1].tickers, regionName: REGION_NAME }
+  );
 
   // Тёмная тема для всего документа пока страница смонтирована
   useEffect(() => {
@@ -375,10 +379,11 @@ export default function HeatmapPage() {
     return [...loadedTickers].sort((a, b) => (activeCum[b] ?? 0) - (activeCum[a] ?? 0));
   }, [loadedTickers, sortByCum, activeCum]);
 
-  // Классификация тикера по группе.
+  // Классификация тикера по группе (наборы из БД).
   function classifyTicker(sym: string): string {
     if (extraTickers.has(sym)) return 'extra';
-    for (const g of GROUP_DEFS) if (g.tickers.includes(sym)) return g.key;
+    if (tickerSets.sectors.includes(sym)) return 'sectors';
+    if (tickerSets.countries.includes(sym)) return 'regions';
     return 'other';
   }
   // Строки, разбитые на блоки-группы (сектора / регионы / дополнительно / прочее).
@@ -392,7 +397,7 @@ export default function HeatmapPage() {
       .filter(k => buckets[k]?.length)
       .map(k => ({ key: k, label: GROUP_LABELS[k], tickers: buckets[k] }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orderedTickers, extraTickers]);
+  }, [orderedTickers, extraTickers, tickerSets]);
   const multiGroup = groupedTickers.length > 1;
 
   // KPIs
@@ -578,34 +583,62 @@ export default function HeatmapPage() {
 
   function loadAll() { return loadDataset(tickers, fromDate, toDate); }
 
-  // При открытии страницы — авто-показ последнего сохранённого набора из кэша
-  // (без вызовов FMP). Параметры берём из localStorage прошлой сессии.
+  // При открытии: грузим наборы тикеров из БД, затем дефолтные тикеры берём
+  // из наборов (если нет сохранённых параметров), и авто-показ из кэша без FMP.
   useEffect(() => {
-    let tk = DEFAULT_TICKERS, f = yearsAgoIso(5), t = todayIso();
-    try {
-      const s = localStorage.getItem(PARAMS_LS_KEY);
-      if (s) {
-        const p = JSON.parse(s);
-        if (typeof p.tickers === 'string' && p.tickers.trim()) { tk = p.tickers; setTickersInput(p.tickers); }
-        if (typeof p.from === 'string') { f = p.from; setFromDate(p.from); }
-        if (typeof p.to === 'string') { t = p.to; setToDate(p.to); }
+    (async () => {
+      // 1. Наборы тикеров (сектора/страны) из БД.
+      let sectors: string[] = tickerSets.sectors;
+      let countries: string[] = tickerSets.countries;
+      try {
+        const res = await fetch('/api/ticker-sets').then(r => r.json());
+        if (Array.isArray(res?.sets) && res.sets.length) {
+          const sec: string[] = [], cnt: string[] = [], rn: Record<string, string> = {};
+          for (const s of res.sets) {
+            const tks = String(s.tickers).split(',').map((x: string) => x.trim().toUpperCase()).filter(Boolean);
+            if (s.kind === 'sector') sec.push(...tks);
+            else { cnt.push(...tks); for (const t of tks) rn[t] = s.label; }
+          }
+          sectors = sec; countries = cnt;
+          setTickerSets({ sectors: sec, countries: cnt, regionName: rn });
+        }
+      } catch {}
+
+      // 2. Параметры: сохранённые (приоритет) или дефолт из наборов.
+      let tk = '', f = yearsAgoIso(5), t = todayIso();
+      let hasSaved = false;
+      try {
+        const s = localStorage.getItem(PARAMS_LS_KEY);
+        if (s) {
+          const p = JSON.parse(s);
+          if (typeof p.tickers === 'string' && p.tickers.trim()) { tk = p.tickers; hasSaved = true; }
+          if (typeof p.from === 'string') f = p.from;
+          if (typeof p.to === 'string') t = p.to;
+        }
+      } catch {}
+      if (!hasSaved) {
+        const fromSets = [...sectors, ...countries].join(',');
+        tk = fromSets || DEFAULT_TICKERS;
       }
-    } catch {}
-    const tks = tk.split(/[\s,;]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
-    if (!tks.length) return;
-    const qs = new URLSearchParams({
-      tickers: tks.join(','), from: f, to: t, grades: fetchGrades ? '1' : '0', cacheOnly: '1',
-    });
-    fetch(`/api/heatmap/dataset?${qs.toString()}`)
-      .then(r => r.json())
-      .then(res => {
+      setTickersInput(tk);
+      setFromDate(f);
+      setToDate(t);
+
+      // 3. Авто-показ из кэша (без вызовов FMP).
+      const tks = tk.split(/[\s,;]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
+      if (!tks.length) return;
+      const qs = new URLSearchParams({
+        tickers: tks.join(','), from: f, to: t, grades: fetchGrades ? '1' : '0', cacheOnly: '1',
+      });
+      try {
+        const res = await fetch(`/api/heatmap/dataset?${qs.toString()}`).then(r => r.json());
         if (res && !res.error && !res.miss && (res.loadedTickers || []).length) {
           setPrices(res.prices || {});
           setGrades(res.grades || {});
           setLoadedTickers(res.loadedTickers || []);
         }
-      })
-      .catch(() => {});
+      } catch {}
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -788,10 +821,12 @@ export default function HeatmapPage() {
               <label>Тикеры</label>
               <input value={tickersInput} onChange={e => setTickersInput(e.target.value)} />
               <div className="hm-preset-row">
-                <button type="button" className="hm-ghost" onClick={() => setTickersInput(PRESET_SECTORS)}>
+                <button type="button" className="hm-ghost"
+                  onClick={() => setTickersInput((tickerSets.sectors.join(',')) || PRESET_SECTORS)}>
                   Сектора США
                 </button>
-                <button type="button" className="hm-ghost" onClick={() => setTickersInput(PRESET_REGIONS)}>
+                <button type="button" className="hm-ghost"
+                  onClick={() => setTickersInput((tickerSets.countries.join(',')) || PRESET_REGIONS)}>
                   Регионы мира
                 </button>
               </div>
@@ -1046,7 +1081,7 @@ export default function HeatmapPage() {
                   const row = matrix[sym] || [];
                   const cum = activeCum[sym] ?? 0;
                   const gMap = grades[sym] || {};
-                  const region = group.key === 'regions' ? REGION_NAME[sym] : undefined;
+                  const region = group.key === 'regions' ? tickerSets.regionName[sym] : undefined;
                   return (
                     <tr key={sym}>
                       <td className="tk">
