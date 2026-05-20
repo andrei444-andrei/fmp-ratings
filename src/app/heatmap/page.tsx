@@ -628,6 +628,11 @@ export default function HeatmapPage() {
     setSelectedDate(null);
   }
 
+  // Клик по самой дате — вкл/выкл накопленную доходность от этой даты (якорь).
+  function toggleAnchorDate(date: string) {
+    setAnchorDate(prev => (prev === date ? null : date));
+  }
+
   // ===== Popup =====
   const popupAgg = useMemo(() => {
     if (!selectedDate) return null;
@@ -855,7 +860,11 @@ export default function HeatmapPage() {
                     >
                       <div className="hm-ai-card-h">
                         <span className="ph" style={{ color: meta.color }}>{meta.label}</span>
-                        <span className="dt">{it.date}</span>
+                        <span
+                          className={`dt clickable ${anchorDate === it.date ? 'on' : ''}`}
+                          title="Накопленная доходность от этой даты"
+                          onClick={e => { e.stopPropagation(); toggleAnchorDate(it.date); }}
+                        >{it.date}</span>
                       </div>
                       <div className="hm-ai-card-t">{it.title}</div>
                       {it.description && <div className="hm-ai-card-d">{it.description}</div>}
@@ -1116,7 +1125,14 @@ export default function HeatmapPage() {
             <div className="hm-pop-detail">
             <div className="hm-pop-h">
               <div>
-                <div className="d">{selectedDate} <span style={{ fontSize: 12, color: 'var(--hm-tx3)', fontWeight: 400 }}>· {weekdayShort(selectedDate)}</span></div>
+                <div className="d">
+                  <span
+                    className={`hm-d-clickable ${anchorDate === selectedDate ? 'on' : ''}`}
+                    title="Накопленная доходность от этой даты"
+                    onClick={() => toggleAnchorDate(selectedDate)}
+                  >{selectedDate}</span>
+                  <span style={{ fontSize: 12, color: 'var(--hm-tx3)', fontWeight: 400 }}> · {weekdayShort(selectedDate)}</span>
+                </div>
                 <div className="wd">
                   {eventsMap[selectedDate]?.length
                     ? eventsMap[selectedDate].map((e, i) => (
