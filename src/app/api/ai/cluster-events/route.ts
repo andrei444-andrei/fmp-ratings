@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
         { role: 'system', content: system },
         { role: 'user', content: user },
       ],
-      model: model || 'gpt-4o-mini',
+      model: model || undefined,
       temperature: 0.2,
       max_tokens: 3000,
       response_format: { type: 'json_object' },
