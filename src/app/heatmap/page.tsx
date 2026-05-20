@@ -6,6 +6,7 @@ import {
   eventsByDate, type MarketEvent, type EventCategory,
 } from '@/lib/market-events';
 import './heatmap.css';
+import DatePicker from '@/components/DatePicker';
 
 // ===== Типы =====
 type PricesBySymbol = Record<string, Record<string, number>>;
@@ -28,7 +29,6 @@ const DEFAULT_TICKERS = 'SPY,QQQ,IWM,GLD,USO,TLT,XLE,XLF,XLK,XLU';
 const AI_EVENTS_LS_KEY = 'fmp-heatmap-ai-events-v1';
 const IMPORTANT_LS_KEY = 'fmp-heatmap-important-v1';
 const PARAMS_LS_KEY = 'fmp-heatmap-params-v1';
-const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 // ===== Утилиты =====
 function todayIso(): string { return new Date().toISOString().slice(0, 10); }
@@ -36,18 +36,6 @@ function yearsAgoIso(years: number): string {
   const d = new Date();
   d.setFullYear(d.getFullYear() - years);
   return d.toISOString().slice(0, 10);
-}
-function monthsBetween(from: string, to: string): string[] {
-  const out: string[] = [];
-  let y = parseInt(from.slice(0, 4), 10);
-  let m = parseInt(from.slice(5, 7), 10);
-  const yTo = parseInt(to.slice(0, 4), 10);
-  const mTo = parseInt(to.slice(5, 7), 10);
-  while (y < yTo || (y === yTo && m <= mTo)) {
-    out.push(`${y}-${String(m).padStart(2, '0')}`);
-    m++; if (m > 12) { m = 1; y++; }
-  }
-  return out;
 }
 function cellColor(r: number | null, clamp: number): string {
   if (r == null || !isFinite(r)) return 'transparent';
@@ -97,7 +85,7 @@ export default function HeatmapPage() {
   const [clampPct, setClampPct] = useState(3);
   const [clampPctAnchor, setClampPctAnchor] = useState(10);
   const [customEventsRaw, setCustomEventsRaw] = useState('');
-  const [fetchGrades, setFetchGrades] = useState(true);
+  const [fetchGrades] = useState(false);
 
   // ===== Данные =====
   const [prices, setPrices] = useState<PricesBySymbol>({});
@@ -122,8 +110,6 @@ export default function HeatmapPage() {
   // ===== Важные даты + AI-события (localStorage) =====
   const [importantDays, setImportantDays] = useState<Set<string>>(new Set());
   const [aiRangeEvents, setAiRangeEvents] = useState<MarketEvent[]>([]);
-  const [aiRangeLoading, setAiRangeLoading] = useState(false);
-  const [aiRangeStatus, setAiRangeStatus] = useState('');
 
   // ===== AI-новости =====
   const [aiNews, setAiNews] = useState<Record<string, AiNews>>({});
@@ -435,7 +421,7 @@ export default function HeatmapPage() {
   // При открытии страницы — авто-показ последнего сохранённого набора из кэша
   // (без вызовов FMP). Параметры берём из localStorage прошлой сессии.
   useEffect(() => {
-    let tk = DEFAULT_TICKERS, f = yearsAgoIso(2), t = todayIso(), g = true;
+    let tk = DEFAULT_TICKERS, f = yearsAgoIso(2), t = todayIso();
     try {
       const s = localStorage.getItem(PARAMS_LS_KEY);
       if (s) {
@@ -443,13 +429,12 @@ export default function HeatmapPage() {
         if (typeof p.tickers === 'string' && p.tickers.trim()) { tk = p.tickers; setTickersInput(p.tickers); }
         if (typeof p.from === 'string') { f = p.from; setFromDate(p.from); }
         if (typeof p.to === 'string') { t = p.to; setToDate(p.to); }
-        if (typeof p.grades === 'boolean') { g = p.grades; setFetchGrades(p.grades); }
       }
     } catch {}
     const tks = tk.split(/[\s,;]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
     if (!tks.length) return;
     const qs = new URLSearchParams({
-      tickers: tks.join(','), from: f, to: t, grades: g ? '1' : '0', cacheOnly: '1',
+      tickers: tks.join(','), from: f, to: t, grades: fetchGrades ? '1' : '0', cacheOnly: '1',
     });
     fetch(`/api/heatmap/dataset?${qs.toString()}`)
       .then(r => r.json())
@@ -458,7 +443,6 @@ export default function HeatmapPage() {
           setPrices(res.prices || {});
           setGrades(res.grades || {});
           setLoadedTickers(res.loadedTickers || []);
-          setStatus(`Показаны сохранённые данные (${res.loadedTickers.length} тикеров) · «↻ Загрузить» — обновить`);
         }
       })
       .catch(() => {});
@@ -486,107 +470,6 @@ export default function HeatmapPage() {
     } finally {
       setAiNewsLoading(prev => ({ ...prev, [date]: false }));
     }
-  }
-
-  // ===== Найти важные события за диапазон =====
-  // Поток: per-month Marketaux (с кэшем в Turso) → AI cluster-events → aiRangeEvents.
-  async function aiFillEvents() {
-    setAiRangeLoading(true);
-    setAiRangeStatus('Подготовка…');
-    try {
-      const months = monthsBetween(fromDate, toDate);
-      // Сначала собираем сырые статьи по месяцам (кэш-aware, по 1 запросу на месяц).
-      type Raw = { date: string; title: string; domain?: string; url?: string };
-      const articles: Raw[] = [];
-      let cachedCount = 0;
-      let liveCount = 0;
-      const errors: string[] = [];
-
-      for (let i = 0; i < months.length; i++) {
-        const mo = months[i];
-        setAiRangeStatus(
-          `Шаг 1/2 — Marketaux ${i + 1}/${months.length} (${mo}) · кэш ${cachedCount} · live ${liveCount}` +
-          (errors.length ? ` · ошибок ${errors.length}` : '')
-        );
-        try {
-          const res = await fetch(
-            `/api/events/month-news?month=${mo}&tickers=${encodeURIComponent(tickersInput)}`
-          ).then(r => r.json());
-          if (res?.error) { errors.push(`${mo}: ${res.error}`); continue; }
-          if (res.cached) cachedCount++; else liveCount++;
-          const arr: any[] = Array.isArray(res?.articles) ? res.articles : [];
-          for (const a of arr) {
-            if (a && a.date && a.title) {
-              articles.push({ date: a.date, title: a.title, domain: a.domain, url: a.url });
-            }
-          }
-        } catch (e: any) {
-          errors.push(`${mo}: ${e.message}`);
-        }
-        // Мягкая пауза только когда реально били API (не для cached).
-        await sleep(80);
-      }
-
-      if (!articles.length) {
-        setAiRangeStatus(
-          errors.length
-            ? `Статей не найдено. Первые ошибки: ${errors.slice(0, 2).join('; ')}`
-            : 'Статей не найдено.'
-        );
-        return;
-      }
-
-      // AI кластеризация — один запрос на пачку.
-      setAiRangeStatus(`Шаг 2/2 — AI кластеризация ${articles.length} статей…`);
-      const clusterRes = await fetch('/api/ai/cluster-events', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          query: 'Значимые финансовые, макроэкономические и геополитические события рынка.',
-          articles: articles.map(a => ({ seendate: a.date, title: a.title, domain: a.domain })),
-          limit: 50,
-        }),
-      }).then(r => r.json());
-      if (clusterRes?.error) {
-        setAiRangeStatus(`AI кластеризация: ${clusterRes.error}`);
-        return;
-      }
-      const evs: any[] = Array.isArray(clusterRes?.events) ? clusterRes.events : [];
-
-      const existingKeys = new Set(
-        [...MARKET_EVENTS, ...customEvents, ...aiRangeEvents].map(e => `${e.date}|${e.title}`)
-      );
-      const collected: MarketEvent[] = [];
-      for (const e of evs) {
-        const d = String(e.date || '');
-        const ti = String(e.title || '').trim();
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !ti) continue;
-        const k = `${d}|${ti}`;
-        if (existingKeys.has(k)) continue;
-        existingKeys.add(k);
-        collected.push({
-          date: d, title: ti,
-          category: normalizeCategory(e.category),
-          description: typeof e.description === 'string' ? e.description : undefined,
-        });
-      }
-      setAiRangeEvents(prev => [...prev, ...collected]);
-      setAiRangeStatus(
-        `✓ Готово. Новых событий: ${collected.length} из ${evs.length} AI-кластеров. ` +
-        `Marketaux: live ${liveCount}, из кэша ${cachedCount}, статей ${articles.length}.` +
-        (errors.length ? ` Ошибок: ${errors.length}.` : '')
-      );
-    } catch (e: any) {
-      setAiRangeStatus(`Ошибка: ${e.message}`);
-    } finally {
-      setAiRangeLoading(false);
-    }
-  }
-
-  function clearAiRangeEvents() {
-    if (!confirm('Удалить все AI-события из локального хранилища?')) return;
-    setAiRangeEvents([]);
-    setAiRangeStatus('AI-события очищены.');
   }
 
   function toggleImportant(date: string) {
@@ -677,8 +560,6 @@ export default function HeatmapPage() {
   return (
     <div className="hm-root">
       <div className="hm-inner">
-        <div className="hm-h2">FMP <b>Heatmap</b> · дневные доходности × события</div>
-
         {/* Setbar */}
         <div className="hm-setbar">
           <span className="hm-pill" onClick={() => setDrawer(true)} title="Изменить тикеры">
@@ -721,11 +602,11 @@ export default function HeatmapPage() {
             </div>
             <div className="hm-fld">
               <label>От</label>
-              <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} />
+              <DatePicker value={fromDate} onChange={setFromDate} max={toDate} />
             </div>
             <div className="hm-fld">
               <label>До</label>
-              <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} />
+              <DatePicker value={toDate} onChange={setToDate} min={fromDate} max={todayIso()} />
             </div>
             <div className="hm-fld">
               <label>Шкала ±% дневная</label>
@@ -736,32 +617,6 @@ export default function HeatmapPage() {
               <label>Шкала ±% от якоря</label>
               <input type="number" value={clampPctAnchor} min={1} step={1}
                 onChange={e => setClampPctAnchor(parseFloat(e.target.value) || 10)} />
-            </div>
-            <div className="hm-fld">
-              <label>Опции</label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2, fontSize: 12 }}>
-                <input type="checkbox" checked={fetchGrades}
-                  onChange={e => setFetchGrades(e.target.checked)} />
-                Тянуть рейтинги аналитиков
-              </label>
-            </div>
-
-            <div className="hm-drawer-full">
-              <label style={{ display: 'block', fontSize: 10.5, color: 'var(--hm-tx3)',
-                  textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 4 }}>
-                AI-события для диапазона
-              </label>
-              <div className="hm-drawer-row">
-                <span className="hm-muted" style={{ fontSize: 12 }}>
-                  AI-событий накоплено: <b style={{ color: 'var(--hm-tx)' }}>{aiRangeEvents.length}</b>
-                </span>
-                <button className="hm-ghost primary" onClick={aiFillEvents} disabled={aiRangeLoading}>
-                  {aiRangeLoading ? 'Идёт поиск…' : '🔥 Найти важные события (Marketaux + AI)'}
-                </button>
-                <button className="hm-ghost" onClick={clearAiRangeEvents}
-                  disabled={aiRangeLoading || !aiRangeEvents.length}>Очистить</button>
-                {aiRangeStatus && <span className="hm-status">{aiRangeStatus}</span>}
-              </div>
             </div>
 
             <div className="hm-drawer-full hm-fld">
