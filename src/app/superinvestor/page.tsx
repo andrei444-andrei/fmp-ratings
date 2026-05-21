@@ -6,6 +6,7 @@ import { cellColor, textColorOn } from '@/lib/superinvestor/compute';
 import { INVESTOR_TYPE_LABEL, type InvestorType, type LeaderboardRow } from '@/lib/superinvestor/types';
 import { PERIODS, periodQuery, type PeriodKey } from '@/lib/superinvestor/periods';
 import { pctP, pctFu, money, fixed } from '@/lib/superinvestor/format';
+import { safeFetchJson } from './_components/fetchJson';
 import AddInvestor from './_components/AddInvestor';
 
 type SortKey = 'alphaPct' | 'alphaAnnPct' | 'copyReturnPct' | 'spyReturnPct' | 'winRatePct' | 'sharpe' | 'maxDrawdownPct' | 'closedTrades' | 'aum';
@@ -22,29 +23,42 @@ export default function LeaderboardPage() {
   const [activeTypes, setActiveTypes] = useState<Set<InvestorType>>(new Set(TYPES));
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'alphaPct', dir: -1 });
   const [total, setTotal] = useState(10);
+  const [warming, setWarming] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const attempts = useRef(0);
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
     setRows([]);
     setError(null);
+    setWarming(false);
+    attempts.current = 0;
 
     async function load() {
-      try {
-        const res = await fetch(`/api/superinvestor/leaderboard?${periodQuery(period)}`).then(r => r.json());
-        if (!alive) return;
-        if (res.error) { setError(res.error); setLoading(false); return; }
-        setRows(res.rows || []);
-        setPending(res.pending || []);
-        setTotal(res.total || 10);
+      const res = await safeFetchJson(`/api/superinvestor/leaderboard?${periodQuery(period)}`);
+      if (!alive) return;
+      attempts.current++;
+
+      // Серверный таймаут/не-JSON: расчёт идёт, кэш греется — продолжаем опрос.
+      if (res.transient) {
+        setWarming(true);
         setLoading(false);
-        if ((res.pending || []).length > 0) {
-          timer.current = setTimeout(load, 4000); // дозапрос холодных позиций
-        }
-      } catch (e: any) {
-        if (alive) { setError(e.message); setLoading(false); }
+        if (attempts.current < 80) timer.current = setTimeout(load, 5000);
+        else setError('Расчёт занимает дольше обычного. Промежуточные данные кэшируются — обновите страницу позже.');
+        return;
+      }
+
+      const data = res.data || {};
+      if (data.error) { setError(data.error); setLoading(false); setWarming(false); return; }
+      setWarming(false);
+      setRows(data.rows || []);
+      setPending(data.pending || []);
+      setTotal(data.total || 10);
+      setLoading(false);
+      if ((data.pending || []).length > 0 && attempts.current < 80) {
+        timer.current = setTimeout(load, 4000); // дозапрос холодных позиций
       }
     }
     load();
@@ -113,15 +127,19 @@ export default function LeaderboardPage() {
           </button>
         ))}
         <span className="si-spacer" />
-        {pending.length > 0 && !error && (
+        {(pending.length > 0 || warming) && !error && (
           <span className="si-mut">обновляется {rows.length}/{total}…</span>
         )}
       </div>
 
       {error ? (
-        <div className="si-panel"><div className="si-state si-err">Ошибка: {error}<br /><span className="si-mut">Раздел требует FMP-ключ с доступом к institutional-ownership (Form 13F).</span></div></div>
-      ) : loading && !rows.length ? (
-        <div className="si-panel"><div className="si-state">Считаем copy-стратегии по 13F… первый расчёт может занять время (затем кэш).</div></div>
+        <div className="si-panel"><div className="si-state si-err">Ошибка: {error}
+          {/(ключ|key|403|401|402|forbidden|payment|institutional|api)/i.test(error) && (
+            <><br /><span className="si-mut">Раздел требует FMP-ключ с доступом к institutional-ownership (Form 13F).</span></>
+          )}
+        </div></div>
+      ) : (loading || warming) && !rows.length ? (
+        <div className="si-panel"><div className="si-state">Считаем copy-стратегии по 13F на сервере — первый расчёт идёт частями и кэшируется, это может занять минуту…</div></div>
       ) : (
         <div className="si-tblwrap">
           <table className="si-tbl">
