@@ -261,12 +261,14 @@
 /* ===== Stage: heatmap + лента новостей ===== */
 /* align-items: stretch — лента и левая колонка одинаковой высоты */
 /* Высота ленты привязана к левой колонке (графику); прокрутка — внутри блока */
-.hm-stage { display: grid; grid-template-columns: 1fr 360px; gap: 14px; align-items: stretch; }
+.hm-stage { display: grid; grid-template-columns: 1fr 360px; gap: 14px; align-items: start; }
 .hm-panel { min-width: 0; } /* грид скроллится по X */
-/* Высота правой колонки привязана к левой: внутренний контент абсолютный,
-   поэтому он не растягивает строку грида — высота диктуется графиком слева. */
+/* Правая колонка — sticky на высоту экрана: лента/новости скроллятся внутри,
+   а чат закреплён у нижней кромки экрана. align-self:start, чтобы колонка не
+   растягивалась под высокий грид и могла «прилипать» при прокрутке. */
 .hm-feed-panel {
-  position: relative; overflow: hidden;
+  position: sticky; top: 50px; align-self: start;
+  height: calc(100vh - 62px); overflow: hidden;
   background: var(--hm-surf); border: .5px solid var(--hm-line);
   border-radius: var(--hm-rad-lg); min-height: 0;
 }
@@ -276,8 +278,8 @@
 }
 @media (max-width: 1180px) {
   .hm-stage { grid-template-columns: 1fr; }
-  /* На узких экранах одна колонка — лента течёт по контенту, без абсолюта. */
-  .hm-feed-panel { position: static; }
+  /* На узких экранах одна колонка — лента течёт по контенту, без sticky/абсолюта. */
+  .hm-feed-panel { position: static; height: auto; }
   .hm-feed-inner { position: static; }
   .hm-feed, .hm-pop-detail { max-height: 70vh; }
 }
