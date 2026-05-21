@@ -123,9 +123,8 @@
 .hm-kpi .v { font-size: 20px; font-weight: 600; font-family: var(--hm-mono); margin-top: 3px; }
 .hm-kpi .vsub { font-size: 10.5px; color: var(--hm-tx3); margin-top: 2px; }
 
-.hm-gridwrap { overflow-x: auto; border: .5px solid var(--hm-line);
+.hm-gridwrap { overflow-x: auto; overflow-y: visible; border: .5px solid var(--hm-line);
   border-radius: var(--hm-rad-lg); background: var(--hm-surf);
-  max-height: 75vh; overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
 .hm-table { border-collapse: separate; border-spacing: 0; font-family: var(--hm-mono);

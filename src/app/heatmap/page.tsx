@@ -88,6 +88,7 @@ const PRESET_REGIONS = 'VTI,VGK,FXI,EWJ,INDA,EWY';
 
 // ===== Утилиты =====
 function todayIso(): string { return new Date().toISOString().slice(0, 10); }
+
 function cellColor(r: number | null, clamp: number): string {
   if (r == null || !isFinite(r)) return 'transparent';
   const x = Math.max(-1, Math.min(1, r / clamp));
@@ -625,6 +626,8 @@ export default function HeatmapPage() {
     setAiNewsLoading(prev => ({ ...prev, [date]: true }));
 
     // Блок 2 — дополнительные новости дня через Perplexity (5-10), на языке браузера.
+    // Серверный route кэширует результат в Turso (news_day_cache), поэтому повторный
+    // клик по дню берёт новости из БД без вызова Perplexity (не тратит поинты).
     const lang = typeof navigator !== 'undefined' ? navigator.language : 'ru';
     let items: any[] = [];
     let marketauxError: string | undefined;
