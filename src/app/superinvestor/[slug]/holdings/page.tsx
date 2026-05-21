@@ -5,14 +5,16 @@ import { useParams } from 'next/navigation';
 import { useInvestorDetail } from '../../_components/useDetail';
 import { cellColor, textColorOn } from '@/lib/superinvestor/compute';
 import { investorBySlug } from '@/lib/superinvestor/registry';
+import { PERIODS, type PeriodKey } from '@/lib/superinvestor/periods';
 import { pctFu } from '@/lib/superinvestor/format';
 
 export default function HoldingsHeatmapPage() {
   const params = useParams();
   const slug = String(params.slug || '');
   const inv = investorBySlug(slug);
-  const [years, setYears] = useState(5);
-  const { data, loading, error } = useInvestorDetail(slug, years, false);
+  const [period, setPeriod] = useState<PeriodKey>('5');
+  const { data, loading, error } = useInvestorDetail(slug, period, false);
+  const invMeta = data?.investor || inv;
 
   const hm = data?.heatmap;
   const clamp = useMemo(() => {
@@ -37,7 +39,7 @@ export default function HoldingsHeatmapPage() {
   return (
     <main>
       <div className="si-top">
-        <div className="si-title">Heatmap холдингов · {inv?.name}</div>
+        <div className="si-title">Heatmap холдингов · {invMeta?.name}</div>
         <div className="si-sub">Тикеры × кварталы. Насыщенность зелёного = вес позиции в портфеле 13F.</div>
       </div>
 
@@ -51,7 +53,7 @@ export default function HoldingsHeatmapPage() {
 
       <div className="si-bar">
         <span className="lbl">Период</span>
-        <div className="si-seg">{[3, 5].map(y => <button key={y} className={years === y ? 'on' : ''} onClick={() => setYears(y)}>{y}г</button>)}</div>
+        <div className="si-seg">{PERIODS.map(p => <button key={p.key} className={period === p.key ? 'on' : ''} onClick={() => setPeriod(p.key)}>{p.label}</button>)}</div>
         <span className="si-spacer" />
         {hm && <span className="si-mut">{hm.symbols.length} тикеров · {hm.periods.length} кварталов</span>}
       </div>

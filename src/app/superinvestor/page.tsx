@@ -4,15 +4,17 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { cellColor, textColorOn } from '@/lib/superinvestor/compute';
 import { INVESTOR_TYPE_LABEL, type InvestorType, type LeaderboardRow } from '@/lib/superinvestor/types';
+import { PERIODS, periodQuery, type PeriodKey } from '@/lib/superinvestor/periods';
 import { pctP, pctFu, money, fixed } from '@/lib/superinvestor/format';
+import AddInvestor from './_components/AddInvestor';
 
 type SortKey = 'alphaPct' | 'alphaAnnPct' | 'copyReturnPct' | 'spyReturnPct' | 'winRatePct' | 'sharpe' | 'maxDrawdownPct' | 'closedTrades' | 'aum';
 
-const TYPES: InvestorType[] = ['value', 'activist', 'macro', 'concentrated'];
+const TYPES: InvestorType[] = ['value', 'activist', 'macro', 'concentrated', 'quant'];
 
 export default function LeaderboardPage() {
   const router = useRouter();
-  const [years, setYears] = useState(3);
+  const [period, setPeriod] = useState<PeriodKey>('3');
   const [rows, setRows] = useState<LeaderboardRow[]>([]);
   const [pending, setPending] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -20,6 +22,7 @@ export default function LeaderboardPage() {
   const [activeTypes, setActiveTypes] = useState<Set<InvestorType>>(new Set(TYPES));
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'alphaPct', dir: -1 });
   const [total, setTotal] = useState(10);
+  const [reloadKey, setReloadKey] = useState(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -30,7 +33,7 @@ export default function LeaderboardPage() {
 
     async function load() {
       try {
-        const res = await fetch(`/api/superinvestor/leaderboard?years=${years}`).then(r => r.json());
+        const res = await fetch(`/api/superinvestor/leaderboard?${periodQuery(period)}`).then(r => r.json());
         if (!alive) return;
         if (res.error) { setError(res.error); setLoading(false); return; }
         setRows(res.rows || []);
@@ -46,7 +49,7 @@ export default function LeaderboardPage() {
     }
     load();
     return () => { alive = false; if (timer.current) clearTimeout(timer.current); };
-  }, [years]);
+  }, [period, reloadKey]);
 
   const clamp = useMemo(() => {
     const m = Math.max(0.2, ...rows.map(r => Math.abs(r.alphaPct) / 100));
@@ -94,11 +97,13 @@ export default function LeaderboardPage() {
         </ul>
       </div>
 
+      <AddInvestor onChanged={() => setReloadKey(k => k + 1)} />
+
       <div className="si-bar">
         <span className="lbl">Период</span>
         <div className="si-seg">
-          {[1, 3, 5].map(y => (
-            <button key={y} className={years === y ? 'on' : ''} onClick={() => setYears(y)}>{y}г</button>
+          {PERIODS.map(p => (
+            <button key={p.key} className={period === p.key ? 'on' : ''} onClick={() => setPeriod(p.key)}>{p.label}</button>
           ))}
         </div>
         <span className="lbl" style={{ marginLeft: 8 }}>Тип</span>
