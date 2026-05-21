@@ -88,6 +88,22 @@ const PRESET_REGIONS = 'VTI,VGK,FXI,EWJ,INDA,EWY';
 
 // ===== Утилиты =====
 function todayIso(): string { return new Date().toISOString().slice(0, 10); }
+
+// Кэш новостей дня в localStorage: ключ `${date}:${lang2}` → массив items.
+// Позволяет при повторном открытии дня не ходить на сервер (и не тратить поинты Perplexity).
+const NEWS_LS_KEY = 'hm_day_news_v1';
+function readNewsCache(): Record<string, any[]> {
+  try { return JSON.parse(localStorage.getItem(NEWS_LS_KEY) || '{}'); } catch { return {}; }
+}
+function writeNewsCache(key: string, items: any[]): void {
+  try {
+    const map = readNewsCache();
+    map[key] = items;
+    const keys = Object.keys(map);
+    if (keys.length > 200) for (const k of keys.slice(0, keys.length - 200)) delete map[k];
+    localStorage.setItem(NEWS_LS_KEY, JSON.stringify(map));
+  } catch { /* localStorage недоступен — не критично */ }
+}
 function cellColor(r: number | null, clamp: number): string {
   if (r == null || !isFinite(r)) return 'transparent';
   const x = Math.max(-1, Math.min(1, r / clamp));
@@ -622,10 +638,22 @@ export default function HeatmapPage() {
         }))
       : [];
 
-    setAiNewsLoading(prev => ({ ...prev, [date]: true }));
-
     // Блок 2 — дополнительные новости дня через Perplexity (5-10), на языке браузера.
     const lang = typeof navigator !== 'undefined' ? navigator.language : 'ru';
+    const lang2 = lang.slice(0, 2).toLowerCase();
+    const cacheKey = `${date}:${lang2}`;
+
+    // localStorage: при повторном открытии дня отдаём из кэша без запроса к серверу.
+    if (!force) {
+      const cachedItems = readNewsCache()[cacheKey];
+      if (Array.isArray(cachedItems)) {
+        setAiNews(prev => ({ ...prev, [date]: { date, eventItems, items: cachedItems } as any }));
+        return;
+      }
+    }
+
+    setAiNewsLoading(prev => ({ ...prev, [date]: true }));
+
     let items: any[] = [];
     let marketauxError: string | undefined;
     try {
@@ -639,6 +667,9 @@ export default function HeatmapPage() {
     } catch (e: any) {
       marketauxError = e.message;
     }
+
+    // Кэшируем только удачный непустой ответ.
+    if (!marketauxError && items.length) writeNewsCache(cacheKey, items);
 
     setAiNews(prev => ({
       ...prev,
