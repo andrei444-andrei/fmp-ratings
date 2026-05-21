@@ -333,7 +333,7 @@ export default function AiEventsDebugPage() {
           Плейсхолдеры user-промпта: <code>{'{dateFrom}'}</code>, <code>{'{dateTo}'}</code>, <code>{'{date}'}</code>,
           <code>{' {query}'}</code>, <code>{' {categories}'}</code>. Ответ — JSON <code>{'{ events: [{date,title,description,category,source}] }'}</code>.
         </p>
-        <div className="text-xs rounded p-2 mb-3" style={{ background: '#fef3c7', color: '#92400e' }}>
+        <div className="text-xs rounded p-2 mb-3" style={{ background: 'rgba(245,181,61,.13)', color: '#f5b53d' }}>
           ⚠️ Обычные LLM знают события только до своего обучения (~2024). Для <b>свежих дат</b> (2025+) бери
           <code> perplexity/sonar-pro</code> (web-search). На исторических (2020–2023) — любая модель.
         </div>
@@ -436,7 +436,7 @@ export default function AiEventsDebugPage() {
       </section>
 
       {/* Сбор в БД */}
-      <section className="card border-blue-200" style={{ background: '#f8fafc' }}>
+      <section className="card" style={{ background: 'rgba(124,108,240,.06)' }}>
         <h3 className="font-semibold mb-1">📦 Сбор событий в базу данных (поквартально)</h3>
         <p className="text-xs text-neutral-500 mb-3">
           Промпт английский → события на английском, затем AI переводит на языки из поля «Языки»
@@ -577,7 +577,7 @@ export default function AiEventsDebugPage() {
             <button className="btn" onClick={downloadJson} disabled={!events.length}>Скачать JSON</button>
           </div>
           {truncated && (
-            <div className="text-xs rounded p-2 mb-3" style={{ background: '#fef3c7', color: '#92400e' }}>
+            <div className="text-xs rounded p-2 mb-3" style={{ background: 'rgba(245,181,61,.13)', color: '#f5b53d' }}>
               ⚠️ Ответ обрезан по <b>max_tokens</b> — события восстановлены из неполного JSON. Подними max_tokens.
             </div>
           )}

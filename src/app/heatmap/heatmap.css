@@ -28,19 +28,12 @@
   background: var(--hm-bg);
   color: var(--hm-tx);
   padding: 14px 14px 80px;
-  margin-top: -28px;
-  margin-bottom: -28px;
-  min-height: calc(100vh + 56px);
+  margin-top: 0;
+  margin-bottom: 0;
+  min-height: 100vh;
   font-size: 14px;
 }
 .hm-dark-body { background: #0a0b0e !important; }
-.hm-dark-body a { color: #cfc8fb; }
-.hm-dark-body header,
-.hm-dark-body header h1,
-.hm-dark-body header nav,
-.hm-dark-body header nav a { color: #9aa0ad !important; }
-.hm-dark-body header nav a:hover { color: #e9eaed !important; }
-.hm-dark-body > div:first-child { background: #0a0b0e; }
 .hm-root * { box-sizing: border-box; }
 
 .hm-inner { max-width: 1320px; margin: 0 auto; }
