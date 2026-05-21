@@ -1,22 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { INVESTORS } from '@/lib/superinvestor/registry';
-import { buildLeaderboardRow, defaultWindow } from '@/lib/superinvestor/service';
+import { getAllInvestors } from '@/lib/superinvestor/investors-store';
+import { buildLeaderboardRow, resolveWindow } from '@/lib/superinvestor/service';
 import { siCacheGet } from '@/lib/superinvestor/cache';
 import type { LeaderboardRow } from '@/lib/superinvestor/types';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-// GET /api/superinvestor/leaderboard?years=3
+// GET /api/superinvestor/leaderboard?years=3 | ?from=2010-01-01
 //
-// Возвращает { rows, pending, window, error? }. Тяжёлый холодный расчёт идёт с
-// бюджетом времени: что не успели — попадает в pending, клиент дозапрашивает.
-// Тёплый кэш отдаётся мгновенно.
+// Тяжёлый холодный расчёт идёт с бюджетом времени: что не успели — в pending,
+// клиент дозапрашивает. Тёплый кэш отдаётся мгновенно.
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
-  const yearsParam = parseInt(url.searchParams.get('years') || '3', 10);
-  const years = [1, 3, 5].includes(yearsParam) ? yearsParam : 3;
-  const win = defaultWindow(years);
+  const win = resolveWindow(url.searchParams);
+  const investors = await getAllInvestors();
 
   const budgetMs = 45000;
   const start = Date.now();
@@ -24,7 +22,7 @@ export async function GET(req: NextRequest) {
   const pending: string[] = [];
   let firstErr: string | undefined;
 
-  for (const inv of INVESTORS) {
+  for (const inv of investors) {
     const cached = await siCacheGet<LeaderboardRow>(`row|${inv.slug}|${win.from}|${win.to}`);
     if (cached) { rows.push(cached); continue; }
     if (Date.now() - start > budgetMs) { pending.push(inv.slug); continue; }
@@ -40,7 +38,6 @@ export async function GET(req: NextRequest) {
 
   rows.sort((a, b) => b.alphaPct - a.alphaPct);
 
-  // Глобальная ошибка (например, нет ключа FMP) — все упали, ничего не отдать.
   const error = rows.length === 0 && firstErr ? firstErr : undefined;
-  return NextResponse.json({ rows, pending, window: win, years, total: INVESTORS.length, error });
+  return NextResponse.json({ rows, pending, window: win, total: investors.length, error });
 }

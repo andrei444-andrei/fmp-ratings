@@ -153,6 +153,26 @@
 .si-skel { height: 14px; border-radius: 5px; background: linear-gradient(90deg, var(--hm-surf) 25%, var(--hm-surf2) 50%, var(--hm-surf) 75%); background-size: 200% 100%; animation: si-sh 1.1s infinite; }
 @keyframes si-sh { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
+/* добавление инвестора */
+.si-add { margin-bottom: 14px; }
+.si-form { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); align-items: end; }
+.si-field label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--hm-tx3); margin-bottom: 4px; }
+.si-input, .si-select {
+  width: 100%; background: var(--hm-bg2); border: .5px solid var(--hm-line2); color: var(--hm-tx);
+  font: inherit; font-size: 12.5px; padding: 7px 9px; border-radius: var(--hm-rad);
+}
+.si-input:focus, .si-select:focus { outline: none; border-color: var(--hm-acc-bd); }
+.si-matches { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; max-height: 200px; overflow: auto; }
+.si-match { text-align: left; background: var(--hm-surf2); border: .5px solid var(--hm-line); color: var(--hm-tx2); border-radius: 7px; padding: 6px 9px; cursor: pointer; font-size: 12px; display: flex; justify-content: space-between; gap: 10px; }
+.si-match:hover { color: var(--hm-tx); border-color: var(--hm-line2); }
+.si-match .cik { color: var(--hm-tx3); font-family: var(--hm-mono); font-size: 10.5px; white-space: nowrap; }
+.si-chiplist { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+.si-chip { display: flex; align-items: center; gap: 6px; font-size: 11.5px; background: var(--hm-surf2); border: .5px solid var(--hm-line); border-radius: 99px; padding: 4px 6px 4px 11px; color: var(--hm-tx2); }
+.si-chip a { color: inherit; text-decoration: none; }
+.si-chip a:hover { color: var(--hm-tx); }
+.si-chip button { background: transparent; border: 0; color: var(--hm-tx3); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; }
+.si-chip button:hover { color: var(--hm-neg); }
+
 .si-root ::-webkit-scrollbar { height: 9px; width: 9px; }
 .si-root ::-webkit-scrollbar-thumb { background: var(--hm-line2); border-radius: 6px; }
 

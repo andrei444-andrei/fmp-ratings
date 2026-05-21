@@ -20,6 +20,26 @@ async function fmpGet(url: string): Promise<any> {
 }
 
 export type Period = { date: string; year: number; quarter: number };
+export type HolderRef = { cik: string; name: string };
+
+// Каталог 13F-филеров (cik + name) для поиска по имени. Большой список —
+// тянем постранично; кэшируется на уровне роута.
+export async function fmp13fList(): Promise<HolderRef[]> {
+  const key = getFmpKey();
+  const out: HolderRef[] = [];
+  for (let page = 0; page < 60; page++) {
+    const url = `${BASE}/institutional-ownership/list?page=${page}&limit=1000&apikey=${encodeURIComponent(key)}`;
+    const data = await fmpGet(url);
+    const arr = Array.isArray(data) ? data : [];
+    for (const r of arr) {
+      const cik = String(r.cik || '').padStart(10, '0').slice(-10);
+      const name = String(r.name || '').trim();
+      if (cik && name) out.push({ cik, name });
+    }
+    if (arr.length < 1000) break;
+  }
+  return out;
+}
 
 // Доступные кварталы 13F для CIK (новые → старые либо как отдаёт FMP).
 export async function fmp13fDates(cik: string): Promise<Period[]> {

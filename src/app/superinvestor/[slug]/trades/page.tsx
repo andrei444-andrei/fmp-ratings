@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import { useInvestorDetail } from '../../_components/useDetail';
 import { cellColor, textColorOn } from '@/lib/superinvestor/compute';
 import { investorBySlug } from '@/lib/superinvestor/registry';
+import { PERIODS, type PeriodKey } from '@/lib/superinvestor/periods';
 import { pctF, pctFu, fixed } from '@/lib/superinvestor/format';
 import type { ClosedTrade } from '@/lib/superinvestor/types';
 
@@ -15,8 +16,9 @@ export default function TradesPage() {
   const params = useParams();
   const slug = String(params.slug || '');
   const inv = investorBySlug(slug);
-  const [years, setYears] = useState(5);
-  const { data, loading, error } = useInvestorDetail(slug, years, false);
+  const [period, setPeriod] = useState<PeriodKey>('5');
+  const { data, loading, error } = useInvestorDetail(slug, period, false);
+  const meta = data?.investor || inv;
 
   const [yearF, setYearF] = useState<number | 'all'>('all');
   const [profit, setProfit] = useState<Profit>('all');
@@ -55,7 +57,7 @@ export default function TradesPage() {
   return (
     <main>
       <div className="si-top">
-        <div className="si-title">Закрытые сделки · {inv?.name}</div>
+        <div className="si-title">Закрытые сделки · {meta?.name}</div>
         <div className="si-sub">Все полностью закрытые позиции (акции доведены до 0) с альфой относительно SPY за окно удержания.</div>
       </div>
 
@@ -69,7 +71,7 @@ export default function TradesPage() {
 
       <div className="si-bar">
         <span className="lbl">Период</span>
-        <div className="si-seg">{[3, 5].map(y => <button key={y} className={years === y ? 'on' : ''} onClick={() => setYears(y)}>{y}г</button>)}</div>
+        <div className="si-seg">{PERIODS.map(p => <button key={p.key} className={period === p.key ? 'on' : ''} onClick={() => setPeriod(p.key)}>{p.label}</button>)}</div>
         <span className="lbl" style={{ marginLeft: 8 }}>Год закрытия</span>
         <div className="si-seg">
           <button className={yearF === 'all' ? 'on' : ''} onClick={() => setYearF('all')}>все</button>

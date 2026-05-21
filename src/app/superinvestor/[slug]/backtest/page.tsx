@@ -6,6 +6,7 @@ import { useInvestorDetail } from '../../_components/useDetail';
 import LineChart, { type ChartSeries } from '../../_components/LineChart';
 import { runBacktest } from '@/lib/superinvestor/compute';
 import { investorBySlug } from '@/lib/superinvestor/registry';
+import { PERIODS, type PeriodKey } from '@/lib/superinvestor/periods';
 import { pctP, pctFu, fixed } from '@/lib/superinvestor/format';
 import type { BacktestConfig } from '@/lib/superinvestor/types';
 
@@ -16,8 +17,9 @@ export default function BacktestPage() {
   const params = useParams();
   const slug = String(params.slug || '');
   const inv = investorBySlug(slug);
-  const [years, setYears] = useState(5);
-  const { data, loading, error } = useInvestorDetail(slug, years, true); // full=1 → priceMatrix
+  const [period, setPeriod] = useState<PeriodKey>('5');
+  const { data, loading, error } = useInvestorDetail(slug, period, true); // full=1 → priceMatrix
+  const meta = data?.investor || inv;
   const [minWeightPct, setMinWeightPct] = useState(0);
 
   const results = useMemo(() => {
@@ -54,7 +56,7 @@ export default function BacktestPage() {
   return (
     <main>
       <div className="si-top">
-        <div className="si-title">Бэктест copy-стратегии · {inv?.name}</div>
+        <div className="si-title">Бэктест copy-стратегии · {meta?.name}</div>
         <div className="si-sub">Как меняется alpha, если копировать филинг не мгновенно, а с задержкой входа.</div>
       </div>
 
@@ -69,7 +71,7 @@ export default function BacktestPage() {
 
       <div className="si-bar">
         <span className="lbl">Период</span>
-        <div className="si-seg">{[3, 5].map(y => <button key={y} className={years === y ? 'on' : ''} onClick={() => setYears(y)}>{y}г</button>)}</div>
+        <div className="si-seg">{PERIODS.map(p => <button key={p.key} className={period === p.key ? 'on' : ''} onClick={() => setPeriod(p.key)}>{p.label}</button>)}</div>
       </div>
 
       {error ? (
