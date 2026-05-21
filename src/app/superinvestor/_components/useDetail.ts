@@ -31,8 +31,14 @@ export function useInvestorDetail(slug: string, period: PeriodKey, full = false)
       }
 
       const d = res.data || {};
-      if (d.error) { setError(d.error); setData(null); }
-      else setData(d as InvestorDetail);
+      if (d.error) {
+        // Троттлинг/временная ошибка FMP — повторяем (кэш греется между попытками).
+        const transientErr = /лимит|429|rate|too many|exceed|5\d\d|временно|занимает/i.test(String(d.error));
+        if (transientErr && attempts < 20) { timer.current = setTimeout(load, 5000); return; }
+        setError(d.error); setData(null);
+      } else {
+        setData(d as InvestorDetail);
+      }
       setLoading(false);
     }
     load();
