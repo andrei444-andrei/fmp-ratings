@@ -44,8 +44,7 @@ export default function InvestorCardPage() {
       </div>
 
       <div className="si-overview">
-        <aside className="si-ov-left"><InvestorAI slug={slug} /></aside>
-        <div className="si-ov-right">
+        <div className="si-ov-main">
       {error ? (
         <div className="si-panel"><div className="si-state si-err">Ошибка: {error}
           {/(ключ|key|403|401|402|forbidden|payment|institutional|api)/i.test(error) && (
@@ -150,6 +149,7 @@ export default function InvestorCardPage() {
         </>
       )}
         </div>
+        <aside className="si-ov-ai"><InvestorAI slug={slug} /></aside>
       </div>
     </main>
   );
