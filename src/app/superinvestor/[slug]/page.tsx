@@ -43,8 +43,11 @@ export default function InvestorCardPage() {
       </div>
 
       {error ? (
-        <div className="si-panel"><div className="si-state si-err">Ошибка: {error}<br />
-          <span className="si-mut">Нужен FMP-ключ с доступом к Form 13F (institutional-ownership).</span></div></div>
+        <div className="si-panel"><div className="si-state si-err">Ошибка: {error}
+          {/(ключ|key|403|401|402|forbidden|payment|institutional|api)/i.test(error) && (
+            <><br /><span className="si-mut">Нужен FMP-ключ с доступом к Form 13F (institutional-ownership).</span></>
+          )}
+        </div></div>
       ) : loading && !data ? (
         <div className="si-panel"><div className="si-state">Загрузка copy-стратегии…</div></div>
       ) : !data ? null : (

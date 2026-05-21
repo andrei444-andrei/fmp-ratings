@@ -6,17 +6,38 @@ import type { Holding, QuarterHoldings } from './types';
 
 const BASE = 'https://financialmodelingprep.com/stable';
 
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+// 429/5xx и сообщения о лимите — это ВРЕМЕННАЯ ошибка (троттлинг FMP), а не «нет
+// данных». Ретраим с паузой; если не вышло — бросаем понятную ошибку (её клиент
+// трактует как «идёт расчёт» и повторяет, а не как «нужен ключ»).
 async function fmpGet(url: string): Promise<any> {
-  const res = await fetch(url, { cache: 'no-store' });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`FMP ${res.status}: ${body.slice(0, 160)}`);
+  const MAX = 3;
+  for (let attempt = 0; ; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(url, { cache: 'no-store' });
+    } catch (e) {
+      if (attempt < MAX) { await sleep(700 * (attempt + 1)); continue; }
+      throw e;
+    }
+    if (res.status === 429 || res.status >= 500) {
+      if (attempt < MAX) { await sleep(900 * (attempt + 1)); continue; }
+      const body = await res.text().catch(() => '');
+      throw new Error(`FMP ${res.status} (лимит запросов FMP?): ${body.slice(0, 120)}`);
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`FMP ${res.status}: ${body.slice(0, 160)}`);
+    }
+    const data = await res.json();
+    if (data && typeof data === 'object' && !Array.isArray(data) && (data['Error Message'] || data['error'])) {
+      const msg = String(data['Error Message'] || data['error']);
+      if (/limit|rate|too many|exceed/i.test(msg) && attempt < MAX) { await sleep(900 * (attempt + 1)); continue; }
+      throw new Error(msg);
+    }
+    return data;
   }
-  const data = await res.json();
-  if (data && typeof data === 'object' && !Array.isArray(data) && (data['Error Message'] || data['error'])) {
-    throw new Error(data['Error Message'] || data['error']);
-  }
-  return data;
 }
 
 export type Period = { date: string; year: number; quarter: number };
@@ -88,13 +109,17 @@ export async function fmp13fHoldings(cik: string, year: number, quarter: number)
   };
 
   let rows: any[] = [];
+  let fetchErr: unknown;
   try {
     rows = await fetchPaged('institutional-ownership/extract-analytics/holder');
-  } catch { /* попробуем сырой extract */ }
+  } catch (e) { fetchErr = e; }
   if (!rows.length) {
-    try { rows = await fetchPaged('institutional-ownership/extract'); } catch { /* нет данных */ }
+    try { rows = await fetchPaged('institutional-ownership/extract'); fetchErr = undefined; }
+    catch (e) { fetchErr = fetchErr ?? e; }
   }
-  if (!rows.length) return null;
+  // Пусто из-за ОШИБКИ (троттлинг/сбой) → пробрасываем (не выдаём ложное «нет данных»).
+  // Пустой 200-ответ (реально нет холдингов в квартале) → null.
+  if (!rows.length) { if (fetchErr) throw fetchErr; return null; }
 
   const filingDate = String(rows[0].filingDate || rows[0].acceptedDate || rows[0].date || '').slice(0, 10);
   const quarterEnd = String(rows[0].date || '').slice(0, 10);

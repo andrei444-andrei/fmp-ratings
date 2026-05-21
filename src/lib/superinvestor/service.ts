@@ -125,11 +125,21 @@ export async function buildInvestorDetail(slug: string, win: { from: string; to:
     .sort((a, b) => a.date.localeCompare(b.date));
   if (!periods.length) return null;
 
-  // 2. Холдинги по кварталам.
-  const quartersRaw = await mapLimit(periods, 4, p => getQuarter(investor.cik, p.year, p.quarter));
+  // 2. Холдинги по кварталам. Ошибки фетча (троттлинг) считаем отдельно — частичный
+  //    успех используем, но при полном провале с ошибками бросаем понятную ошибку,
+  //    а не выдаём ложное «нет данных».
+  let fetchErrors = 0;
+  let lastErr: string | undefined;
+  const quartersRaw = await mapLimit(periods, 4, async p => {
+    try { return await getQuarter(investor.cik, p.year, p.quarter); }
+    catch (e: any) { fetchErrors++; lastErr = e?.message || String(e); return null; }
+  });
   const quarters = quartersRaw.filter((q): q is QuarterHoldings => !!q && q.holdings.length > 0)
     .sort((a, b) => a.filingDate.localeCompare(b.filingDate));
-  if (!quarters.length) return null;
+  if (!quarters.length) {
+    if (fetchErrors > 0) throw new Error(lastErr || 'FMP временно недоступен (лимит запросов?)');
+    return null;
+  }
 
   // 3. Цены для объединения символов + SPY.
   const symbols = Array.from(new Set(quarters.flatMap(q => q.holdings.map(h => h.symbol))));
