@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { TickerText } from '@/lib/ticker-linkify';
 
 type Msg = { role: 'user' | 'assistant'; content: string; citations?: string[] };
 
@@ -10,7 +11,7 @@ function host(u: string): string {
 
 function Paragraphs({ text }: { text: string }) {
   const parts = text.split(/\n+/).map(s => s.trim()).filter(Boolean);
-  return <>{parts.map((p, i) => <p key={i} className="si-ai-p">{p}</p>)}</>;
+  return <>{parts.map((p, i) => <p key={i} className="si-ai-p"><TickerText text={p} /></p>)}</>;
 }
 
 function Sources({ urls }: { urls?: string[] }) {
