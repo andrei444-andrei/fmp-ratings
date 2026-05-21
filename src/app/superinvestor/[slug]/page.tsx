@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useParams } from 'next/navigation';
 import { useInvestorDetail } from '../_components/useDetail';
 import LineChart from '../_components/LineChart';
+import InvestorAI from '../_components/InvestorAI';
 import { investorBySlug } from '@/lib/superinvestor/registry';
 import { INVESTOR_TYPE_LABEL } from '@/lib/superinvestor/types';
 import { PERIODS, type PeriodKey } from '@/lib/superinvestor/periods';
@@ -42,6 +43,9 @@ export default function InvestorCardPage() {
         </div>
       </div>
 
+      <div className="si-overview">
+        <aside className="si-ov-left"><InvestorAI slug={slug} /></aside>
+        <div className="si-ov-right">
       {error ? (
         <div className="si-panel"><div className="si-state si-err">Ошибка: {error}
           {/(ключ|key|403|401|402|forbidden|payment|institutional|api)/i.test(error) && (
@@ -145,6 +149,8 @@ export default function InvestorCardPage() {
           </div>
         </>
       )}
+        </div>
+      </div>
     </main>
   );
 }

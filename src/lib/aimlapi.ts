@@ -58,3 +58,38 @@ export async function aimlChat(opts: {
   }
   return content;
 }
+
+// Как aimlChat, но дополнительно возвращает источники (citations) — для Perplexity Sonar.
+export async function aimlChatWithCitations(opts: {
+  messages: ChatMessage[];
+  model?: string;
+  temperature?: number;
+  max_tokens?: number;
+}): Promise<{ content: string; citations: string[] }> {
+  const key = getAimlApiKey();
+  const res = await fetch(`${BASE}/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'authorization': `Bearer ${key}` },
+    body: JSON.stringify({
+      model: opts.model || getAimlModel(),
+      messages: opts.messages,
+      temperature: opts.temperature ?? 0.3,
+      max_tokens: opts.max_tokens ?? 700,
+    }),
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    throw new Error(`aimlapi ${res.status}: ${t.slice(0, 300)}`);
+  }
+  const data = await res.json();
+  const content = data?.choices?.[0]?.message?.content;
+  if (typeof content !== 'string') throw new Error('aimlapi: пустой ответ');
+  const raw = Array.isArray(data?.citations) ? data.citations
+    : Array.isArray(data?.choices?.[0]?.message?.citations) ? data.choices[0].message.citations
+    : [];
+  const citations: string[] = raw
+    .map((c: any) => (typeof c === 'string' ? c : c?.url))
+    .filter((u: any) => typeof u === 'string' && /^https?:\/\//.test(u));
+  return { content, citations };
+}
