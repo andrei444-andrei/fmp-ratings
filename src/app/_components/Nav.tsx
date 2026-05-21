@@ -1,6 +1,7 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
+import ThemeToggle from './ThemeToggle';
 
 const LINKS = [
   { href: '/heatmap', label: 'Heatmap' },
@@ -29,6 +30,7 @@ export default function Nav() {
             </a>
           ))}
         </nav>
+        <ThemeToggle />
         <a href="https://github.com" target="_blank" rel="noreferrer" className="app-nav-gh">GitHub</a>
       </div>
     </header>
