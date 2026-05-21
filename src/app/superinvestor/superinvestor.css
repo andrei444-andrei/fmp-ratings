@@ -176,8 +176,27 @@
 .si-root ::-webkit-scrollbar { height: 9px; width: 9px; }
 .si-root ::-webkit-scrollbar-thumb { background: var(--hm-line2); border-radius: 6px; }
 
+/* обзор: AI-сводка слева + контент справа */
+.si-overview { display: grid; grid-template-columns: 380px 1fr; gap: 16px; align-items: start; }
+.si-ov-right { min-width: 0; }
+@media (max-width: 1000px) { .si-overview { grid-template-columns: 1fr; } }
+
+.si-ai { display: flex; flex-direction: column; max-height: 82vh; }
+.si-ai-body { overflow-y: auto; flex: 1 1 auto; min-height: 90px; }
+.si-ai-p { font-size: 13px; line-height: 1.6; color: var(--hm-tx); margin: 0 0 9px; }
+.si-ai-sum .si-ai-p:last-child { margin-bottom: 0; }
+.si-ai-src { display: flex; flex-wrap: wrap; gap: 6px; margin: 9px 0 2px; }
+.si-ai-src a { font-size: 10.5px; color: var(--hm-acc); text-decoration: none; background: var(--hm-surf2); border: .5px solid var(--hm-line); border-radius: 99px; padding: 2px 8px; white-space: nowrap; }
+.si-ai-src a:hover { border-color: var(--hm-acc-bd); }
+.si-ai-msg { margin-top: 12px; padding-top: 12px; border-top: .5px solid var(--hm-line); }
+.si-ai-msg.user { color: #cfc8fb; font-size: 13px; font-weight: 600; display: flex; gap: 7px; line-height: 1.5; }
+.si-ai-msg.user::before { content: '›'; color: var(--hm-acc); }
+.si-ai-input-row { display: flex; gap: 8px; align-items: flex-end; margin-top: 12px; flex: 0 0 auto; }
+.si-ai-input { flex: 1; resize: none; min-height: 36px; max-height: 120px; line-height: 1.45; }
+
 @media (max-width: 720px) {
   .si-root { padding: 12px 10px 60px; }
   .si-invhead .nm { font-size: 18px; }
   .si-aum .v { font-size: 20px; }
+  .si-ai { max-height: none; }
 }
