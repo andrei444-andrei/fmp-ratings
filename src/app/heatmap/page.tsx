@@ -1312,6 +1312,9 @@ export default function HeatmapPage() {
                   </div>
                 );
               })()}
+
+              {/* AI-чат по контексту выбранного дня */}
+              <DayChat key={selectedDate} date={selectedDate} news={buildDayNewsText(selectedDate)} />
             </div>
 
             {/* AI-чат закреплён внизу колонки; новости скроллятся над ним */}
