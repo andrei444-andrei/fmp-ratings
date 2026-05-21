@@ -95,6 +95,12 @@ function sharpeFromCurve(dates: string[], values: number[]): number {
 // Логика: в каждую дату подачи 13F (filing + задержка) ребалансируем виртуальный
 // портфель под раскрытые веса (с отсечкой по minWeight и ренормировкой), держим
 // до следующего филинга, считаем дневную стоимость по числу акций.
+// Допустимый дневной ход одной позиции. Выше — почти наверняка битая цена в данных
+// FMP (например, единичный «глитч»-тик) или несведённый сплит. Клемп защищает кривую
+// от взрыва: без него одна аномальная цена раздувала доходность до миллионов %.
+const DAY_RET_MAX = 3.0;   // +300%/день
+const DAY_RET_MIN = -0.9;  // −90%/день
+
 export function copyEquityCurve(
   quarters: QuarterHoldings[],
   pm: PriceMatrix,
@@ -117,61 +123,59 @@ export function copyEquityCurve(
   if (!rebs.length) return empty;
 
   const startIdx = rebs[0].idx;
-  const outDates: string[] = [];
-  const copy: number[] = [];
-  const spy: number[] = [];
-
   // SPY-старт — первая ненулевая цена на/после startIdx.
   let spyStart: number | null = null;
   for (let i = startIdx; i < dates.length; i++) { if (ff['SPY'][i] != null) { spyStart = ff['SPY'][i]; break; } }
   if (spyStart == null) return empty;
 
-  let shares: Record<string, number> = {};
+  // Кривую считаем как компаундинг дневных взвешенных доходностей (НЕ делим на цену —
+  // устойчиво к битым ценам). Веса задаёт филинг, между ребалансами они дрейфуют.
+  let weights: Record<string, number> = {};
   let rebPtr = 0;
+  let equity = 1;
+  const outDates: string[] = [];
+  const copy: number[] = [];
+  const spy: number[] = [];
 
   for (let i = startIdx; i < dates.length; i++) {
-    // Ребаланс, если достигли индекса очередного филинга.
+    // 1) Дневная доходность по весам, действующим с прошлого ребаланса (клемп на позицию).
+    if (i > startIdx) {
+      const syms = Object.keys(weights);
+      if (syms.length) {
+        let ret = 0;
+        const drift: Record<string, number> = {};
+        let wsum = 0;
+        for (const sym of syms) {
+          const p = ff[sym]?.[i], pp = ff[sym]?.[i - 1];
+          let r = 0;
+          if (p != null && pp != null && pp > 0) {
+            r = p / pp - 1;
+            if (r > DAY_RET_MAX) r = DAY_RET_MAX;
+            else if (r < DAY_RET_MIN) r = DAY_RET_MIN;
+          }
+          ret += weights[sym] * r;
+          const nw = weights[sym] * (1 + r);
+          drift[sym] = nw;
+          wsum += nw;
+        }
+        equity *= 1 + ret;
+        if (wsum > 0) for (const sym of syms) weights[sym] = drift[sym] / wsum; // дрейф весов
+      }
+    }
+    // 2) Ребаланс в день i (по закрытию) — действует со следующего дня.
     while (rebPtr < rebs.length && rebs[rebPtr].idx === i) {
       const q = rebs[rebPtr].q;
-      const equity = i === startIdx ? 1 : portfolioValue(shares, ff, i);
-      // Кандидаты: вес >= minWeight и есть цена на день входа.
-      const cands = q.holdings.filter(h => h.weight >= cfg.minWeight && ff[h.symbol]?.[i] != null);
-      const wsum = cands.reduce((s, h) => s + h.weight, 0);
-      if (wsum > 0 && equity > 0) {
-        shares = {};
-        for (const h of cands) {
-          const w = h.weight / wsum;            // ренормировка под отобранные позиции
-          const price = ff[h.symbol]![i]!;
-          shares[h.symbol] = (equity * w) / price;
-        }
-      }
-      // если кандидатов нет — оставляем прежний портфель (или кэш на старте)
+      const cands = q.holdings.filter(h => h.weight >= cfg.minWeight && (ff[h.symbol]?.[i] ?? 0) > 0);
+      const ws = cands.reduce((s, h) => s + h.weight, 0);
+      if (ws > 0) { weights = {}; for (const h of cands) weights[h.symbol] = h.weight / ws; }
       rebPtr++;
     }
     outDates.push(dates[i]);
-    copy.push(i === startIdx && Object.keys(shares).length === 0 ? 1 : portfolioValue(shares, ff, i) || 1);
-    spy.push(ff['SPY'][i]! / spyStart);
+    copy.push(equity);
+    spy.push(ff['SPY'][i] != null ? ff['SPY'][i]! / spyStart : equity > 0 ? spy[spy.length - 1] ?? 1 : 1);
   }
 
-  // Нормировка старта copy к 1 (на случай кэш-старта).
-  const base = copy[0] || 1;
-  for (let k = 0; k < copy.length; k++) copy[k] /= base;
-
-  return {
-    dates: outDates,
-    copy,
-    spy,
-    rebalanceDates: rebs.map(r => dates[r.idx]),
-  };
-}
-
-function portfolioValue(shares: Record<string, number>, ff: Record<string, (number | null)[]>, idx: number): number {
-  let v = 0;
-  for (const sym of Object.keys(shares)) {
-    const p = ff[sym]?.[idx];
-    if (p != null) v += shares[sym] * p;
-  }
-  return v;
+  return { dates: outDates, copy, spy, rebalanceDates: rebs.map(r => dates[r.idx]) };
 }
 
 // ===== Сделки: закрытые + открытые (модель средней цены) =====
@@ -183,15 +187,20 @@ export function deriveTrades(
   const ff = filledMatrix(pm);
   const qs = [...quarters].sort((a, b) => a.filingDate.localeCompare(b.filingDate));
 
-  type Pos = { shares: number; avgCost: number; openDate: string; name?: string; peak: number; firstSeen: string; quarters: number };
+  type Pos = { shares: number; avgCost: number; openDate: string; name?: string; peak: number; firstSeen: string; quarters: number; lastImplied?: number };
   const pos: Record<string, Pos> = {};
   const closed: ClosedTrade[] = [];
 
-  // Цена символа на дату филинга (с forward-fill); фолбэк — implied (value/shares).
-  function priceAtFiling(sym: string, fd: string, fallback?: number): number | null {
+  // Цена на дату филинга из FMP; если она аномально расходится с надёжным
+  // ориентиром (implied = value/shares из 13F) — берём ориентир (защита от глитч-цен).
+  function priceAtFiling(sym: string, fd: string, ref?: number): number | null {
     const idx = entryIndex(dates, fd, 0);
-    if (idx != null) { const p = ff[sym]?.[idx]; if (p != null) return p; }
-    return fallback ?? null;
+    const p = idx != null ? ff[sym]?.[idx] : null;
+    if (p != null && p > 0) {
+      if (ref && ref > 0 && (p / ref > 5 || p / ref < 0.2)) return ref;
+      return p;
+    }
+    return ref ?? null;
   }
   function spyReturn(openDate: string, closeDate: string): number {
     const ia = entryIndex(dates, openDate, 0), ib = entryIndex(dates, closeDate, 0);
@@ -212,18 +221,21 @@ export function deriveTrades(
       const h = cur[sym];
       const curShares = h?.shares ?? 0;
       const implied = h && h.shares > 0 ? h.value / h.shares : undefined;
-      const price = priceAtFiling(sym, fd, implied) ?? pos[sym]?.avgCost ?? implied ?? 0;
+      // Ориентир для отбраковки глитч-цены: implied этого квартала, иначе последний известный.
+      const ref = implied ?? pos[sym]?.lastImplied;
+      const price = priceAtFiling(sym, fd, ref) ?? pos[sym]?.avgCost ?? implied ?? 0;
 
       if (curShares > prevShares) {
         const delta = curShares - prevShares;
         if (prevShares === 0) {
-          pos[sym] = { shares: curShares, avgCost: price, openDate: fd, name: h?.name, peak: curShares, firstSeen: fd, quarters: 1 };
+          pos[sym] = { shares: curShares, avgCost: price, openDate: fd, name: h?.name, peak: curShares, firstSeen: fd, quarters: 1, lastImplied: implied };
         } else {
           const p = pos[sym];
           p.avgCost = (p.avgCost * prevShares + price * delta) / curShares;
           p.shares = curShares;
           p.peak = Math.max(p.peak, curShares);
           p.quarters++;
+          if (implied) p.lastImplied = implied;
           if (h?.name) p.name = h.name;
         }
       } else if (curShares < prevShares) {
@@ -247,7 +259,7 @@ export function deriveTrades(
         }
       } else if (h) {
         // вес/имя могут измениться без сделки
-        if (pos[sym]) { pos[sym].quarters++; if (h.name) pos[sym].name = h.name; }
+        if (pos[sym]) { pos[sym].quarters++; if (implied) pos[sym].lastImplied = implied; if (h.name) pos[sym].name = h.name; }
       }
     }
   }
@@ -261,8 +273,12 @@ export function deriveTrades(
   const open: OpenPosition[] = Object.keys(pos).map(sym => {
     const p = pos[sym];
     const h = lastBySym[sym];
+    const impliedLast = h && h.shares > 0 ? h.value / h.shares : p.lastImplied;
     let lastPrice = ff[sym]?.[lastIdx] ?? null;
-    if (lastPrice == null && h && h.shares > 0) lastPrice = h.value / h.shares;
+    // глитч последней цены → ориентир (implied)
+    if (lastPrice != null && lastPrice > 0 && impliedLast && impliedLast > 0 &&
+        (lastPrice / impliedLast > 5 || lastPrice / impliedLast < 0.2)) lastPrice = impliedLast;
+    if (lastPrice == null) lastPrice = impliedLast ?? null;
     const lp = lastPrice ?? p.avgCost;
     return {
       symbol: sym, name: p.name ?? h?.name,

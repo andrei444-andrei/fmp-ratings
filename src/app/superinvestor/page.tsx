@@ -65,9 +65,13 @@ export default function LeaderboardPage() {
     return () => { alive = false; if (timer.current) clearTimeout(timer.current); };
   }, [period, reloadKey]);
 
+  // Шкала цвета — по 90-му перцентилю |α| (устойчиво к выбросам) с потолком,
+  // чтобы один аномальный инвестор не «гасил» градиент у остальных.
   const clamp = useMemo(() => {
-    const m = Math.max(0.2, ...rows.map(r => Math.abs(r.alphaPct) / 100));
-    return m;
+    const a = rows.map(r => Math.abs(r.alphaPct) / 100).filter(x => isFinite(x)).sort((x, y) => x - y);
+    if (!a.length) return 0.5;
+    const p90 = a[Math.floor(a.length * 0.9)] ?? a[a.length - 1];
+    return Math.min(8, Math.max(0.2, p90));
   }, [rows]);
 
   const visible = useMemo(() => {
