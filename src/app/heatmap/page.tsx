@@ -149,6 +149,7 @@ export default function HeatmapPage() {
   // ===== UI-состояние =====
   const [drawer, setDrawer] = useState(false);
   const [sortByCum, setSortByCum] = useState(false);
+  const [cumMode, setCumMode] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [hover, setHover] = useState<{ x: number; y: number; sym: string; date: string } | null>(null);
   // Активные категории-фильтры для ленты и подсветки (по умолчанию — все).
@@ -265,25 +266,46 @@ export default function HeatmapPage() {
     return Array.from(set).sort();
   }, [prices, loadedTickers, fromDate, toDate]);
 
-  const clamp = clampPct / 100;
-
-  // Матрица дневных изменений (день/день); null там, где нет соседних цен.
+  // Матрица значений: дневные изменения (день/день) либо накопленная доходность
+  // с начала периода (cumMode). null там, где нет данных.
   const matrix = useMemo(() => {
     const out: Record<string, (number | null)[]> = {};
     for (const sym of loadedTickers) {
       const row: (number | null)[] = [];
       const m = prices[sym] || {};
-      let prev: number | null = null;
-      for (let i = 0; i < tradingDates.length; i++) {
-        const p = m[tradingDates[i]] ?? null;
-        if (p != null && prev != null) row.push(p / prev - 1);
-        else row.push(null);
-        if (p != null) prev = p;
+      if (cumMode) {
+        const firstD = tradingDates.find(d => m[d] != null);
+        const base = firstD ? m[firstD] : null;
+        for (let i = 0; i < tradingDates.length; i++) {
+          const p = m[tradingDates[i]] ?? null;
+          row.push(p != null && base ? p / base - 1 : null);
+        }
+      } else {
+        let prev: number | null = null;
+        for (let i = 0; i < tradingDates.length; i++) {
+          const p = m[tradingDates[i]] ?? null;
+          if (p != null && prev != null) row.push(p / prev - 1);
+          else row.push(null);
+          if (p != null) prev = p;
+        }
       }
       out[sym] = row;
     }
     return out;
-  }, [prices, loadedTickers, tradingDates]);
+  }, [prices, loadedTickers, tradingDates, cumMode]);
+
+  // Шкала окраски: дневная — фиксированная (clampPct); накопленная — авто
+  // (90-й перцентиль модулей значений), чтобы дать контраст на любом периоде.
+  const clamp = useMemo(() => {
+    if (!cumMode) return clampPct / 100;
+    const vals: number[] = [];
+    for (const sym of loadedTickers) {
+      for (const v of matrix[sym] || []) if (v != null) vals.push(Math.abs(v));
+    }
+    if (!vals.length) return clampPct / 100;
+    vals.sort((a, b) => a - b);
+    return vals[Math.floor(vals.length * 0.9)] || vals[vals.length - 1] || clampPct / 100;
+  }, [cumMode, matrix, loadedTickers, clampPct]);
 
   // Кумулятивная доходность по тикеру за весь видимый период (без учёта окна)
   const tickerCum = useMemo(() => {
@@ -685,14 +707,14 @@ export default function HeatmapPage() {
     tip.innerHTML =
       `<b>${hover.sym}</b> · ${hover.date}<br>` +
       `close: ${price != null ? price.toFixed(2) : '—'}` +
-      `<br>день/день: <b>${fmtPct(v ?? null, 2)}</b>` +
+      `<br>${cumMode ? 'с начала периода' : 'день/день'}: <b>${fmtPct(v ?? null, 2)}</b>` +
       (evs.length ? '<br>' + evs.map(e =>
         `<span style="color:${EVENT_COLORS[e.category]}">●</span> ${e.title}`
       ).join('<br>') : '');
     tip.style.left = (hover.x + 14) + 'px';
     tip.style.top = (hover.y + 14) + 'px';
     tip.style.opacity = '1';
-  }, [hover, prices, matrix, tradingDates, eventsMap]);
+  }, [hover, prices, matrix, tradingDates, eventsMap, cumMode]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -736,6 +758,11 @@ export default function HeatmapPage() {
           )}
           <div className="hm-spacer" />
           <button className="hm-ghost" onClick={() => setDrawer(d => !d)}>⚙</button>
+          <button className={`hm-ghost ${cumMode ? 'primary' : ''}`} onClick={() => setCumMode(c => !c)}
+            disabled={!loadedTickers.length}
+            title="Накопленная доходность с начала периода">
+            Σ {cumMode ? 'накопл.' : 'с периода'}
+          </button>
           <button className="hm-ghost" onClick={() => setSortByCum(s => !s)}
             disabled={!loadedTickers.length}
             title={sortByCum ? 'Снять сортировку' : 'Сортировать по доходности'}>
@@ -1289,6 +1316,9 @@ export default function HeatmapPage() {
               {/* AI-чат по контексту выбранного дня */}
               <DayChat key={selectedDate} date={selectedDate} news={buildDayNewsText(selectedDate)} />
             </div>
+
+            {/* AI-чат закреплён внизу колонки; новости скроллятся над ним */}
+            <DayChat key={selectedDate} date={selectedDate} news={buildDayNewsText(selectedDate)} />
             </div>
           )}
           </div>

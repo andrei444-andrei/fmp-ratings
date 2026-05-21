@@ -323,9 +323,9 @@
 .hm-fday-ev .dot { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 6px; margin-top: 5px; }
 
 /* детали выбранного дня внутри панели */
-.hm-pop-detail { overflow-y: auto; flex: 1 1 auto; min-height: 0; }
-.hm-pop-detail .hm-pop-h { padding: 13px 14px; }
-.hm-pop-detail .hm-pop-body { padding: 13px 14px 16px; }
+.hm-pop-detail { display: flex; flex-direction: column; overflow: hidden; flex: 1 1 auto; min-height: 0; }
+.hm-pop-detail .hm-pop-h { padding: 13px 14px; flex: 0 0 auto; }
+.hm-pop-detail .hm-pop-body { padding: 13px 14px 16px; flex: 1 1 auto; overflow-y: auto; min-height: 0; }
 .hm-feed-panel .hm-acts button { min-width: 0; }
 
 /* ===== DatePicker ===== */
@@ -445,8 +445,10 @@
 .hm-table td.aimarkcol-hot { outline: 1.5px solid var(--hm-acc); outline-offset: -1.5px; }
 
 /* AI-чат по дню */
-.hm-chat { margin-top: 18px; padding-top: 14px; border-top: .5px solid var(--hm-line); }
-.hm-chat-body { display: flex; flex-direction: column; gap: 10px; margin: 10px 0; }
+.hm-chat { flex: 0 0 auto; padding: 12px 14px 14px; border-top: .5px solid var(--hm-line);
+  background: var(--hm-surf); }
+.hm-chat-body { display: flex; flex-direction: column; gap: 10px; margin: 10px 0;
+  max-height: 38vh; overflow-y: auto; }
 .hm-chat-msg { font-size: 12.5px; line-height: 1.5; border-radius: var(--hm-rad); padding: 9px 11px; }
 .hm-chat-msg.user { align-self: flex-end; max-width: 88%; background: var(--hm-acc-bg); color: #cfc8fb; }
 .hm-chat-msg.assistant { align-self: flex-start; max-width: 100%; background: var(--hm-surf2); color: var(--hm-tx); }
