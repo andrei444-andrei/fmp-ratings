@@ -1,9 +1,5 @@
-import PipelineRunner from './PipelineRunner';
+import { redirect } from 'next/navigation';
 
 export default function Home() {
-  return (
-    <main>
-      <PipelineRunner />
-    </main>
-  );
+  redirect('/heatmap');
 }

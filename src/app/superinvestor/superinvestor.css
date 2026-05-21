@@ -29,9 +29,9 @@
   background: var(--hm-bg);
   color: var(--hm-tx);
   padding: 14px 14px 80px;
-  margin-top: -28px;
-  margin-bottom: -28px;
-  min-height: calc(100vh + 56px);
+  margin-top: 0;
+  margin-bottom: 0;
+  min-height: 100vh;
   font-size: 14px;
 }
 .si-root * { box-sizing: border-box; }

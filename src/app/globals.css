@@ -2,29 +2,115 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ===== Единая тёмная тема приложения (язык dark-terminal, как /heatmap) ===== */
+:root {
+  --app-bg: #0a0b0e;
+  --app-bg2: #101218;
+  --app-surf: #14161d;
+  --app-surf2: #1a1d26;
+  --app-line: rgba(255, 255, 255, .08);
+  --app-line2: rgba(255, 255, 255, .14);
+  --app-tx: #e9eaed;
+  --app-tx2: #9aa0ad;
+  --app-tx3: #5d6470;
+  --app-acc: #7c6cf0;
+  --app-acc-2: #b3a8ff;
+  --app-acc-bg: rgba(124, 108, 240, .14);
+  --app-acc-bd: rgba(124, 108, 240, .5);
+  --app-pos: #34d399;
+  --app-neg: #f4626a;
+  --app-rad: 9px;
+  --app-rad-lg: 14px;
+  --app-mono: ui-monospace, SFMono-Regular, Menlo, "Roboto Mono", Consolas, monospace;
+}
+
 @layer base {
+  html { background: var(--app-bg); }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--app-bg);
+    color: var(--app-tx);
   }
 }
 
-@layer components {
-  .card {
-    @apply border border-neutral-200 rounded-lg p-4 bg-white shadow-sm mb-4;
-  }
-  .btn {
-    @apply px-3 py-1.5 rounded border border-neutral-400 bg-white hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed text-sm;
-  }
-  .btn-primary {
-    @apply px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-sm;
-  }
-  .input {
-    @apply border border-neutral-300 rounded px-2 py-1 text-sm;
-  }
-  .log {
-    @apply bg-neutral-900 text-neutral-200 rounded p-3 text-xs font-mono whitespace-pre-wrap overflow-y-auto max-h-72;
-  }
-  .label {
-    @apply text-xs text-neutral-600;
-  }
+/* ===== Верхняя панель ===== */
+.app-nav {
+  position: sticky; top: 0; z-index: 50;
+  background: rgba(10, 11, 14, .78);
+  backdrop-filter: saturate(140%) blur(12px);
+  -webkit-backdrop-filter: saturate(140%) blur(12px);
+  border-bottom: .5px solid var(--app-line);
 }
+.app-nav-in {
+  max-width: 1320px; margin: 0 auto;
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px;
+}
+.app-brand { display: inline-flex; align-items: center; margin-right: 4px; }
+.app-brand-dot {
+  width: 18px; height: 18px; border-radius: 6px;
+  background: linear-gradient(135deg, var(--app-acc), var(--app-acc-2));
+  box-shadow: 0 0 0 1px rgba(124, 108, 240, .4), 0 4px 14px rgba(124, 108, 240, .45);
+}
+.app-nav-links { display: flex; gap: 3px; align-items: center; flex-wrap: wrap; }
+.app-nav .app-nav-link {
+  font-size: 13px; color: var(--app-tx2); text-decoration: none;
+  padding: 6px 12px; border-radius: 99px; white-space: nowrap;
+  transition: color .12s, background .12s;
+}
+.app-nav .app-nav-link:hover { color: var(--app-tx); background: rgba(255, 255, 255, .05); }
+.app-nav .app-nav-link.active { color: #cfc8fb; background: var(--app-acc-bg); }
+.app-nav .app-nav-gh {
+  margin-left: auto; font-size: 12px; color: var(--app-tx3);
+  text-decoration: none; padding: 6px 10px; border-radius: 8px; white-space: nowrap;
+}
+.app-nav .app-nav-gh:hover { color: var(--app-tx2); }
+
+/* ===== Контейнер контента (страницы heatmap/superinvestor сами уходят на 100vw) ===== */
+.app-shell { max-width: 1320px; margin: 0 auto; padding: 22px 16px 64px; }
+.app-shell h1, .app-shell h2 { color: var(--app-tx); }
+
+/* ===== Общие компоненты (тёмные) ===== */
+.card {
+  background: var(--app-surf); border: .5px solid var(--app-line);
+  border-radius: var(--app-rad-lg); padding: 16px; margin-bottom: 16px;
+}
+.btn {
+  background: transparent; border: .5px solid var(--app-line2); color: var(--app-tx2);
+  font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 8px; cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.btn:hover { background: var(--app-surf2); color: var(--app-tx); }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn-primary {
+  background: var(--app-acc-bg); border: .5px solid var(--app-acc-bd); color: #cfc8fb;
+  font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 8px; cursor: pointer;
+  transition: background .12s;
+}
+.btn-primary:hover { background: rgba(124, 108, 240, .24); }
+.btn-primary:disabled { opacity: .4; cursor: not-allowed; }
+.input {
+  background: var(--app-bg2); border: .5px solid var(--app-line2); color: var(--app-tx);
+  font: inherit; font-size: 13px; padding: 7px 9px; border-radius: var(--app-rad);
+}
+.input:focus { outline: none; border-color: var(--app-acc-bd); }
+.label { font-size: 11px; color: var(--app-tx3); text-transform: uppercase; letter-spacing: .5px; }
+.log {
+  background: #0d0f14; color: #cdd2db; border: .5px solid var(--app-line);
+  border-radius: var(--app-rad); padding: 12px; font-size: 12px;
+  font-family: var(--app-mono); white-space: pre-wrap; overflow-y: auto; max-height: 18rem;
+}
+
+/* ===== Тёмная адаптация легаси Tailwind-утилит на админ-страницах ===== */
+.app-shell *, .app-shell *::before, .app-shell *::after { border-color: var(--app-line); }
+.app-shell .bg-white { background: var(--app-surf) !important; }
+.app-shell .bg-neutral-100 { background: var(--app-surf2) !important; }
+.app-shell .bg-neutral-50, .app-shell .hover\:bg-neutral-50:hover { background: rgba(255, 255, 255, .04) !important; }
+.app-shell .bg-neutral-900 { background: #0d0f14 !important; }
+.app-shell .text-neutral-100 { color: var(--app-tx) !important; }
+.app-shell .text-neutral-500, .app-shell .text-neutral-600 { color: var(--app-tx2) !important; }
+.app-shell .text-neutral-700 { color: #c4c8d0 !important; }
+.app-shell .text-blue-600, .app-shell .text-blue-700 { color: #cfc8fb !important; }
+.app-shell .text-red-600, .app-shell .text-red-700 { color: var(--app-neg) !important; }
+.app-shell .bg-red-50 { background: rgba(244, 98, 106, .12) !important; }
+.app-shell .border { border-color: var(--app-line2) !important; }
