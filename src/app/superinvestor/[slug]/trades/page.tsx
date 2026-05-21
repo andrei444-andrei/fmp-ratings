@@ -26,7 +26,13 @@ export default function TradesPage() {
 
   const trades = data?.closedTrades || [];
   const tradeYears = useMemo(() => Array.from(new Set(trades.map(t => t.year))).sort((a, b) => b - a), [trades]);
-  const clamp = useMemo(() => Math.max(0.15, ...trades.map(t => Math.abs(t.alphaPct) / 100)), [trades]);
+  // 90-й перцентиль |α| с потолком — устойчиво к выбросам.
+  const clamp = useMemo(() => {
+    const a = trades.map(t => Math.abs(t.alphaPct) / 100).filter(x => isFinite(x)).sort((x, y) => x - y);
+    if (!a.length) return 0.5;
+    const p90 = a[Math.floor(a.length * 0.9)] ?? a[a.length - 1];
+    return Math.min(8, Math.max(0.15, p90));
+  }, [trades]);
 
   const visible = useMemo(() => {
     let f = trades;

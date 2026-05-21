@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllInvestors } from '@/lib/superinvestor/investors-store';
-import { buildLeaderboardRow, resolveWindow } from '@/lib/superinvestor/service';
+import { buildLeaderboardRow, resolveWindow, rowKey } from '@/lib/superinvestor/service';
 import { siCacheGet } from '@/lib/superinvestor/cache';
 import type { LeaderboardRow } from '@/lib/superinvestor/types';
 
@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
     let firstErr: string | undefined;
 
     for (const inv of investors) {
-      const cached = await siCacheGet<LeaderboardRow>(`row|${inv.slug}|${win.from}|${win.to}`);
+      const cached = await siCacheGet<LeaderboardRow>(rowKey(inv.slug, win));
       if (cached) { rows.push(cached); continue; }
       if (Date.now() - start > budgetMs) { pending.push(inv.slug); continue; }
       try {
