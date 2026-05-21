@@ -133,7 +133,7 @@ function gradesActionColor(action?: string): string {
 export default function HeatmapPage() {
   // ===== Настройки =====
   const [tickersInput, setTickersInput] = useState(DEFAULT_TICKERS);
-  const [fromDate, setFromDate] = useState('2010-01-01');
+  const [fromDate, setFromDate] = useState('2020-01-01');
   const [toDate, setToDate] = useState(todayIso());
   const [clampPct, setClampPct] = useState(3);
   const [fetchGrades] = useState(false);
@@ -555,8 +555,8 @@ export default function HeatmapPage() {
       } catch {}
 
       // 2. По умолчанию: тикеры из наборов БД (сектора + страны + доп.),
-      //    диапазон — с 2010 года. localStorage НЕ используется (детерминированный дефолт).
-      const f = '2010-01-01', t = todayIso();
+      //    диапазон — с 2020 года. localStorage НЕ используется (детерминированный дефолт).
+      const f = '2020-01-01', t = todayIso();
       const tk = [...sectors, ...countries, ...extra].join(',') || DEFAULT_TICKERS;
       setTickersInput(tk);
       setFromDate(f);
