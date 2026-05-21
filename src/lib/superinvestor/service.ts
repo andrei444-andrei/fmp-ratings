@@ -19,6 +19,16 @@ export const DEFAULT_BACKTEST: BacktestConfig[] = [
   { delayDays: 10, minWeight: 0 },
 ];
 
+// Версия вычисляемого кэша. Бамп инвалидирует старые detail/row (после фикса формулы):
+// старый ключ становится промахом и payload пересчитывается заново.
+const CV = 'v2';
+export function detailKey(slug: string, win: { from: string; to: string }): string {
+  return `detail|${CV}|${slug}|${win.from}|${win.to}`;
+}
+export function rowKey(slug: string, win: { from: string; to: string }): string {
+  return `row|${CV}|${slug}|${win.from}|${win.to}`;
+}
+
 export function defaultWindow(years = 3): { from: string; to: string } {
   const to = new Date();
   const from = new Date();
@@ -105,7 +115,7 @@ export async function buildInvestorDetail(slug: string, win: { from: string; to:
   if (!investor) return null;
   const { from, to } = win;
 
-  const cacheKey = `detail|${slug}|${from}|${to}`;
+  const cacheKey = detailKey(slug, win);
   const cached = await siCacheGet<InvestorDetail>(cacheKey);
   if (cached) return cached;
 
@@ -115,11 +125,21 @@ export async function buildInvestorDetail(slug: string, win: { from: string; to:
     .sort((a, b) => a.date.localeCompare(b.date));
   if (!periods.length) return null;
 
-  // 2. Холдинги по кварталам.
-  const quartersRaw = await mapLimit(periods, 4, p => getQuarter(investor.cik, p.year, p.quarter));
+  // 2. Холдинги по кварталам. Ошибки фетча (троттлинг) считаем отдельно — частичный
+  //    успех используем, но при полном провале с ошибками бросаем понятную ошибку,
+  //    а не выдаём ложное «нет данных».
+  let fetchErrors = 0;
+  let lastErr: string | undefined;
+  const quartersRaw = await mapLimit(periods, 4, async p => {
+    try { return await getQuarter(investor.cik, p.year, p.quarter); }
+    catch (e: any) { fetchErrors++; lastErr = e?.message || String(e); return null; }
+  });
   const quarters = quartersRaw.filter((q): q is QuarterHoldings => !!q && q.holdings.length > 0)
     .sort((a, b) => a.filingDate.localeCompare(b.filingDate));
-  if (!quarters.length) return null;
+  if (!quarters.length) {
+    if (fetchErrors > 0) throw new Error(lastErr || 'FMP временно недоступен (лимит запросов?)');
+    return null;
+  }
 
   // 3. Цены для объединения символов + SPY.
   const symbols = Array.from(new Set(quarters.flatMap(q => q.holdings.map(h => h.symbol))));
@@ -146,8 +166,8 @@ export async function buildInvestorDetail(slug: string, win: { from: string; to:
 
 // Строка лидерборда (кэш отдельно — без тяжёлой матрицы цен).
 export async function buildLeaderboardRow(slug: string, win: { from: string; to: string }): Promise<LeaderboardRow | null> {
-  const rowKey = `row|${slug}|${win.from}|${win.to}`;
-  const cachedRow = await siCacheGet<LeaderboardRow>(rowKey);
+  const key = rowKey(slug, win);
+  const cachedRow = await siCacheGet<LeaderboardRow>(key);
   if (cachedRow) return cachedRow;
 
   const detail = await buildInvestorDetail(slug, win);
@@ -171,6 +191,6 @@ export async function buildLeaderboardRow(slug: string, win: { from: string; to:
     openPositions: detail.kpis.openPositions,
     topHoldings,
   };
-  await siCacheSet(rowKey, win.to, row);
+  await siCacheSet(key, win.to, row);
   return row;
 }
