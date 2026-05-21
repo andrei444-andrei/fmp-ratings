@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { TickerText } from '@/lib/ticker-linkify';
 
 type Msg = { role: 'user' | 'assistant'; content: string; citations?: string[] };
 
@@ -43,7 +44,7 @@ function Rendered({ text }: { text: string }) {
       {blocks.map((b, i) =>
         b.type === 'h'
           ? <div key={i} className="tk-ai-h">{b.text}</div>
-          : <p key={i} className="si-ai-p">{b.text}</p>
+          : <p key={i} className="si-ai-p"><TickerText text={b.text} /></p>
       )}
     </>
   );

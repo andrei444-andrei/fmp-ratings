@@ -24,6 +24,19 @@
   --app-mono: ui-monospace, SFMono-Regular, Menlo, "Roboto Mono", Consolas, monospace;
 }
 
+/* Тикер-ссылки внутри AI-текста (см. lib/ticker-linkify) */
+.tk-link {
+  color: var(--app-acc-2);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--app-acc-bd);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.tk-link:hover {
+  color: #fff;
+  border-bottom-color: var(--app-acc-2);
+}
+
 @layer base {
   html { background: var(--app-bg); }
   body {
