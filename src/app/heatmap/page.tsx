@@ -7,6 +7,7 @@ import {
 } from '@/lib/market-events';
 import './heatmap.css';
 import DatePicker from '@/components/DatePicker';
+import DayChat from './DayChat';
 
 // ===== Типы =====
 type PricesBySymbol = Record<string, Record<string, number>>;
@@ -135,7 +136,6 @@ export default function HeatmapPage() {
   const [fromDate, setFromDate] = useState('2010-01-01');
   const [toDate, setToDate] = useState(todayIso());
   const [clampPct, setClampPct] = useState(3);
-  const [clampPctAnchor, setClampPctAnchor] = useState(10);
   const [fetchGrades] = useState(false);
 
   // ===== Данные =====
@@ -149,8 +149,6 @@ export default function HeatmapPage() {
   // ===== UI-состояние =====
   const [drawer, setDrawer] = useState(false);
   const [sortByCum, setSortByCum] = useState(false);
-  const [anchorDate, setAnchorDate] = useState<string | null>(null);
-  const [analysisWindow, setAnalysisWindow] = useState<'1' | '5' | '10' | 'all'>('all');
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [hover, setHover] = useState<{ x: number; y: number; sym: string; date: string } | null>(null);
   // Активные категории-фильтры для ленты и подсветки (по умолчанию — все).
@@ -196,13 +194,6 @@ export default function HeatmapPage() {
       document.body.classList.remove('hm-dark-body');
     };
   }, []);
-
-  // Если якорь оказался вне нового диапазона — снять
-  useEffect(() => {
-    if (anchorDate && (anchorDate < fromDate || anchorDate > toDate)) {
-      setAnchorDate(null);
-    }
-  }, [fromDate, toDate, anchorDate]);
 
   // ===== Важные даты (localStorage) =====
   useEffect(() => {
@@ -274,39 +265,25 @@ export default function HeatmapPage() {
     return Array.from(set).sort();
   }, [prices, loadedTickers, fromDate, toDate]);
 
-  const mode: 'daily' | 'cumulative' = anchorDate ? 'cumulative' : 'daily';
-  const clamp = (mode === 'cumulative') ? clampPctAnchor / 100 : clampPct / 100;
+  const clamp = clampPct / 100;
 
-  // Матрица значений: дневная или накопленная от якоря; null для дат до якоря и вне окна.
+  // Матрица дневных изменений (день/день); null там, где нет соседних цен.
   const matrix = useMemo(() => {
     const out: Record<string, (number | null)[]> = {};
-    const win = analysisWindow === 'all' ? 99999 : parseInt(analysisWindow, 10);
     for (const sym of loadedTickers) {
       const row: (number | null)[] = [];
       const m = prices[sym] || {};
-      if (mode === 'cumulative' && anchorDate) {
-        const ap = m[anchorDate];
-        const anchorIdx = tradingDates.indexOf(anchorDate);
-        for (let i = 0; i < tradingDates.length; i++) {
-          const d = tradingDates[i];
-          if (i < anchorIdx || !ap || !m[d]) { row.push(null); continue; }
-          const k = i - anchorIdx;
-          if (k > win) { row.push(null); continue; }
-          row.push(m[d] / ap - 1);
-        }
-      } else {
-        let prev: number | null = null;
-        for (let i = 0; i < tradingDates.length; i++) {
-          const p = m[tradingDates[i]] ?? null;
-          if (p != null && prev != null) row.push(p / prev - 1);
-          else row.push(null);
-          if (p != null) prev = p;
-        }
+      let prev: number | null = null;
+      for (let i = 0; i < tradingDates.length; i++) {
+        const p = m[tradingDates[i]] ?? null;
+        if (p != null && prev != null) row.push(p / prev - 1);
+        else row.push(null);
+        if (p != null) prev = p;
       }
       out[sym] = row;
     }
     return out;
-  }, [prices, loadedTickers, tradingDates, anchorDate, mode, analysisWindow]);
+  }, [prices, loadedTickers, tradingDates]);
 
   // Кумулятивная доходность по тикеру за весь видимый период (без учёта окна)
   const tickerCum = useMemo(() => {
@@ -321,28 +298,7 @@ export default function HeatmapPage() {
     return out;
   }, [prices, loadedTickers, tradingDates]);
 
-  // Кумулятив от якоря на последнюю дату окна — для KPI
-  const tickerCumFromAnchor = useMemo(() => {
-    const out: Record<string, number> = {};
-    if (!anchorDate) return out;
-    const win = analysisWindow === 'all' ? 99999 : parseInt(analysisWindow, 10);
-    const anchorIdx = tradingDates.indexOf(anchorDate);
-    if (anchorIdx < 0) return out;
-    const endIdx = Math.min(tradingDates.length - 1, anchorIdx + win);
-    for (const sym of loadedTickers) {
-      const m = prices[sym] || {};
-      const ap = m[anchorDate];
-      let lastVal = 0;
-      for (let i = anchorIdx; i <= endIdx; i++) {
-        const p = m[tradingDates[i]];
-        if (p != null && ap) lastVal = p / ap - 1;
-      }
-      out[sym] = lastVal;
-    }
-    return out;
-  }, [prices, loadedTickers, tradingDates, anchorDate, analysisWindow]);
-
-  const activeCum = anchorDate ? tickerCumFromAnchor : tickerCum;
+  const activeCum = tickerCum;
 
   const orderedTickers = useMemo(() => {
     if (!sortByCum) return loadedTickers;
@@ -524,7 +480,6 @@ export default function HeatmapPage() {
     setLoading(true);
     setError(null);
     setStatus('Загрузка…');
-    setAnchorDate(null);
     try {
       const qs = new URLSearchParams({
         tickers: tickersArr.join(','), from, to, grades: fetchGrades ? '1' : '0',
@@ -661,7 +616,7 @@ export default function HeatmapPage() {
 
 
   // Привязка к ближайшему торговому дню (события часто на выходных/праздниках,
-  // где нет цены — иначе накопленная доходность не считается).
+  // где нет цены).
   function snapToTradingDay(date: string): string {
     if (!tradingDates.length || tradingDates.includes(date)) return date;
     const after = tradingDates.find(d => d >= date);
@@ -676,10 +631,20 @@ export default function HeatmapPage() {
     setSelectedDate(prev => (prev === d ? null : d));
   }
 
-  // Клик по самой дате — вкл/выкл накопленную доходность от этой даты (якорь).
-  function toggleAnchorDate(date: string) {
-    const snapped = snapToTradingDay(date);
-    setAnchorDate(prev => (prev === snapped ? null : snapped));
+  // Текст новостей дня для контекста AI-чата (курированные события + AI-новости).
+  function buildDayNewsText(date: string): string {
+    const lines: string[] = [];
+    for (const e of eventsMap[date] || []) {
+      lines.push(`• ${e.title}${e.description ? ` — ${e.description}` : ''}`);
+    }
+    const n = aiNews[date];
+    for (const it of n?.eventItems || []) {
+      lines.push(`• ${it.title}${it.description ? ` — ${it.description}` : ''}`);
+    }
+    for (const it of n?.items || []) {
+      lines.push(`• ${it.title}${it.description ? ` — ${it.description}` : ''}${it.source ? ` (${it.source})` : ''}`);
+    }
+    return lines.join('\n');
   }
 
   // ===== Popup =====
@@ -717,19 +682,17 @@ export default function HeatmapPage() {
     const idx = tradingDates.indexOf(hover.date);
     const v = matrix[hover.sym]?.[idx];
     const evs = eventsMap[hover.date] || [];
-    const dfa = anchorDate && idx >= 0
-      ? Math.max(0, idx - tradingDates.indexOf(anchorDate)) : null;
     tip.innerHTML =
-      `<b>${hover.sym}</b> · ${hover.date}${dfa != null ? ` · T+${dfa}` : ''}<br>` +
+      `<b>${hover.sym}</b> · ${hover.date}<br>` +
       `close: ${price != null ? price.toFixed(2) : '—'}` +
-      `<br>${mode === 'cumulative' ? 'от якоря' : 'день/день'}: <b>${fmtPct(v ?? null, 2)}</b>` +
+      `<br>день/день: <b>${fmtPct(v ?? null, 2)}</b>` +
       (evs.length ? '<br>' + evs.map(e =>
         `<span style="color:${EVENT_COLORS[e.category]}">●</span> ${e.title}`
       ).join('<br>') : '');
     tip.style.left = (hover.x + 14) + 'px';
     tip.style.top = (hover.y + 14) + 'px';
     tip.style.opacity = '1';
-  }, [hover, prices, matrix, tradingDates, anchorDate, mode, eventsMap]);
+  }, [hover, prices, matrix, tradingDates, eventsMap]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -742,18 +705,11 @@ export default function HeatmapPage() {
   // Скролл к концу при первой загрузке
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (tradingDates.length && scrollRef.current && !anchorDate) {
+    if (tradingDates.length && scrollRef.current) {
       scrollRef.current.scrollLeft = scrollRef.current.scrollWidth;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tradingDates.length]);
-
-  // Доскролл к колонке-якорю при его установке.
-  useEffect(() => {
-    if (!anchorDate || !scrollRef.current) return;
-    const el = scrollRef.current.querySelector('th[data-anchor="1"]') as HTMLElement | null;
-    el?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
-  }, [anchorDate]);
 
   // ===== Рендер =====
   const tickersSummary = tickers.length <= 3
@@ -826,39 +782,8 @@ export default function HeatmapPage() {
               <input type="number" value={clampPct} min={0.5} step={0.5}
                 onChange={e => setClampPct(parseFloat(e.target.value) || 3)} />
             </div>
-            <div className="hm-fld">
-              <label>Шкала ±% от якоря</label>
-              <input type="number" value={clampPctAnchor} min={1} step={1}
-                onChange={e => setClampPctAnchor(parseFloat(e.target.value) || 10)} />
-            </div>
           </div>
         </div>
-
-        {/* Control row — только в режиме якоря */}
-        {tradingDates.length > 0 && anchorDate && (
-          <div className="hm-ctl">
-            <>
-                <div className="hm-winseg">
-                  {(['1', '5', '10', 'all'] as const).map(w => (
-                    <button key={w}
-                      className={analysisWindow === w ? 'on' : ''}
-                      onClick={() => setAnalysisWindow(w)}>
-                      {w === 'all' ? 'Весь след.' : `+${w}д`}
-                    </button>
-                  ))}
-                </div>
-                <span className="hm-mode">
-                  Якорь: <b>{anchorDate}</b>
-                  {eventsMap[anchorDate] && (
-                    <span style={{ color: 'var(--hm-tx2)', marginLeft: 6 }}>
-                      — {eventsMap[anchorDate][0].title}
-                    </span>
-                  )}
-                </span>
-                <button className="hm-ghost" onClick={() => setAnchorDate(null)}>✕ Снять якорь</button>
-            </>
-          </div>
-        )}
 
         {/* Stage: heatmap + лента новостей */}
         {!tradingDates.length ? (
@@ -871,18 +796,18 @@ export default function HeatmapPage() {
           {kpi && (
             <div className="hm-kpis">
               <div className="hm-kpi">
-                <div className="k">{anchorDate ? 'Сильнее на событие' : 'Лидер периода'}</div>
+                <div className="k">Лидер периода</div>
                 <div className="v" style={{ color: kpi.leader.c >= 0 ? 'var(--hm-pos)' : 'var(--hm-neg)' }}>
                   {kpi.leader.t} {fmtPct(kpi.leader.c, 1)}
                 </div>
-                <div className="vsub">{anchorDate ? `с ${anchorDate}` : 'весь период'}</div>
+                <div className="vsub">весь период</div>
               </div>
               <div className="hm-kpi">
-                <div className="k">{anchorDate ? 'Слабее на событие' : 'Аутсайдер периода'}</div>
+                <div className="k">Аутсайдер периода</div>
                 <div className="v" style={{ color: kpi.outsider.c >= 0 ? 'var(--hm-pos)' : 'var(--hm-neg)' }}>
                   {kpi.outsider.t} {fmtPct(kpi.outsider.c, 1)}
                 </div>
-                <div className="vsub">{anchorDate ? `с ${anchorDate}` : 'весь период'}</div>
+                <div className="vsub">весь период</div>
               </div>
               <div className="hm-kpi">
                 <div className="k">Разброс реакции</div>
@@ -899,15 +824,14 @@ export default function HeatmapPage() {
                   {tradingDates.map(d => {
                     const evs = eventsMap[d];
                     const imp = importantDays.has(d);
-                    const isAnchor = anchorDate === d;
                     const hot = hotDays.has(d);
                     const sel = selectedDate === d;
                     return (
-                      <th key={d} data-anchor={isAnchor ? '1' : undefined}>
+                      <th key={d}>
                         <div
-                          className={`hm-dh ${isAnchor ? 'anchor' : ''} ${imp ? 'imp' : ''} ${hot ? 'hot' : ''} ${sel ? 'sel' : ''} ${aiMarkerDates.has(d) ? 'aimark' : ''} ${hoverPhaseDate === d ? 'aimark-hot' : ''}`}
+                          className={`hm-dh ${imp ? 'imp' : ''} ${hot ? 'hot' : ''} ${sel ? 'sel' : ''} ${aiMarkerDates.has(d) ? 'aimark' : ''} ${hoverPhaseDate === d ? 'aimark-hot' : ''}`}
                           onClick={() => selectDay(d)}
-                          title={`${d} (${weekdayShort(d)})\nКлик по числу — накопленная с этой даты${evs ? '\n' + evs.map(e => e.title).join('\n') : ''}`}
+                          title={`${d} (${weekdayShort(d)})\nКлик — новости дня${evs ? '\n' + evs.map(e => e.title).join('\n') : ''}`}
                         >
                           <div className="hm-lane">
                             {imp && <span className="st">★</span>}
@@ -915,9 +839,7 @@ export default function HeatmapPage() {
                               <span key={i} className="ev" style={{ background: EVENT_COLORS[e.category] }} />
                             ))}
                           </div>
-                          <div className="dt"
-                            title="Накопленная доходность от этой даты"
-                            onClick={e => { e.stopPropagation(); toggleAnchorDate(d); }}>
+                          <div className="dt">
                             {d.slice(8, 10)}
                             <span style={{ color: 'inherit', opacity: .55, marginLeft: 2 }}>
                               {monthShort(parseInt(d.slice(5, 7), 10) - 1).slice(0, 3).toLowerCase()}
@@ -957,9 +879,8 @@ export default function HeatmapPage() {
                       {tradingDates.map((d, i) => {
                         const v = row[i];
                         const imp = importantDays.has(d);
-                        const isAnchor = anchorDate === d;
                         const gItems = gMap[d];
-                        const cls = `${imp ? 'impcol ' : ''}${isAnchor ? 'anchorcol ' : ''}${selectedDate === d ? 'selcol ' : ''}${hotDays.has(d) ? 'hotcol ' : ''}${aiMarkerDates.has(d) ? 'aimarkcol ' : ''}${hoverPhaseDate === d ? 'aimarkcol-hot ' : ''}${gItems?.length ? 'hm-cell-grade ' : ''}`;
+                        const cls = `${imp ? 'impcol ' : ''}${selectedDate === d ? 'selcol ' : ''}${hotDays.has(d) ? 'hotcol ' : ''}${aiMarkerDates.has(d) ? 'aimarkcol ' : ''}${hoverPhaseDate === d ? 'aimarkcol-hot ' : ''}${gItems?.length ? 'hm-cell-grade ' : ''}`;
                         return (
                           <td
                             key={d}
@@ -1100,11 +1021,7 @@ export default function HeatmapPage() {
                     >
                       <div className="hm-ai-card-h">
                         <span className="ph" style={{ color: meta.color }}>{meta.label}</span>
-                        <span
-                          className={`dt clickable ${anchorDate === it.date ? 'on' : ''}`}
-                          title="Накопленная доходность от этой даты"
-                          onClick={e => { e.stopPropagation(); toggleAnchorDate(it.date); }}
-                        >{it.date}</span>
+                        <span className="dt">{it.date}</span>
                       </div>
                       <div className="hm-ai-card-t">{it.title}</div>
                       {it.description && <div className="hm-ai-card-d">{it.description}</div>}
@@ -1199,11 +1116,7 @@ export default function HeatmapPage() {
             <div className="hm-pop-h">
               <div>
                 <div className="d">
-                  <span
-                    className={`hm-d-clickable ${anchorDate === selectedDate ? 'on' : ''}`}
-                    title="Накопленная доходность от этой даты"
-                    onClick={() => toggleAnchorDate(selectedDate)}
-                  >{selectedDate}</span>
+                  <span>{selectedDate}</span>
                   <span style={{ fontSize: 12, color: 'var(--hm-tx3)', fontWeight: 400 }}> · {weekdayShort(selectedDate)}</span>
                 </div>
                 {eventsMap[selectedDate]?.length ? (
@@ -1372,6 +1285,9 @@ export default function HeatmapPage() {
                   </div>
                 );
               })()}
+
+              {/* AI-чат по контексту выбранного дня */}
+              <DayChat key={selectedDate} date={selectedDate} news={buildDayNewsText(selectedDate)} />
             </div>
             </div>
           )}

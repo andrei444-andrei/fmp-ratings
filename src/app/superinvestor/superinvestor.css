@@ -204,4 +204,5 @@
   .si-root { padding: 12px 10px 60px; }
   .si-invhead .nm { font-size: 18px; }
   .si-aum .v { font-size: 20px; }
+  .si-ai { max-height: none; }
 }

@@ -95,17 +95,6 @@
 .hm-drawer-full { grid-column: 1 / -1; }
 .hm-drawer-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 
-.hm-ctl { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-  margin-bottom: 12px; font-size: 12.5px; }
-.hm-winseg { display: inline-flex; background: var(--hm-surf);
-  border: .5px solid var(--hm-line); border-radius: var(--hm-rad); overflow: hidden; }
-.hm-winseg button { background: transparent; border: 0; color: var(--hm-tx2);
-  font: inherit; font-size: 12px; padding: 6px 12px; cursor: pointer;
-  border-right: .5px solid var(--hm-line); }
-.hm-winseg button:last-child { border-right: 0; }
-.hm-winseg button.on { background: var(--hm-acc-bg); color: #cfc8fb; }
-.hm-mode { color: var(--hm-tx2); }
-.hm-mode b { color: var(--hm-acc); }
 
 .hm-kpis { display: grid; gap: 10px; margin-bottom: 16px;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
@@ -137,20 +126,17 @@
 .hm-dh { padding: 4px 1px 5px; cursor: pointer; transition: background .12s;
   border-radius: 6px 6px 0 0; min-width: 36px; }
 .hm-dh:hover { background: var(--hm-surf2); }
-.hm-dh.anchor { background: var(--hm-acc-bg); }
 .hm-dh.imp { background: var(--hm-imp-bg); }
 .hm-lane { height: 14px; display: flex; align-items: center; justify-content: center;
   gap: 2px; margin-bottom: 1px; }
 .hm-lane .ev { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 6px; }
 .hm-lane .st { color: var(--hm-imp); font-size: 10px; line-height: 1; }
 .hm-dh .dt { font-size: 10px; color: var(--hm-tx3); }
-.hm-dh.anchor .dt { color: #cfc8fb; }
 .hm-dh.imp .dt { color: var(--hm-imp); }
 
 .hm-table td { text-align: center; padding: 6px 1px;
   border-bottom: .5px solid rgba(255, 255, 255, .04); }
 .hm-table td.impcol { box-shadow: inset 2px 0 0 -1px rgba(245, 181, 61, .55); }
-.hm-table td.anchorcol { border-left: 1.5px solid var(--hm-acc); }
 .hm-table tr.dim td:not(.tk) { opacity: .28; }
 .hm-table tr:hover td { opacity: 1; }
 .hm-cell-grade { position: relative; }
@@ -442,12 +428,6 @@
 .hm-ai-card-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .hm-ai-card-h .ph { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
 .hm-ai-card-h .dt { font-size: 11px; font-family: var(--hm-mono); color: var(--hm-tx3); }
-.hm-ai-card-h .dt.clickable { cursor: pointer; border-bottom: 1px dashed var(--hm-tx3); }
-.hm-ai-card-h .dt.clickable:hover { color: var(--hm-acc); border-bottom-color: var(--hm-acc); }
-.hm-ai-card-h .dt.clickable.on { color: #cfc8fb; border-bottom: 1px solid var(--hm-acc); }
-.hm-d-clickable { cursor: pointer; border-bottom: 1px dashed var(--hm-tx3); }
-.hm-d-clickable:hover { color: var(--hm-acc); border-bottom-color: var(--hm-acc); }
-.hm-d-clickable.on { color: #cfc8fb; border-bottom: 1px solid var(--hm-acc); }
 .hm-ai-card-t { font-size: 13px; font-weight: 600; margin-top: 6px; line-height: 1.35; }
 .hm-ai-card-d { font-size: 12px; color: var(--hm-tx2); margin-top: 5px; line-height: 1.45; }
 .hm-ai-src { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
@@ -463,6 +443,22 @@
 .hm-dh.aimark-hot { background: var(--hm-acc-bg); }
 .hm-table td.aimarkcol { box-shadow: inset 2px 0 0 -1px var(--hm-acc-bd); }
 .hm-table td.aimarkcol-hot { outline: 1.5px solid var(--hm-acc); outline-offset: -1.5px; }
+
+/* AI-чат по дню */
+.hm-chat { margin-top: 18px; padding-top: 14px; border-top: .5px solid var(--hm-line); }
+.hm-chat-body { display: flex; flex-direction: column; gap: 10px; margin: 10px 0; }
+.hm-chat-msg { font-size: 12.5px; line-height: 1.5; border-radius: var(--hm-rad); padding: 9px 11px; }
+.hm-chat-msg.user { align-self: flex-end; max-width: 88%; background: var(--hm-acc-bg); color: #cfc8fb; }
+.hm-chat-msg.assistant { align-self: flex-start; max-width: 100%; background: var(--hm-surf2); color: var(--hm-tx); }
+.hm-chat-p { margin: 0 0 6px; }
+.hm-chat-p:last-child { margin-bottom: 0; }
+.hm-chat-input-row { display: flex; gap: 8px; align-items: flex-end; margin-top: 8px; }
+.hm-chat-input {
+  flex: 1; resize: none; min-height: 38px; max-height: 140px;
+  background: var(--hm-bg2); border: .5px solid var(--hm-line2); color: var(--hm-tx);
+  border-radius: var(--hm-rad); padding: 9px 11px; font: inherit; font-size: 12.5px; line-height: 1.4;
+}
+.hm-chat-input:focus { outline: none; border-color: var(--hm-acc-bd); }
 
 .hm-root ::-webkit-scrollbar { height: 9px; width: 9px; }
 .hm-root ::-webkit-scrollbar-thumb { background: var(--hm-line2); border-radius: 6px; }
