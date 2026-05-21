@@ -6,14 +6,16 @@ import { useInvestorDetail } from '../_components/useDetail';
 import LineChart from '../_components/LineChart';
 import { investorBySlug } from '@/lib/superinvestor/registry';
 import { INVESTOR_TYPE_LABEL } from '@/lib/superinvestor/types';
-import { pctP, pctFu, pctF, money, fixed, num } from '@/lib/superinvestor/format';
+import { PERIODS, type PeriodKey } from '@/lib/superinvestor/periods';
+import { pctP, pctFu, pctF, money, fixed } from '@/lib/superinvestor/format';
 
 export default function InvestorCardPage() {
   const params = useParams();
   const slug = String(params.slug || '');
   const inv = investorBySlug(slug);
-  const [years, setYears] = useState(3);
-  const { data, loading, error } = useInvestorDetail(slug, years, false);
+  const [period, setPeriod] = useState<PeriodKey>('3');
+  const { data, loading, error } = useInvestorDetail(slug, period, false);
+  const meta = data?.investor || inv;
 
   const k = data?.kpis;
   const curve = data?.equityCurve;
@@ -23,18 +25,18 @@ export default function InvestorCardPage() {
       <div className="si-invhead">
         <div>
           <div className="nm">
-            {inv?.name || slug}{' '}
-            {inv && <span className={`si-badge ${inv.type}`}>{INVESTOR_TYPE_LABEL[inv.type]}</span>}
+            {meta?.name || slug}{' '}
+            {meta && <span className={`si-badge ${meta.type}`}>{INVESTOR_TYPE_LABEL[meta.type]}</span>}
           </div>
-          <div className="fund">{inv?.fund} · CIK {inv?.cik}</div>
-          {inv?.blurb && <div className="blurb">{inv.blurb}</div>}
+          <div className="fund">{meta?.fund} · CIK {meta?.cik}</div>
+          {meta?.blurb && <div className="blurb">{meta.blurb}</div>}
         </div>
         <div className="si-aum">
           <div className="k">AUM (13F, последний квартал)</div>
           <div className="v">{data ? money(data.aum) : '—'}</div>
           <div className="si-seg" style={{ marginTop: 8 }}>
-            {[1, 3, 5].map(y => (
-              <button key={y} className={years === y ? 'on' : ''} onClick={() => setYears(y)}>{y}г</button>
+            {PERIODS.map(p => (
+              <button key={p.key} className={period === p.key ? 'on' : ''} onClick={() => setPeriod(p.key)}>{p.label}</button>
             ))}
           </div>
         </div>
@@ -74,7 +76,7 @@ export default function InvestorCardPage() {
                 <span style={{ color: 'var(--hm-acc)' }}>{pctP(k!.copyReturnPct)}</span>
                 <span className="si-mut"> / {pctP(k!.spyReturnPct)}</span>
               </div>
-              <div className="vsub">за {years}г</div>
+              <div className="vsub">за {data.window.from.slice(0, 4)}–{data.window.to.slice(0, 4)}</div>
             </div>
           </div>
 

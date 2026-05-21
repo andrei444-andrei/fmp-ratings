@@ -4,7 +4,7 @@
 import { fmpHistoricalPriceEod } from '@/lib/fmp';
 import { fmp13fDates, fmp13fHoldings } from './fmp13f';
 import { siCacheGet, siCacheSet } from './cache';
-import { investorBySlug } from './registry';
+import { getInvestorBySlugAsync } from './investors-store';
 import {
   copyEquityCurve, deriveTrades, computeKpis, buildHoldingsHeatmap, runBacktest,
 } from './compute';
@@ -24,6 +24,19 @@ export function defaultWindow(years = 3): { from: string; to: string } {
   const from = new Date();
   from.setFullYear(from.getFullYear() - years);
   return { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) };
+}
+
+// Окно из query: явный from (YYYY или YYYY-MM-DD) либо years (1..20, дефолт 3).
+export function resolveWindow(params: URLSearchParams): { from: string; to: string } {
+  const to = new Date().toISOString().slice(0, 10);
+  const fromRaw = (params.get('from') || '').trim();
+  if (fromRaw) {
+    const f = /^\d{4}$/.test(fromRaw) ? `${fromRaw}-01-01` : fromRaw;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(f) && f >= '2000-01-01' && f < to) return { from: f, to };
+  }
+  const yp = parseInt(params.get('years') || '3', 10);
+  const years = yp >= 1 && yp <= 20 ? yp : 3;
+  return defaultWindow(years);
 }
 
 // Параллельная загрузка с ограничением конкуренции.
@@ -88,7 +101,7 @@ async function getQuarter(cik: string, year: number, quarter: number): Promise<Q
 
 // Полная сводка инвестора. Кэшируется целиком (detail|slug|from|to).
 export async function buildInvestorDetail(slug: string, win: { from: string; to: string }): Promise<InvestorDetail | null> {
-  const investor = investorBySlug(slug);
+  const investor = await getInvestorBySlugAsync(slug);
   if (!investor) return null;
   const { from, to } = win;
 
