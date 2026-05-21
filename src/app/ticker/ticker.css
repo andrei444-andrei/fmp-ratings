@@ -53,7 +53,7 @@
 .tk-logo-ph {
   width: 40px; height: 40px; border-radius: 10px; flex: 0 0 40px; display: flex;
   align-items: center; justify-content: center; font-weight: 800; font-family: var(--hm-mono);
-  font-size: 15px; color: #cfc8fb; background: var(--hm-acc-bg); border: .5px solid var(--hm-acc-bd);
+  font-size: 15px; color: var(--hm-on-acc); background: var(--hm-acc-bg); border: .5px solid var(--hm-acc-bd);
 }
 .tk-sym { font-size: 26px; font-weight: 800; letter-spacing: -.3px; line-height: 1; }
 .tk-name { color: var(--hm-tx2); font-size: 14px; margin-top: 3px; }
@@ -102,7 +102,7 @@
   font-size: 12px; padding: 6px 12px; border-radius: 99px; cursor: pointer;
   border: .5px solid var(--hm-line); background: var(--hm-surf2); color: var(--hm-tx2);
 }
-.tk-evtab.on { background: var(--hm-acc-bg); color: #cfc8fb; border-color: var(--hm-acc-bd); }
+.tk-evtab.on { background: var(--hm-acc-bg); color: var(--hm-on-acc); border-color: var(--hm-acc-bd); }
 .tk-evtab .n { color: var(--hm-tx3); margin-left: 5px; font-family: var(--hm-mono); }
 
 .tk-evlist { display: flex; flex-direction: column; }

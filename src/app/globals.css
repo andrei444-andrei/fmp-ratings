@@ -19,9 +19,62 @@
   --app-acc-bd: rgba(124, 108, 240, .5);
   --app-pos: #34d399;
   --app-neg: #f4626a;
+  --app-nav-bg: rgba(10, 11, 14, .78);
+  --app-hover: rgba(255, 255, 255, .05);
+  --app-on-acc: #cfc8fb;
+  --app-log-bg: #0d0f14;
+  --app-log-tx: #cdd2db;
   --app-rad: 9px;
   --app-rad-lg: 14px;
   --app-mono: ui-monospace, SFMono-Regular, Menlo, "Roboto Mono", Consolas, monospace;
+}
+
+/* ===== Светлая тема: переопределяем только переменные ===== */
+:root[data-theme="light"] {
+  --app-bg: #f6f7f9;
+  --app-bg2: #ffffff;
+  --app-surf: #ffffff;
+  --app-surf2: #eef0f4;
+  --app-line: rgba(17, 20, 28, .10);
+  --app-line2: rgba(17, 20, 28, .16);
+  --app-tx: #1b1e26;
+  --app-tx2: #555c69;
+  --app-tx3: #878d99;
+  --app-acc: #6b5bf0;
+  --app-acc-2: #5849d6;
+  --app-acc-bg: rgba(108, 92, 240, .12);
+  --app-acc-bd: rgba(108, 92, 240, .42);
+  --app-pos: #0f9d63;
+  --app-neg: #db3b44;
+  --app-nav-bg: rgba(255, 255, 255, .82);
+  --app-hover: rgba(17, 20, 28, .05);
+  --app-on-acc: #4f3fd0;
+  --app-log-bg: #f0f2f6;
+  --app-log-tx: #2a2e38;
+}
+
+/* Светлая палитра для разделов heatmap/superinvestor/ticker (переменные --hm-*) */
+[data-theme="light"] .hm-root,
+[data-theme="light"] .si-root {
+  --hm-bg: #f3f4f7;
+  --hm-bg2: #ffffff;
+  --hm-surf: #ffffff;
+  --hm-surf2: #eef0f4;
+  --hm-line: rgba(17, 20, 28, .09);
+  --hm-line2: rgba(17, 20, 28, .15);
+  --hm-tx: #1b1e26;
+  --hm-tx2: #555c69;
+  --hm-tx3: #878d99;
+  --hm-acc: #6b5bf0;
+  --hm-acc-bg: rgba(108, 92, 240, .12);
+  --hm-acc-bd: rgba(108, 92, 240, .42);
+  --hm-imp: #b07d12;
+  --hm-imp-bg: rgba(245, 181, 61, .20);
+  --hm-pos: #0f9d63;
+  --hm-neg: #db3b44;
+  --hm-on-acc: #4f3fd0;
+  --hm-line-soft: rgba(17, 20, 28, .07);
+  --hm-row-hover: rgba(17, 20, 28, .035);
 }
 
 /* Тикер-ссылки внутри AI-текста (см. lib/ticker-linkify) */
@@ -33,7 +86,7 @@
   white-space: nowrap;
 }
 .tk-link:hover {
-  color: #fff;
+  color: var(--app-tx);
   border-bottom-color: var(--app-acc-2);
 }
 
@@ -49,7 +102,7 @@
 /* ===== Верхняя панель ===== */
 .app-nav {
   position: sticky; top: 0; z-index: 50;
-  background: rgba(10, 11, 14, .78);
+  background: var(--app-nav-bg);
   backdrop-filter: saturate(140%) blur(12px);
   -webkit-backdrop-filter: saturate(140%) blur(12px);
   border-bottom: .5px solid var(--app-line);
@@ -71,13 +124,22 @@
   padding: 6px 12px; border-radius: 99px; white-space: nowrap;
   transition: color .12s, background .12s;
 }
-.app-nav .app-nav-link:hover { color: var(--app-tx); background: rgba(255, 255, 255, .05); }
-.app-nav .app-nav-link.active { color: #cfc8fb; background: var(--app-acc-bg); }
+.app-nav .app-nav-link:hover { color: var(--app-tx); background: var(--app-hover); }
+.app-nav .app-nav-link.active { color: var(--app-on-acc); background: var(--app-acc-bg); }
 .app-nav .app-nav-gh {
   margin-left: auto; font-size: 12px; color: var(--app-tx3);
   text-decoration: none; padding: 6px 10px; border-radius: 8px; white-space: nowrap;
 }
 .app-nav .app-nav-gh:hover { color: var(--app-tx2); }
+.app-theme-toggle {
+  margin-left: auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 99px;
+  background: transparent; border: .5px solid var(--app-line2);
+  color: var(--app-tx2); font-size: 14px; line-height: 1; cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.app-theme-toggle:hover { background: var(--app-hover); color: var(--app-tx); border-color: var(--app-acc-bd); }
 
 /* ===== Контейнер контента (страницы heatmap/superinvestor сами уходят на 100vw) ===== */
 .app-shell { max-width: 1320px; margin: 0 auto; padding: 22px 16px 64px; }
@@ -96,7 +158,7 @@
 .btn:hover { background: var(--app-surf2); color: var(--app-tx); }
 .btn:disabled { opacity: .4; cursor: not-allowed; }
 .btn-primary {
-  background: var(--app-acc-bg); border: .5px solid var(--app-acc-bd); color: #cfc8fb;
+  background: var(--app-acc-bg); border: .5px solid var(--app-acc-bd); color: var(--app-on-acc);
   font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 8px; cursor: pointer;
   transition: background .12s;
 }
@@ -109,7 +171,7 @@
 .input:focus { outline: none; border-color: var(--app-acc-bd); }
 .label { font-size: 11px; color: var(--app-tx3); text-transform: uppercase; letter-spacing: .5px; }
 .log {
-  background: #0d0f14; color: #cdd2db; border: .5px solid var(--app-line);
+  background: var(--app-log-bg); color: var(--app-log-tx); border: .5px solid var(--app-line);
   border-radius: var(--app-rad); padding: 12px; font-size: 12px;
   font-family: var(--app-mono); white-space: pre-wrap; overflow-y: auto; max-height: 18rem;
 }
@@ -118,12 +180,12 @@
 .app-shell *, .app-shell *::before, .app-shell *::after { border-color: var(--app-line); }
 .app-shell .bg-white { background: var(--app-surf) !important; }
 .app-shell .bg-neutral-100 { background: var(--app-surf2) !important; }
-.app-shell .bg-neutral-50, .app-shell .hover\:bg-neutral-50:hover { background: rgba(255, 255, 255, .04) !important; }
-.app-shell .bg-neutral-900 { background: #0d0f14 !important; }
+.app-shell .bg-neutral-50, .app-shell .hover\:bg-neutral-50:hover { background: var(--app-hover) !important; }
+.app-shell .bg-neutral-900 { background: var(--app-log-bg) !important; }
 .app-shell .text-neutral-100 { color: var(--app-tx) !important; }
 .app-shell .text-neutral-500, .app-shell .text-neutral-600 { color: var(--app-tx2) !important; }
-.app-shell .text-neutral-700 { color: #c4c8d0 !important; }
-.app-shell .text-blue-600, .app-shell .text-blue-700 { color: #cfc8fb !important; }
+.app-shell .text-neutral-700 { color: var(--app-tx) !important; }
+.app-shell .text-blue-600, .app-shell .text-blue-700 { color: var(--app-on-acc) !important; }
 .app-shell .text-red-600, .app-shell .text-red-700 { color: var(--app-neg) !important; }
 .app-shell .bg-red-50 { background: rgba(244, 98, 106, .12) !important; }
 .app-shell .border { border-color: var(--app-line2) !important; }

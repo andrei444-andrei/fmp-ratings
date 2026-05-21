@@ -18,6 +18,9 @@
   --hm-imp: #f5b53d;
   --hm-pos: #34d399;
   --hm-neg: #f4626a;
+  --hm-on-acc: #cfc8fb;
+  --hm-line-soft: rgba(255, 255, 255, .04);
+  --hm-row-hover: rgba(255, 255, 255, .025);
   --hm-rad: 9px;
   --hm-rad-lg: 14px;
   --hm-mono: ui-monospace, SFMono-Regular, Menlo, "Roboto Mono", Consolas, monospace;
@@ -51,7 +54,7 @@
   text-decoration: none; transition: color .12s, border-color .12s, background .12s;
 }
 .si-tab:hover { color: var(--hm-tx); border-color: var(--hm-line2); }
-.si-tab.on { background: var(--hm-acc-bg); color: #cfc8fb; border-color: var(--hm-acc-bd); }
+.si-tab.on { background: var(--hm-acc-bg); color: var(--hm-on-acc); border-color: var(--hm-acc-bd); }
 
 /* фильтр-бар */
 .si-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; font-size: 12.5px; }
@@ -59,7 +62,7 @@
 .si-seg { display: inline-flex; background: var(--hm-surf); border: .5px solid var(--hm-line); border-radius: var(--hm-rad); overflow: hidden; }
 .si-seg button { background: transparent; border: 0; color: var(--hm-tx2); font: inherit; font-size: 12px; padding: 6px 12px; cursor: pointer; border-right: .5px solid var(--hm-line); }
 .si-seg button:last-child { border-right: 0; }
-.si-seg button.on { background: var(--hm-acc-bg); color: #cfc8fb; }
+.si-seg button.on { background: var(--hm-acc-bg); color: var(--hm-on-acc); }
 .si-spacer { flex: 1; }
 
 /* methodology — всегда виден */
@@ -90,8 +93,8 @@
 .si-tbl th.l, .si-tbl td.l { text-align: left; }
 .si-tbl th.sortable:hover { color: var(--hm-tx); }
 .si-tbl th .arr { color: var(--hm-acc); margin-left: 3px; }
-.si-tbl td { padding: 8px 12px; text-align: right; border-bottom: .5px solid rgba(255,255,255,.04); font-family: var(--hm-mono); white-space: nowrap; color: var(--hm-tx); }
-.si-tbl tr:hover td { background: rgba(255,255,255,.025); }
+.si-tbl td { padding: 8px 12px; text-align: right; border-bottom: .5px solid var(--hm-line-soft); font-family: var(--hm-mono); white-space: nowrap; color: var(--hm-tx); }
+.si-tbl tr:hover td { background: var(--hm-row-hover); }
 .si-tbl tr.clk { cursor: pointer; }
 .si-rank { color: var(--hm-tx3); font-family: var(--hm-mono); }
 .si-sym { font-weight: 700; }
@@ -107,7 +110,7 @@
 .si-badge.value { color: #9ff0d2; border-color: rgba(52,211,153,.4); }
 .si-badge.activist { color: #f5b53d; border-color: rgba(245,181,61,.4); }
 .si-badge.macro { color: #79b7ff; border-color: rgba(121,183,255,.4); }
-.si-badge.concentrated { color: #cfc8fb; border-color: var(--hm-acc-bd); }
+.si-badge.concentrated { color: var(--hm-on-acc); border-color: var(--hm-acc-bd); }
 .si-badge.quant { color: #fbb9bd; border-color: rgba(244,98,106,.4); }
 
 /* spark-бар топ-холдингов в лидерборде */
@@ -199,7 +202,7 @@
 .si-ai-src a { font-size: 10.5px; color: var(--hm-acc); text-decoration: none; background: var(--hm-surf2); border: .5px solid var(--hm-line); border-radius: 99px; padding: 2px 8px; white-space: nowrap; }
 .si-ai-src a:hover { border-color: var(--hm-acc-bd); }
 .si-ai-msg { margin-top: 12px; padding-top: 12px; border-top: .5px solid var(--hm-line); }
-.si-ai-msg.user { color: #cfc8fb; font-size: 13px; font-weight: 600; display: flex; gap: 7px; line-height: 1.5; }
+.si-ai-msg.user { color: var(--hm-on-acc); font-size: 13px; font-weight: 600; display: flex; gap: 7px; line-height: 1.5; }
 .si-ai-msg.user::before { content: '›'; color: var(--hm-acc); }
 .si-ai-input-row { display: flex; gap: 8px; align-items: flex-end; margin-top: 12px; flex: 0 0 auto; }
 .si-ai-input { flex: 1; resize: none; min-height: 36px; max-height: 120px; line-height: 1.45; }
