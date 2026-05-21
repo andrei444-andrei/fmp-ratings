@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation';
 
 const LINKS = [
   { href: '/heatmap', label: 'Heatmap' },
+  { href: '/ticker', label: 'Тикер' },
   { href: '/superinvestor', label: 'Superinvestors' },
   { href: '/admin/ai-events', label: 'AI Events' },
   { href: '/admin/ticker-sets', label: 'Тикеры' },

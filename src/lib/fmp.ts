@@ -64,3 +64,25 @@ export async function fmpEarnings(symbol: string) {
   const key = getFmpKey();
   return fmpGet(`${BASE_STABLE}/earnings?symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(key)}`);
 }
+
+// Профиль компании: имя, сектор/индустрия, биржа, цена, market cap, beta,
+// 52-недельный диапазон, IPO-дата, описание и т.д.
+export async function fmpProfile(symbol: string) {
+  const key = getFmpKey();
+  return fmpGet(`${BASE_STABLE}/profile?symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(key)}`);
+}
+
+// История дивидендов (date, dividend/adjDividend, yield, frequency).
+export async function fmpDividends(symbol: string) {
+  const key = getFmpKey();
+  return fmpGet(`${BASE_STABLE}/dividends?symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(key)}`);
+}
+
+// Поиск тикера по подстроке (symbol, name, exchange) — для строки поиска.
+export async function fmpSearchSymbol(query: string, limit = 12) {
+  const key = getFmpKey();
+  return fmpGet(
+    `${BASE_STABLE}/search-symbol?query=${encodeURIComponent(query)}` +
+    `&limit=${limit}&apikey=${encodeURIComponent(key)}`
+  );
+}
