@@ -75,7 +75,7 @@ async function getPriceMap(symbol: string, from: string, to: string): Promise<Re
 // Матрица цен: ось дат = торговые дни SPY; series по символам.
 async function buildPriceMatrix(symbols: string[], from: string, to: string): Promise<PriceMatrix> {
   const uniq = Array.from(new Set(['SPY', ...symbols]));
-  const maps = await mapLimit(uniq, 6, s => getPriceMap(s, from, to));
+  const maps = await mapLimit(uniq, 8, s => getPriceMap(s, from, to));
   const bySym: Record<string, Record<string, number>> = {};
   uniq.forEach((s, i) => (bySym[s] = maps[i]));
 
