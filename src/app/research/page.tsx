@@ -187,8 +187,9 @@ function Research() {
       const r = await fetch(`/api/research/prompts/${id}`, { method: 'DELETE' });
       if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Ошибка');
       if (activePrompt?.id === id) setActivePrompt(null);
-      toast({ variant: 'success', title: 'Промт удалён' });
+      toast({ variant: 'success', title: 'Промт и его результаты удалены' });
       loadPrompts();
+      loadRuns();
     } catch (e: any) {
       toast({ variant: 'error', title: 'Не удалось удалить', description: e?.message });
     }
