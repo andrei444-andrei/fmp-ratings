@@ -3,6 +3,7 @@ import { syntheticSeries } from '@/lib/research/metrics';
 import { aimlChat } from '@/lib/aimlapi';
 import { saveRun } from '@/lib/research/store';
 import { runResearchPython, type PriceRow } from '@/lib/research/python';
+import { logAppError } from '@/lib/app-errors';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -30,7 +31,12 @@ const SYS_PROMPT =
   '`close` (цена закрытия) по нескольким тикерам. Доступен matplotlib (backend Agg) — если нужен график, используй `plt`. ' +
   'Требования: (1) используй df, не выдумывай данные; (2) посчитай ИМЕННО то, что просит пользователь; ' +
   '(3) через print() кратко выведи ключевые выводы; (4) ОБЯЗАТЕЛЬНО присвой итоговую таблицу переменной `result` (pandas DataFrame). ' +
-  'Выводи ТОЛЬКО исполняемый Python, без markdown-ограждений и пояснений.';
+  'Выводи ТОЛЬКО исполняемый Python, без markdown-ограждений и пояснений. ' +
+  'Конвенции вывода (соблюдай всегда, даже если пользователь не просил явно): ' +
+  'доходности и доли выводи в ПРОЦЕНТАХ с 1–2 знаками; числа округляй; ' +
+  'колонки в `result` называй по-русски и понятно; сортируй `result` осмысленно (обычно по убыванию ключевой метрики); ' +
+  'аккуратно обрабатывай пропуски и крайние даты (не показывай NaN как есть); ' +
+  'пиши читаемый код: строки не длиннее ~90 символов, длинные выражения разбивай на несколько строк.';
 
 // Базовый скрипт, когда нет ключа AIMLAPI (всё равно реальный Python).
 const DEFAULT_SCRIPT = `g = df.sort_values('date').groupby('symbol')['close']
@@ -42,6 +48,7 @@ print(result.to_string(index=False))`;
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const prompt: string = (body?.prompt ?? '').toString();
+  const ua = req.headers.get('user-agent');
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -56,10 +63,11 @@ export async function POST(req: Request) {
         }
       };
       let code = '';
+      let tickers: string[] = [];
       try {
         send({ type: 'status', text: 'Анализирую запрос…' });
         const found = extractTickers(prompt);
-        const tickers = found.length ? found : ['AAPL', 'MSFT', 'NVDA'];
+        tickers = found.length ? found : ['AAPL', 'MSFT', 'NVDA'];
         send({ type: 'block', html: `<p class="rlead">Тикеры в анализе: <b>${tickers.map(escapeHtml).join(', ')}</b></p>` });
 
         // 1) Сгенерировать скрипт (или взять базовый)
@@ -67,7 +75,7 @@ export async function POST(req: Request) {
           send({ type: 'status', text: 'Генерирую Python-скрипт…' });
           try {
             const raw = await aimlChat({
-              model: process.env.AIMLAPI_CODE_MODEL || undefined,
+              model: process.env.AIMLAPI_CODE_MODEL?.trim() || 'gpt-4o',
               temperature: 0.1,
               max_tokens: 800,
               messages: [
@@ -104,7 +112,23 @@ export async function POST(req: Request) {
 
         // 3) Исполнить Python (стрим stdout + таблица result + графики)
         send({ type: 'status', text: 'Исполняю Python…' });
-        await runResearchPython(code, prices, (e) => send(e));
+        await runResearchPython(code, prices, (e) => {
+          if (e.type === 'error') {
+            // Понятное сообщение пользователю + лог полного трейсбэка в app_errors
+            const lines = e.message.split('\n').filter(Boolean);
+            const first = lines.reverse().find((l) => /Error|Exception/.test(l)) || lines[0] || e.message;
+            send({ type: 'block', html: `<p class="rerr">Ошибка исполнения: ${escapeHtml(first.slice(0, 300))}</p>` });
+            logAppError({
+              route: '/api/research/execute',
+              message: 'Python execution error',
+              stack: e.message,
+              user_agent: ua,
+              meta: { prompt, tickers, code },
+            }).catch(() => {});
+          } else {
+            send(e);
+          }
+        });
 
         send({ type: 'done' });
         saveRun({ prompt, code, status: 'ok', resultHtml: null }).catch(() => {});
@@ -112,6 +136,13 @@ export async function POST(req: Request) {
         const msg = e?.message || String(e);
         send({ type: 'block', html: `<p class="rerr">Ошибка: ${escapeHtml(msg)}</p>` });
         send({ type: 'done' });
+        logAppError({
+          route: '/api/research/execute',
+          message: msg,
+          stack: e?.stack,
+          user_agent: ua,
+          meta: { prompt, tickers, code },
+        }).catch(() => {});
         saveRun({ prompt, code: code || null, status: 'error', resultHtml: null, error: msg }).catch(() => {});
       } finally {
         closed = true;
