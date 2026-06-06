@@ -25,8 +25,10 @@ export default defineConfig({
     command: process.env.CI
       ? `npm run build && npx next start -p ${PORT}`
       : `npx next start -p ${PORT}`,
-    url: `${baseURL}/ui`,
+    url: `${baseURL}/research`,
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,
+    // Локальная SQLite, чтобы БД (промты/цены) работала в e2e без Turso.
+    env: { LOCAL_SQLITE_PATH: 'local.db' },
   },
 });

@@ -1,0 +1,93 @@
+/* Стили для HTML-блоков результата, которые стримятся с бэкенда и вставляются
+   через dangerouslySetInnerHTML. Скоупим под .research-output. */
+.research-output {
+  font-size: 14px;
+  color: var(--fk-text);
+}
+.research-output > * + * {
+  margin-top: 14px;
+}
+.research-output .rlead {
+  font-size: 14px;
+  color: var(--fk-text-2);
+}
+.research-output .rmuted {
+  font-size: 13px;
+  color: var(--fk-text-3);
+}
+.research-output .rerr {
+  color: var(--fk-down-text);
+  font-weight: 600;
+}
+.research-output .rblk {
+  border: 1px solid var(--fk-line);
+  border-radius: var(--fk-radius);
+  background: var(--fk-surface-elev);
+  overflow: hidden;
+}
+.research-output .rcap {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fk-text-2);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--fk-line);
+  background: var(--fk-surface-2);
+}
+.research-output .rcode {
+  margin: 0;
+  padding: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, "Roboto Mono", Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--fk-text);
+  overflow-x: auto;
+  white-space: pre;
+}
+.research-output .rtbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+.research-output .rtbl th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--fk-text-3);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--fk-line);
+}
+.research-output .rtbl td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--fk-line);
+  vertical-align: middle;
+}
+.research-output .rtbl tr:last-child td {
+  border-bottom: 0;
+}
+.research-output .rnum {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.research-output .up {
+  color: var(--fk-up-text);
+  font-weight: 600;
+}
+.research-output .down {
+  color: var(--fk-down-text);
+  font-weight: 600;
+}
+.research-output .rsym {
+  white-space: nowrap;
+}
+.research-output .rdemo {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--fk-text-3);
+  border: 1px solid var(--fk-line-strong);
+  border-radius: 999px;
+  padding: 1px 6px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
