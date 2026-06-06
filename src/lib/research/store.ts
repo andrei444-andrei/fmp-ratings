@@ -13,6 +13,7 @@ export async function ensureResearchTables(): Promise<void> {
   )`);
   await libsqlClient.execute(`CREATE TABLE IF NOT EXISTS research_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    prompt_id INTEGER,
     title TEXT,
     prompt TEXT NOT NULL,
     code TEXT,
@@ -21,11 +22,13 @@ export async function ensureResearchTables(): Promise<void> {
     error TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
-  // Миграция для БД, созданных до появления title в research_runs.
-  try {
-    await libsqlClient.execute(`ALTER TABLE research_runs ADD COLUMN title TEXT`);
-  } catch {
-    /* колонка уже есть */
+  // Идемпотентные миграции для БД, созданных раньше (дубль колонки тихо игнорируем).
+  for (const col of ['title TEXT', 'prompt_id INTEGER']) {
+    try {
+      await libsqlClient.execute(`ALTER TABLE research_runs ADD COLUMN ${col}`);
+    } catch {
+      /* колонка уже есть */
+    }
   }
   ensured = true;
 }
@@ -43,6 +46,22 @@ export async function listPrompts(): Promise<SavedPrompt[]> {
     prompt: String(x.prompt),
     created_at: String(x.created_at),
   }));
+}
+
+export async function getPrompt(id: number): Promise<SavedPrompt | null> {
+  await ensureResearchTables();
+  const r = await libsqlClient.execute({
+    sql: `SELECT id, title, prompt, created_at FROM research_prompts WHERE id = ?`,
+    args: [id],
+  });
+  const x = r.rows[0];
+  if (!x) return null;
+  return {
+    id: Number(x.id),
+    title: x.title != null ? String(x.title) : null,
+    prompt: String(x.prompt),
+    created_at: String(x.created_at),
+  };
 }
 
 export async function savePrompt(prompt: string, title: string): Promise<number> {
@@ -97,6 +116,7 @@ export async function getRun(id: number): Promise<SavedRun | null> {
 }
 
 export async function saveRun(o: {
+  promptId: number;
   title?: string | null;
   prompt: string;
   code: string | null;
@@ -107,8 +127,8 @@ export async function saveRun(o: {
   await ensureResearchTables();
   const now = new Date().toISOString();
   const r = await libsqlClient.execute({
-    sql: `INSERT INTO research_runs (title, prompt, code, status, result_html, error, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    args: [o.title ?? null, o.prompt, o.code, o.status, o.resultHtml, o.error ?? null, now],
+    sql: `INSERT INTO research_runs (prompt_id, title, prompt, code, status, result_html, error, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [o.promptId, o.title ?? null, o.prompt, o.code, o.status, o.resultHtml, o.error ?? null, now],
   });
   return Number(r.lastInsertRowid ?? 0);
 }
