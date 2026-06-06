@@ -28,35 +28,39 @@ export async function getPrices(symbol: string, from: string, to: string): Promi
     sql: `SELECT date, close FROM prices WHERE symbol=? AND date>=? AND date<=? AND close IS NOT NULL ORDER BY date ASC`,
     args: [sym, from, to],
   });
-  if (cached.rows.length > 5) {
-    return cached.rows.map((r) => ({ date: String(r.date), close: Number(r.close) }));
+  const fromCached = () => cached.rows.map((r) => ({ date: String(r.date), close: Number(r.close) }));
+  // Кэш используем, только если он покрывает запрошенное окно с самого начала.
+  if (cached.rows.length > 5 && String(cached.rows[0].date) <= from) {
+    return fromCached();
   }
 
-  if (!process.env.FMP_API_KEY) return [];
+  if (!process.env.FMP_API_KEY) return fromCached();
   try {
     const data: any = await fmpHistoricalPriceEod(sym, from, to);
     const arr: any[] = Array.isArray(data) ? data : data?.historical ?? [];
     const rows = arr
       .map((d) => ({ date: String(d.date), close: Number(d.price ?? d.close ?? d.adjClose) }))
       .filter((d) => d.date && Number.isFinite(d.close));
-    if (!rows.length) return [];
+    if (!rows.length) return fromCached();
     const now = new Date().toISOString();
-    // батч-вставка чанками, чтобы не делать сотни round-trip
+    // Батч-вставка: все чанки одним round-trip (история на 20+ лет — это тысячи строк).
     const CHUNK = 100;
+    const stmts: { sql: string; args: any[] }[] = [];
     for (let i = 0; i < rows.length; i += CHUNK) {
       const slice = rows.slice(i, i + CHUNK);
       const placeholders = slice.map(() => `(?,?,?,?,?)`).join(',');
       const args: any[] = [];
       for (const r of slice) args.push(sym, r.date, r.close, null, now);
-      await libsqlClient.execute({
+      stmts.push({
         sql: `INSERT INTO prices (symbol,date,close,volume,created_at) VALUES ${placeholders}
               ON CONFLICT(symbol,date) DO UPDATE SET close=excluded.close`,
         args,
       });
     }
+    if (stmts.length) await libsqlClient.batch(stmts);
     rows.sort((a, b) => (a.date < b.date ? -1 : 1));
     return rows;
   } catch {
-    return [];
+    return fromCached();
   }
 }

@@ -1,7 +1,8 @@
 import type { PriceRow } from './prices';
 
-/** Детерминированный синтетический ряд (без ключей/FMP) — для демо и стабильных e2e. */
-export function syntheticSeries(symbol: string, n = 180): PriceRow[] {
+/** Детерминированный синтетический ряд (без ключей/FMP) — для демо и стабильных e2e.
+ *  ~13 лет дневных точек и достаточная волатильность, чтобы встречались просадки. */
+export function syntheticSeries(symbol: string, n = 5000): PriceRow[] {
   let seed = 7;
   for (const c of symbol) seed = (seed * 31 + c.charCodeAt(0)) % 2147483647;
   let v = 80 + (seed % 120);
@@ -9,7 +10,7 @@ export function syntheticSeries(symbol: string, n = 180): PriceRow[] {
   const today = new Date();
   for (let i = n - 1; i >= 0; i--) {
     seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-    const r = (seed / 0x7fffffff - 0.47) * 2.4; // лёгкий положительный дрейф
+    const r = (seed / 0x7fffffff - 0.49) * 5; // лёгкий положительный дрейф + дневные ходы до ~±2.5%
     v = Math.max(1, v * (1 + r / 100));
     const d = new Date(today);
     d.setDate(d.getDate() - i);

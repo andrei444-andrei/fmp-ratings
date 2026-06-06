@@ -104,7 +104,9 @@ export async function POST(req: Request) {
         // 2) Подготовить цены (кэш/FMP; синтетика как fallback)
         send({ type: 'status', text: 'Готовлю данные по ценам…' });
         const to = new Date().toISOString().slice(0, 10);
-        const from = new Date(Date.now() - 365 * 864e5).toISOString().slice(0, 10);
+        // Широкое окно истории (~25 лет), чтобы запросы «за N лет» имели данные;
+        // скрипт сам срежет нужный период. FMP отдаёт столько, сколько есть.
+        const from = new Date(Date.now() - 25 * 365 * 864e5).toISOString().slice(0, 10);
         const prices: Record<string, PriceRow[]> = {};
         let anyDemo = false;
         for (const sym of tickers) {
