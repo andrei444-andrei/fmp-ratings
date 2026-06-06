@@ -1,7 +1,8 @@
 import { test, expect } from '@playwright/test';
 
-// Смоук страницы «Исследование трендов»: рендер, стриминг результата, сохранение промта.
-// Без ключей (FMP/AIMLAPI) исполнение использует синтетику — поток всё равно идёт.
+// Смоук «Исследование трендов»: рендер, реальное исполнение Python (Pyodide),
+// сохранение промта. В e2e ключи отключены → базовый скрипт + синтетика,
+// но Python исполняется по-настоящему и формирует таблицу result.
 test.describe('Research /research', () => {
   test('страница и пустое состояние рендерятся', async ({ page }) => {
     await page.goto('/research');
@@ -9,12 +10,13 @@ test.describe('Research /research', () => {
     await expect(page.getByText('Здесь появится анализ')).toBeVisible();
   });
 
-  test('исполнение стримит блоки результата', async ({ page }) => {
+  test('исполнение Python формирует таблицу результата', async ({ page }) => {
     await page.goto('/research');
-    await page.locator('textarea').fill('сравни доходность AAPL и MSFT за год');
+    await page.locator('textarea').fill('доходность AAPL и MSFT за год');
     await page.getByRole('button', { name: 'Исполнить' }).click();
     await expect(page.getByText('Тикеры в анализе:')).toBeVisible({ timeout: 20000 });
-    await expect(page.getByText('Тренды за 12 месяцев')).toBeVisible({ timeout: 20000 });
+    // Pyodide грузит ядро + pandas с CDN на первом прогоне — даём запас.
+    await expect(page.locator('.research-output .rtblwrap table')).toBeVisible({ timeout: 90000 });
   });
 
   test('сохранение промта показывает его в списке', async ({ page }) => {

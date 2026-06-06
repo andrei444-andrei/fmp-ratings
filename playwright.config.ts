@@ -28,7 +28,8 @@ export default defineConfig({
     url: `${baseURL}/research`,
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,
-    // Локальная SQLite, чтобы БД (промты/цены) работала в e2e без Turso.
-    env: { LOCAL_SQLITE_PATH: 'local.db' },
+    // Локальная SQLite + детерминизм: без ключей AIMLAPI/FMP исполняется
+    // базовый Python-скрипт на синтетических ценах.
+    env: { LOCAL_SQLITE_PATH: 'local.db', AIMLAPI_KEY: '', FMP_API_KEY: '' },
   },
 });

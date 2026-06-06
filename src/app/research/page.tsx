@@ -34,6 +34,7 @@ function Research() {
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState('');
   const [blocks, setBlocks] = useState<string[]>([]);
+  const [log, setLog] = useState('');
   const outRef = useRef<HTMLDivElement>(null);
 
   async function loadPrompts() {
@@ -76,6 +77,7 @@ function Research() {
     if (!prompt.trim() || running) return;
     setRunning(true);
     setBlocks([]);
+    setLog('');
     setStatus('Отправка запроса…');
     try {
       const res = await fetch('/api/research/execute', {
@@ -103,6 +105,7 @@ function Research() {
             continue;
           }
           if (ev.type === 'status') setStatus(ev.text);
+          else if (ev.type === 'log') setLog((l) => l + ev.text);
           else if (ev.type === 'block') setBlocks((b) => [...b, ev.html]);
           else if (ev.type === 'done') setStatus('Готово');
         }
@@ -115,7 +118,7 @@ function Research() {
     }
   }
 
-  const hasOutput = blocks.length > 0 || running;
+  const hasOutput = blocks.length > 0 || log.length > 0 || running;
 
   return (
     <>
@@ -218,7 +221,8 @@ function Research() {
                 {blocks.map((html, i) => (
                   <div key={i} dangerouslySetInnerHTML={{ __html: html }} />
                 ))}
-                {running && blocks.length === 0 && <Skeleton className="h-24 w-full" />}
+                {log && <pre className="rlog">{log}</pre>}
+                {running && blocks.length === 0 && !log && <Skeleton className="h-24 w-full" />}
               </div>
             )}
           </div>
