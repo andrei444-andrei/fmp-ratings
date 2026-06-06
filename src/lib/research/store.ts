@@ -132,3 +132,13 @@ export async function saveRun(o: {
   });
   return Number(r.lastInsertRowid ?? 0);
 }
+
+export async function deletePrompt(id: number): Promise<void> {
+  await ensureResearchTables();
+  await libsqlClient.execute({ sql: `DELETE FROM research_prompts WHERE id = ?`, args: [id] });
+}
+
+export async function deleteRun(id: number): Promise<void> {
+  await ensureResearchTables();
+  await libsqlClient.execute({ sql: `DELETE FROM research_runs WHERE id = ?`, args: [id] });
+}

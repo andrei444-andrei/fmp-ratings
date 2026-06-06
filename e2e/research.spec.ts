@@ -51,4 +51,19 @@ test.describe('Research /research', () => {
     await page.getByTestId('saved-runs').locator('button').first().click();
     await expect(page.getByText('Сохранённый результат')).toBeVisible();
   });
+
+  test('удаление промта убирает его из списка', async ({ page }) => {
+    await page.goto('/research');
+    const title = 'e2e удалить ' + Date.now();
+    await page.locator('textarea').fill('промт на удаление');
+    await page.getByRole('button', { name: 'Сохранить промт' }).click();
+    await page.getByPlaceholder(/Название/).fill(title);
+    await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
+    await expect(page.getByText('Промт сохранён')).toBeVisible({ timeout: 15000 });
+    const item = page.getByTestId('saved-prompts').locator('li').filter({ hasText: title });
+    await expect(item).toBeVisible();
+    await item.getByRole('button', { name: 'Удалить промт' }).click();
+    await expect(page.getByText('Промт удалён')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByTestId('saved-prompts').getByText(title)).toHaveCount(0);
+  });
 });

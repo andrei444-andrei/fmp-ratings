@@ -47,6 +47,20 @@ function CodeBlock({ code }: { code: string }) {
   );
 }
 
+function TrashIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m2 0v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export default function ResearchPage() {
   return (
     <ToastProvider>
@@ -168,6 +182,29 @@ function Research() {
     }
   }
 
+  async function onDeletePrompt(id: number) {
+    try {
+      const r = await fetch(`/api/research/prompts/${id}`, { method: 'DELETE' });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Ошибка');
+      if (activePrompt?.id === id) setActivePrompt(null);
+      toast({ variant: 'success', title: 'Промт удалён' });
+      loadPrompts();
+    } catch (e: any) {
+      toast({ variant: 'error', title: 'Не удалось удалить', description: e?.message });
+    }
+  }
+
+  async function onDeleteRun(id: number) {
+    try {
+      const r = await fetch(`/api/research/runs/${id}`, { method: 'DELETE' });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Ошибка');
+      toast({ variant: 'success', title: 'Результат удалён' });
+      loadRuns();
+    } catch (e: any) {
+      toast({ variant: 'error', title: 'Не удалось удалить', description: e?.message });
+    }
+  }
+
   async function execute() {
     if (!prompt.trim() || running) return;
     setRunning(true);
@@ -276,16 +313,28 @@ function Research() {
               ) : savedPrompts.length === 0 ? (
                 <p className="text-sm text-ink-3">Пока пусто. Сохрани первый промт — с названием.</p>
               ) : (
-                <ul className="space-y-2">
+                <ul className="space-y-2" data-testid="saved-prompts">
                   {savedPrompts.map((p) => (
-                    <li key={p.id}>
+                    <li key={p.id} className="flex items-stretch gap-1">
                       <button
                         type="button"
-                        onClick={() => setPrompt(p.prompt)}
-                        className="w-full rounded-fk border border-line bg-surface-elev px-3 py-2.5 text-left transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
+                        onClick={() => {
+                          setPrompt(p.prompt);
+                          setActivePrompt({ id: p.id, text: p.prompt });
+                        }}
+                        className="min-w-0 flex-1 rounded-fk border border-line bg-surface-elev px-3 py-2.5 text-left transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
                       >
                         <span className="block truncate text-sm font-semibold text-ink">{p.title || 'Без названия'}</span>
                         <span className="mt-0.5 line-clamp-1 text-[12px] text-ink-3">{p.prompt}</span>
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Удалить промт"
+                        title="Удалить"
+                        onClick={() => onDeletePrompt(p.id)}
+                        className="shrink-0 rounded-fk border border-line px-2 text-ink-3 transition-colors hover:border-down hover:text-down focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
+                      >
+                        <TrashIcon />
                       </button>
                     </li>
                   ))}
@@ -308,14 +357,23 @@ function Research() {
               ) : (
                 <ul className="space-y-2" data-testid="saved-runs">
                   {savedRuns.map((r) => (
-                    <li key={r.id}>
+                    <li key={r.id} className="flex items-stretch gap-1">
                       <button
                         type="button"
                         onClick={() => openSavedRun(r.id)}
-                        className="w-full rounded-fk border border-line bg-surface-elev px-3 py-2.5 text-left transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
+                        className="min-w-0 flex-1 rounded-fk border border-line bg-surface-elev px-3 py-2.5 text-left transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
                       >
                         <span className="block truncate text-sm font-medium text-ink">{r.title || `Результат #${r.id}`}</span>
                         <span className="mt-0.5 block text-[11px] tabular-nums text-ink-3">{r.created_at.slice(0, 16).replace('T', ' ')}</span>
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Удалить результат"
+                        title="Удалить"
+                        onClick={() => onDeleteRun(r.id)}
+                        className="shrink-0 rounded-fk border border-line px-2 text-ink-3 transition-colors hover:border-down hover:text-down focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
+                      >
+                        <TrashIcon />
                       </button>
                     </li>
                   ))}
