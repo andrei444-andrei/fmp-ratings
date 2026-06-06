@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
-// Смоук «Исследование трендов»: рендер, реальное исполнение Python (Pyodide),
-// сохранение промта (с обязательным названием), сохранение и просмотр результата.
+// Смоук «Исследование трендов»: рендер, исполнение Python (Pyodide),
+// сохранение промта (обязательное название), привязка результата к промту.
 // В e2e ключи отключены → базовый скрипт + синтетика, но Python исполняется по-настоящему.
 test.describe('Research /research', () => {
   test('страница и пустое состояние рендерятся', async ({ page }) => {
@@ -10,11 +10,13 @@ test.describe('Research /research', () => {
     await expect(page.getByText('Здесь появится анализ')).toBeVisible();
   });
 
-  test('исполнение Python формирует таблицу результата', async ({ page }) => {
+  test('без сохранённого промта результат сохранить нельзя (подсказка)', async ({ page }) => {
     await page.goto('/research');
     await page.locator('textarea').fill('доходность AAPL и MSFT за год');
     await page.getByRole('button', { name: 'Исполнить' }).click();
     await expect(page.locator('.research-output .rtblwrap table')).toBeVisible({ timeout: 90000 });
+    await expect(page.getByText('Сохраните промт, чтобы сохранить результат')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Сохранить результат' })).toHaveCount(0);
   });
 
   test('сохранение промта требует название и показывает его в списке', async ({ page }) => {
@@ -31,14 +33,21 @@ test.describe('Research /research', () => {
     await expect(page.locator('li').getByText(title)).toBeVisible();
   });
 
-  test('сохранение результата и его просмотр', async ({ page }) => {
+  test('результат сохраняется после сохранения промта и открывается', async ({ page }) => {
     await page.goto('/research');
     await page.locator('textarea').fill('доходность QQQ за год');
+    // 1) сначала сохранить промт
+    await page.getByRole('button', { name: 'Сохранить промт' }).click();
+    await page.getByPlaceholder(/Название/).fill('e2e QQQ ' + Date.now());
+    await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
+    await expect(page.getByText('Промт сохранён')).toBeVisible({ timeout: 15000 });
+    // 2) запустить
     await page.getByRole('button', { name: 'Исполнить' }).click();
     await expect(page.locator('.research-output .rtblwrap table')).toBeVisible({ timeout: 90000 });
+    // 3) теперь результат можно сохранить
     await page.getByRole('button', { name: 'Сохранить результат' }).click();
     await expect(page.getByText('Результат сохранён')).toBeVisible({ timeout: 15000 });
-    // открыть первый сохранённый результат
+    // 4) открыть сохранённый результат
     await page.getByTestId('saved-runs').locator('button').first().click();
     await expect(page.getByText('Сохранённый результат')).toBeVisible();
   });

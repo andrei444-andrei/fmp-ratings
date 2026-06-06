@@ -67,6 +67,8 @@ function Research() {
   const [blocks, setBlocks] = useState<string[]>([]);
   const [log, setLog] = useState('');
   const [isFresh, setIsFresh] = useState(false); // свежий прогон (можно сохранить результат)
+  // К какому СОХРАНЁННОМУ промту относится текущий текст (результат привязывается к нему).
+  const [activePrompt, setActivePrompt] = useState<{ id: number; text: string } | null>(null);
 
   const [saveOpen, setSaveOpen] = useState(false);
   const [titleInput, setTitleInput] = useState('');
@@ -109,7 +111,9 @@ function Research() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ prompt: prompt.trim(), title }),
       });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Не удалось сохранить');
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d?.error || 'Не удалось сохранить');
+      setActivePrompt({ id: Number(d.id), text: prompt.trim() });
       toast({ variant: 'success', title: 'Промт сохранён' });
       setSaveOpen(false);
       setTitleInput('');
@@ -127,6 +131,7 @@ function Research() {
   }
 
   async function saveResult() {
+    if (!activePrompt) return;
     const resultHtml = buildResultHtml();
     if (!resultHtml) return;
     setSavingResult(true);
@@ -134,7 +139,7 @@ function Research() {
       const r = await fetch('/api/research/runs', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ prompt: prompt.trim(), code, resultHtml }),
+        body: JSON.stringify({ promptId: activePrompt.id, code, resultHtml }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d?.error || 'Не удалось сохранить результат');
@@ -212,7 +217,11 @@ function Research() {
   }
 
   const hasOutput = code.length > 0 || blocks.length > 0 || log.length > 0 || running;
-  const canSaveResult = isFresh && !running && (blocks.length > 0 || log.length > 0);
+  const hasFreshOutput = blocks.length > 0 || log.length > 0;
+  // Результат можно сохранить, только если текущий текст — это сохранённый промт.
+  const promptSaved = !!activePrompt && activePrompt.text === prompt.trim();
+  const canSaveResult = isFresh && !running && hasFreshOutput && promptSaved;
+  const showSaveHint = isFresh && !running && hasFreshOutput && !promptSaved;
 
   return (
     <>
@@ -333,6 +342,9 @@ function Research() {
                 <Button size="sm" variant="secondary" onClick={saveResult} loading={savingResult}>
                   Сохранить результат
                 </Button>
+              )}
+              {showSaveHint && (
+                <span className="text-[12px] text-ink-3">Сохраните промт, чтобы сохранить результат</span>
               )}
             </div>
           </CardHeader>
