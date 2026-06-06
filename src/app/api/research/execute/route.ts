@@ -10,8 +10,9 @@ export const maxDuration = 60;
 const STOP = new Set(['AI', 'AND', 'THE', 'FOR', 'VS', 'USD', 'ETF', 'SP', 'API', 'CEO', 'USA', 'GDP', 'PE', 'EPS']);
 
 function extractTickers(prompt: string): string[] {
-  const m = prompt.toUpperCase().match(/\b[A-Z]{1,5}\b/g) ?? [];
-  return [...new Set(m)].filter((t) => !STOP.has(t)).slice(0, 5);
+  // Латинские тикеры, в т.ч. с цифрами и биржевым суффиксом (.L, .DE, .HK).
+  const m = prompt.toUpperCase().match(/\b[A-Z][A-Z0-9]{0,5}(?:\.[A-Z]{1,4})?\b/g) ?? [];
+  return [...new Set(m)].filter((t) => !STOP.has(t) && /[A-Z]/.test(t)).slice(0, 8);
 }
 
 function escapeHtml(s: string): string {
@@ -24,10 +25,49 @@ function stripFences(code: string): string {
   return (m ? m[1] : code).trim();
 }
 
+const TICKER_SYS =
+  'Подбери тикеры (символы, котируемые на FMP) под запрос пользователя и верни СТРОГО JSON ' +
+  'вида {"tickers": ["EWJ", "EWZ"]}, от 1 до 8 штук. Используй реальные ликвидные символы. ' +
+  'Доступны НЕ только США. Для стран бери ликвидные страновые ETF (листинг в США): ' +
+  'США SPY/QQQ, Япония EWJ, Германия EWG, Великобритания EWU, Франция EWQ, Швейцария EWL, ' +
+  'Италия EWI, Испания EWP, Канада EWC, Австралия EWA, Китай FXI или MCHI, Гонконг EWH, ' +
+  'Тайвань EWT, Корея EWY, Индия INDA, Бразилия EWZ, Мексика EWW, ЮАР EZA, Тайланд THD, ' +
+  'Турция TUR, Польша EPOL, развивающиеся рынки EEM/VWO, Европа VGK, весь мир ACWI. ' +
+  'Если пользователь назвал конкретные тикеры — используй их. Возвращай ТОЛЬКО JSON.';
+
+// Подбор тикеров под запрос: сперва AI (понимает страны/международные ETF), иначе regex.
+async function resolveTickers(prompt: string): Promise<string[]> {
+  if (process.env.AIMLAPI_KEY) {
+    try {
+      const { content } = await aimlChatMeta({
+        temperature: 0,
+        max_tokens: 200,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: TICKER_SYS },
+          { role: 'user', content: prompt },
+        ],
+      });
+      const obj = JSON.parse(content);
+      const arr = Array.isArray(obj?.tickers) ? obj.tickers : [];
+      const tickers = arr
+        .map((t: any) => String(t).toUpperCase().trim())
+        .filter((t: string) => /^[A-Z][A-Z0-9.\-]{0,11}$/.test(t));
+      if (tickers.length) return [...new Set<string>(tickers)].slice(0, 8);
+    } catch {
+      /* падаем на regex */
+    }
+  }
+  const found = extractTickers(prompt);
+  return found.length ? found : ['SPY', 'QQQ'];
+}
+
 const SYS_PROMPT =
   'Ты пишешь Python-скрипт для анализа трендов цен акций. В окружении УЖЕ доступны: ' +
   '`pandas as pd`, `numpy`, и готовый DataFrame `df` с колонками `symbol` (тикер), `date` (datetime), ' +
   '`close` (цена закрытия) по нескольким тикерам. Доступен matplotlib (backend Agg) — если нужен график, используй `plt`. ' +
+  'В df могут быть международные и страновые ETF (например EWJ, EWG, FXI, EWZ, INDA) — это нормально; ' +
+  'работай с тем, что дано, и НИКОГДА не утверждай, что доступны только тикеры США. ' +
   'Требования: (1) используй df, не выдумывай данные; (2) посчитай ИМЕННО то, что просит пользователь; ' +
   '(3) через print() кратко выведи ключевые выводы; (4) ОБЯЗАТЕЛЬНО присвой итоговую таблицу переменной `result` (pandas DataFrame). ' +
   'Выводи ТОЛЬКО исполняемый Python, без markdown-ограждений и пояснений. ' +
@@ -64,9 +104,8 @@ export async function POST(req: Request) {
       let code = '';
       let tickers: string[] = [];
       try {
-        send({ type: 'status', text: 'Анализирую запрос…' });
-        const found = extractTickers(prompt);
-        tickers = found.length ? found : ['AAPL', 'MSFT', 'NVDA'];
+        send({ type: 'status', text: 'Подбираю инструменты…' });
+        tickers = await resolveTickers(prompt);
         send({ type: 'block', html: `<p class="rlead">Тикеры в анализе: <b>${tickers.map(escapeHtml).join(', ')}</b></p>` });
 
         // 1) Сгенерировать скрипт (или взять базовый)
