@@ -63,7 +63,32 @@ test.describe('Research /research', () => {
     const item = page.getByTestId('saved-prompts').locator('li').filter({ hasText: title });
     await expect(item).toBeVisible();
     await item.getByRole('button', { name: 'Удалить промт' }).click();
-    await expect(page.getByText('Промт удалён')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('Промт и его результаты удалены')).toBeVisible({ timeout: 15000 });
     await expect(page.getByTestId('saved-prompts').getByText(title)).toHaveCount(0);
+  });
+
+  test('главная страница ведёт на /research', async ({ page }) => {
+    await page.goto('/');
+    await expect(page).toHaveURL(/\/research$/);
+    await expect(page.getByRole('heading', { name: 'Запрос' })).toBeVisible();
+  });
+
+  test('удаление промта каскадно убирает его результат', async ({ page }) => {
+    await page.goto('/research');
+    const title = 'e2e casc ' + Date.now();
+    await page.locator('textarea').fill('каскадный промт');
+    await page.getByRole('button', { name: 'Сохранить промт' }).click();
+    await page.getByPlaceholder(/Название/).fill(title);
+    await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
+    await expect(page.getByText('Промт сохранён')).toBeVisible({ timeout: 15000 });
+    await page.getByRole('button', { name: 'Исполнить' }).click();
+    await expect(page.locator('.research-output .rtblwrap table')).toBeVisible({ timeout: 90000 });
+    await page.getByRole('button', { name: 'Сохранить результат' }).click();
+    await expect(page.getByText('Результат сохранён')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByTestId('saved-runs').getByText(title)).toBeVisible();
+    const item = page.getByTestId('saved-prompts').locator('li').filter({ hasText: title });
+    await item.getByRole('button', { name: 'Удалить промт' }).click();
+    await expect(page.getByText('Промт и его результаты удалены')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByTestId('saved-runs').getByText(title)).toHaveCount(0);
   });
 });

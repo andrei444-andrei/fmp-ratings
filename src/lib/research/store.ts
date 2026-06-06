@@ -135,7 +135,11 @@ export async function saveRun(o: {
 
 export async function deletePrompt(id: number): Promise<void> {
   await ensureResearchTables();
-  await libsqlClient.execute({ sql: `DELETE FROM research_prompts WHERE id = ?`, args: [id] });
+  // Каскад: вместе с промтом удаляем его сохранённые результаты (одной транзакцией).
+  await libsqlClient.batch([
+    { sql: `DELETE FROM research_runs WHERE prompt_id = ?`, args: [id] },
+    { sql: `DELETE FROM research_prompts WHERE id = ?`, args: [id] },
+  ]);
 }
 
 export async function deleteRun(id: number): Promise<void> {
