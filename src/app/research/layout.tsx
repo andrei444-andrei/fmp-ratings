@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import '@/components/ui/tokens.css';
+import 'highlight.js/styles/github.css';
 import './research.css';
 
 export const metadata: Metadata = {

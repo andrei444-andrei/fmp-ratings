@@ -13,9 +13,11 @@ export async function GET() {
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const prompt = (body?.prompt ?? '').toString().trim();
+  const title = (body?.title ?? '').toString().trim();
   if (!prompt) return Response.json({ error: 'prompt is empty' }, { status: 400 });
+  if (!title) return Response.json({ error: 'title is required' }, { status: 400 });
   try {
-    const id = await savePrompt(prompt, body?.title ?? null);
+    const id = await savePrompt(prompt, title);
     return Response.json({ id });
   } catch (e: any) {
     return Response.json({ error: e?.message || 'db error' }, { status: 500 });

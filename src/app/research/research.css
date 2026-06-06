@@ -42,6 +42,12 @@
   color: var(--fk-text);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  max-height: 340px;
+  overflow: auto;
+}
+.research-output .rcode .hljs {
+  background: transparent;
+  padding: 0;
 }
 .research-output .rtbl {
   width: 100%;

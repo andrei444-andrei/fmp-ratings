@@ -1,6 +1,8 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import hljs from 'highlight.js/lib/core';
+import python from 'highlight.js/lib/languages/python';
 import {
   Badge,
   Button,
@@ -9,6 +11,8 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  Input,
+  Modal,
   Skeleton,
   Spinner,
   Textarea,
@@ -16,7 +20,32 @@ import {
   useToast,
 } from '@/components/ui';
 
+hljs.registerLanguage('python', python);
+
 type SavedPrompt = { id: number; title: string | null; prompt: string; created_at: string };
+type SavedRunItem = { id: number; title: string | null; created_at: string };
+
+function esc(s: string): string {
+  return s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!));
+}
+
+function CodeBlock({ code }: { code: string }) {
+  const html = useMemo(() => {
+    try {
+      return hljs.highlight(code, { language: 'python' }).value;
+    } catch {
+      return esc(code);
+    }
+  }, [code]);
+  return (
+    <div className="rblk">
+      <div className="rcap">Python-скрипт</div>
+      <pre className="rcode">
+        <code className="hljs language-python" dangerouslySetInnerHTML={{ __html: html }} />
+      </pre>
+    </div>
+  );
+}
 
 export default function ResearchPage() {
   return (
@@ -29,53 +58,116 @@ export default function ResearchPage() {
 function Research() {
   const { toast } = useToast();
   const [prompt, setPrompt] = useState('');
-  const [saved, setSaved] = useState<SavedPrompt[] | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [savedPrompts, setSavedPrompts] = useState<SavedPrompt[] | null>(null);
+  const [savedRuns, setSavedRuns] = useState<SavedRunItem[] | null>(null);
+
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState('');
+  const [code, setCode] = useState('');
   const [blocks, setBlocks] = useState<string[]>([]);
   const [log, setLog] = useState('');
+  const [isFresh, setIsFresh] = useState(false); // свежий прогон (можно сохранить результат)
+
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [titleInput, setTitleInput] = useState('');
+  const [savingPrompt, setSavingPrompt] = useState(false);
+  const [savingResult, setSavingResult] = useState(false);
+
   const outRef = useRef<HTMLDivElement>(null);
 
   async function loadPrompts() {
     try {
-      const r = await fetch('/api/research/prompts');
-      const d = await r.json();
-      setSaved(Array.isArray(d?.prompts) ? d.prompts : []);
+      const d = await (await fetch('/api/research/prompts')).json();
+      setSavedPrompts(Array.isArray(d?.prompts) ? d.prompts : []);
     } catch {
-      setSaved([]);
+      setSavedPrompts([]);
+    }
+  }
+  async function loadRuns() {
+    try {
+      const d = await (await fetch('/api/research/runs')).json();
+      setSavedRuns(Array.isArray(d?.runs) ? d.runs : []);
+    } catch {
+      setSavedRuns([]);
     }
   }
   useEffect(() => {
     loadPrompts();
+    loadRuns();
   }, []);
-
   useEffect(() => {
     outRef.current?.scrollTo({ top: outRef.current.scrollHeight, behavior: 'smooth' });
-  }, [blocks, status]);
+  }, [blocks, log, status, code]);
 
-  async function save() {
-    if (!prompt.trim()) return;
-    setSaving(true);
+  async function confirmSavePrompt() {
+    const title = titleInput.trim();
+    if (!title || !prompt.trim()) return;
+    setSavingPrompt(true);
     try {
       const r = await fetch('/api/research/prompts', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ prompt: prompt.trim() }),
+        body: JSON.stringify({ prompt: prompt.trim(), title }),
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Не удалось сохранить');
       toast({ variant: 'success', title: 'Промт сохранён' });
+      setSaveOpen(false);
+      setTitleInput('');
       loadPrompts();
     } catch (e: any) {
       toast({ variant: 'error', title: 'Ошибка сохранения', description: e?.message });
     } finally {
-      setSaving(false);
+      setSavingPrompt(false);
+    }
+  }
+
+  function buildResultHtml(): string {
+    const logHtml = log ? `<pre class="rlog">${esc(log)}</pre>` : '';
+    return logHtml + blocks.join('');
+  }
+
+  async function saveResult() {
+    const resultHtml = buildResultHtml();
+    if (!resultHtml) return;
+    setSavingResult(true);
+    try {
+      const r = await fetch('/api/research/runs', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: prompt.trim(), code, resultHtml }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d?.error || 'Не удалось сохранить результат');
+      toast({ variant: 'success', title: 'Результат сохранён', description: d?.title });
+      loadRuns();
+    } catch (e: any) {
+      toast({ variant: 'error', title: 'Ошибка сохранения', description: e?.message });
+    } finally {
+      setSavingResult(false);
+    }
+  }
+
+  async function openSavedRun(id: number) {
+    try {
+      const d = await (await fetch(`/api/research/runs/${id}`)).json();
+      const run = d?.run;
+      if (!run) throw new Error('Результат не найден');
+      setRunning(false);
+      setIsFresh(false);
+      setCode(run.code || '');
+      setLog('');
+      setBlocks(run.result_html ? [run.result_html] : []);
+      setStatus('Сохранённый результат');
+    } catch (e: any) {
+      toast({ variant: 'error', title: 'Не удалось открыть', description: e?.message });
     }
   }
 
   async function execute() {
     if (!prompt.trim() || running) return;
     setRunning(true);
+    setIsFresh(true);
+    setCode('');
     setBlocks([]);
     setLog('');
     setStatus('Отправка запроса…');
@@ -105,8 +197,9 @@ function Research() {
             continue;
           }
           if (ev.type === 'status') setStatus(ev.text);
-          else if (ev.type === 'log') setLog((l) => l + ev.text);
+          else if (ev.type === 'code') setCode(ev.code);
           else if (ev.type === 'block') setBlocks((b) => [...b, ev.html]);
+          else if (ev.type === 'log') setLog((l) => l + ev.text);
           else if (ev.type === 'done') setStatus('Готово');
         }
       }
@@ -118,7 +211,8 @@ function Research() {
     }
   }
 
-  const hasOutput = blocks.length > 0 || log.length > 0 || running;
+  const hasOutput = code.length > 0 || blocks.length > 0 || log.length > 0 || running;
+  const canSaveResult = isFresh && !running && (blocks.length > 0 || log.length > 0);
 
   return (
     <>
@@ -136,7 +230,7 @@ function Research() {
       </header>
 
       <main className="mx-auto grid max-w-[1200px] grid-cols-1 gap-4 px-4 py-6 sm:px-6 lg:grid-cols-[380px_1fr] lg:py-8">
-        {/* Левая колонка — чат/промт */}
+        {/* Левая колонка */}
         <div className="flex min-w-0 flex-col gap-4">
           <Card>
             <CardHeader>
@@ -153,8 +247,8 @@ function Research() {
                 <Button onClick={execute} loading={running} disabled={!prompt.trim()} fullWidth>
                   {running ? 'Выполняется…' : 'Исполнить'}
                 </Button>
-                <Button variant="secondary" onClick={save} loading={saving} disabled={!prompt.trim()}>
-                  Сохранить
+                <Button variant="secondary" onClick={() => setSaveOpen(true)} disabled={!prompt.trim()}>
+                  Сохранить промт
                 </Button>
               </div>
             </CardContent>
@@ -165,24 +259,54 @@ function Research() {
               <CardTitle>Сохранённые промты</CardTitle>
             </CardHeader>
             <CardContent>
-              {saved === null ? (
+              {savedPrompts === null ? (
                 <div className="space-y-2">
                   <Skeleton className="h-12 w-full" />
                   <Skeleton className="h-12 w-full" />
                 </div>
-              ) : saved.length === 0 ? (
-                <p className="text-sm text-ink-3">Пока пусто. Сохрани первый промт кнопкой «Сохранить».</p>
+              ) : savedPrompts.length === 0 ? (
+                <p className="text-sm text-ink-3">Пока пусто. Сохрани первый промт — с названием.</p>
               ) : (
                 <ul className="space-y-2">
-                  {saved.map((p) => (
+                  {savedPrompts.map((p) => (
                     <li key={p.id}>
                       <button
                         type="button"
                         onClick={() => setPrompt(p.prompt)}
                         className="w-full rounded-fk border border-line bg-surface-elev px-3 py-2.5 text-left transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
                       >
-                        <span className="line-clamp-2 text-sm text-ink">{p.prompt}</span>
-                        <span className="mt-1 block text-[11px] text-ink-3 tabular-nums">{p.created_at.slice(0, 10)}</span>
+                        <span className="block truncate text-sm font-semibold text-ink">{p.title || 'Без названия'}</span>
+                        <span className="mt-0.5 line-clamp-1 text-[12px] text-ink-3">{p.prompt}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Сохранённые результаты</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {savedRuns === null ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-10 w-full" />
+                </div>
+              ) : savedRuns.length === 0 ? (
+                <p className="text-sm text-ink-3">Сохрани результат прогона кнопкой «Сохранить результат».</p>
+              ) : (
+                <ul className="space-y-2" data-testid="saved-runs">
+                  {savedRuns.map((r) => (
+                    <li key={r.id}>
+                      <button
+                        type="button"
+                        onClick={() => openSavedRun(r.id)}
+                        className="w-full rounded-fk border border-line bg-surface-elev px-3 py-2.5 text-left transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
+                      >
+                        <span className="block truncate text-sm font-medium text-ink">{r.title || `Результат #${r.id}`}</span>
+                        <span className="mt-0.5 block text-[11px] tabular-nums text-ink-3">{r.created_at.slice(0, 16).replace('T', ' ')}</span>
                       </button>
                     </li>
                   ))}
@@ -194,16 +318,23 @@ function Research() {
 
         {/* Правая колонка — результат */}
         <Card className="flex min-h-[60vh] min-w-0 flex-col">
-          <CardHeader className="flex items-center justify-between">
+          <CardHeader className="flex flex-row items-center justify-between gap-3">
             <CardTitle>Результат</CardTitle>
-            {running ? (
-              <span className="inline-flex items-center gap-2 text-sm text-ink-2">
-                <Spinner className="text-brand" />
-                {status}
-              </span>
-            ) : status ? (
-              <Badge variant={status === 'Ошибка' ? 'down' : 'up'}>{status}</Badge>
-            ) : null}
+            <div className="flex items-center gap-3">
+              {running ? (
+                <span className="inline-flex items-center gap-2 text-sm text-ink-2">
+                  <Spinner className="text-brand" />
+                  {status}
+                </span>
+              ) : status ? (
+                <Badge variant={status === 'Ошибка' ? 'down' : 'up'}>{status}</Badge>
+              ) : null}
+              {canSaveResult && (
+                <Button size="sm" variant="secondary" onClick={saveResult} loading={savingResult}>
+                  Сохранить результат
+                </Button>
+              )}
+            </div>
           </CardHeader>
           <div ref={outRef} className="flex-1 overflow-auto px-5 pb-5 sm:px-6">
             {!hasOutput ? (
@@ -218,16 +349,45 @@ function Research() {
               </div>
             ) : (
               <div className="research-output">
+                {code && <CodeBlock code={code} />}
+                {log && <pre className="rlog">{log}</pre>}
                 {blocks.map((html, i) => (
                   <div key={i} dangerouslySetInnerHTML={{ __html: html }} />
                 ))}
-                {log && <pre className="rlog">{log}</pre>}
-                {running && blocks.length === 0 && !log && <Skeleton className="h-24 w-full" />}
+                {running && !code && blocks.length === 0 && !log && <Skeleton className="h-24 w-full" />}
               </div>
             )}
           </div>
         </Card>
       </main>
+
+      <Modal
+        open={saveOpen}
+        onClose={() => setSaveOpen(false)}
+        title="Сохранить промт"
+        description="Дайте промту понятное название — по нему найдёте его в списке."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setSaveOpen(false)}>
+              Отмена
+            </Button>
+            <Button onClick={confirmSavePrompt} loading={savingPrompt} disabled={!titleInput.trim()}>
+              Сохранить
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3 pt-1">
+          <Input
+            autoFocus
+            value={titleInput}
+            onChange={(e) => setTitleInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && titleInput.trim() && confirmSavePrompt()}
+            placeholder="Название, напр.: «Просадки QQQ и форвардная доходность»"
+          />
+          <p className="line-clamp-2 text-[13px] text-ink-3">{prompt}</p>
+        </div>
+      </Modal>
     </>
   );
 }

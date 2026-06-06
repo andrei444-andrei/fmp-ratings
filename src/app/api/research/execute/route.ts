@@ -1,7 +1,6 @@
 import { getPrices } from '@/lib/research/prices';
 import { syntheticSeries } from '@/lib/research/metrics';
 import { aimlChatMeta } from '@/lib/aimlapi';
-import { saveRun } from '@/lib/research/store';
 import { runResearchPython, type PriceRow } from '@/lib/research/python';
 import { logAppError } from '@/lib/app-errors';
 
@@ -99,7 +98,7 @@ export async function POST(req: Request) {
           code = DEFAULT_SCRIPT;
           if (!process.env.AIMLAPI_KEY) send({ type: 'block', html: `<p class="rmuted">AIMLAPI_KEY не задан — выполняю базовый скрипт доходности.</p>` });
         }
-        send({ type: 'block', html: `<div class="rblk"><div class="rcap">Python-скрипт</div><pre class="rcode"><code>${escapeHtml(code)}</code></pre></div>` });
+        send({ type: 'code', code });
 
         // 2) Подготовить цены (кэш/FMP; синтетика как fallback)
         send({ type: 'status', text: 'Готовлю данные по ценам…' });
@@ -140,7 +139,6 @@ export async function POST(req: Request) {
         });
 
         send({ type: 'done' });
-        saveRun({ prompt, code, status: 'ok', resultHtml: null }).catch(() => {});
       } catch (e: any) {
         const msg = e?.message || String(e);
         send({ type: 'block', html: `<p class="rerr">Ошибка: ${escapeHtml(msg)}</p>` });
@@ -152,7 +150,6 @@ export async function POST(req: Request) {
           user_agent: ua,
           meta: { prompt, tickers, code },
         }).catch(() => {});
-        saveRun({ prompt, code: code || null, status: 'error', resultHtml: null, error: msg }).catch(() => {});
       } finally {
         closed = true;
         try {
