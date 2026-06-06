@@ -23,13 +23,16 @@ export function getAimlSonarModel(): string {
 
 export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
-export async function aimlChat(opts: {
+export type ChatOpts = {
   messages: ChatMessage[];
   model?: string;
   temperature?: number;
   max_tokens?: number;
   response_format?: { type: 'json_object' };
-}): Promise<string> {
+};
+
+// Полный вариант: возвращает контент И finish_reason (нужно ловить обрезку 'length').
+export async function aimlChatMeta(opts: ChatOpts): Promise<{ content: string; finishReason: string | null }> {
   const key = getAimlApiKey();
   const body: any = {
     model: opts.model || getAimlModel(),
@@ -56,7 +59,12 @@ export async function aimlChat(opts: {
   if (typeof content !== 'string') {
     throw new Error('aimlapi: пустой ответ');
   }
-  return content;
+  const finishReason = data?.choices?.[0]?.finish_reason ?? null;
+  return { content, finishReason };
+}
+
+export async function aimlChat(opts: ChatOpts): Promise<string> {
+  return (await aimlChatMeta(opts)).content;
 }
 
 // Как aimlChat, но дополнительно возвращает источники (citations) — для Perplexity Sonar.

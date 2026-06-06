@@ -1,6 +1,6 @@
 import { getPrices } from '@/lib/research/prices';
 import { syntheticSeries } from '@/lib/research/metrics';
-import { aimlChat } from '@/lib/aimlapi';
+import { aimlChatMeta } from '@/lib/aimlapi';
 import { saveRun } from '@/lib/research/store';
 import { runResearchPython, type PriceRow } from '@/lib/research/python';
 import { logAppError } from '@/lib/app-errors';
@@ -74,16 +74,23 @@ export async function POST(req: Request) {
         if (process.env.AIMLAPI_KEY) {
           send({ type: 'status', text: 'Генерирую Python-скрипт…' });
           try {
-            const raw = await aimlChat({
+            const { content: raw, finishReason } = await aimlChatMeta({
               model: process.env.AIMLAPI_CODE_MODEL?.trim() || 'gpt-4o',
               temperature: 0.1,
-              max_tokens: 800,
+              max_tokens: 3500,
               messages: [
                 { role: 'system', content: SYS_PROMPT },
                 { role: 'user', content: `Доступные тикеры: ${tickers.join(', ')}. Запрос: «${prompt}». Напиши скрипт.` },
               ],
             });
-            code = stripFences(raw);
+            if (finishReason === 'length') {
+              // Генерация обрезана по лимиту → код почти наверняка с SyntaxError, не исполняем.
+              send({ type: 'block', html: `<p class="rmuted">Скрипт получился слишком длинным и был обрезан по лимиту токенов — упростите запрос (меньше горизонтов/тикеров). Ниже — базовый расчёт.</p>` });
+              logAppError({ route: '/api/research/execute', level: 'warn', message: 'codegen truncated (finish_reason=length)', user_agent: ua, meta: { prompt, tickers } }).catch(() => {});
+              code = '';
+            } else {
+              code = stripFences(raw);
+            }
           } catch {
             code = '';
           }
