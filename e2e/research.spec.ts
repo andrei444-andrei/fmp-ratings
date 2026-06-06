@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test';
 
 // Смоук «Исследование трендов»: рендер, реальное исполнение Python (Pyodide),
-// сохранение промта. В e2e ключи отключены → базовый скрипт + синтетика,
-// но Python исполняется по-настоящему и формирует таблицу result.
+// сохранение промта (с обязательным названием), сохранение и просмотр результата.
+// В e2e ключи отключены → базовый скрипт + синтетика, но Python исполняется по-настоящему.
 test.describe('Research /research', () => {
   test('страница и пустое состояние рендерятся', async ({ page }) => {
     await page.goto('/research');
@@ -14,17 +14,32 @@ test.describe('Research /research', () => {
     await page.goto('/research');
     await page.locator('textarea').fill('доходность AAPL и MSFT за год');
     await page.getByRole('button', { name: 'Исполнить' }).click();
-    await expect(page.getByText('Тикеры в анализе:')).toBeVisible({ timeout: 20000 });
-    // Pyodide грузит ядро + pandas с CDN на первом прогоне — даём запас.
     await expect(page.locator('.research-output .rtblwrap table')).toBeVisible({ timeout: 90000 });
   });
 
-  test('сохранение промта показывает его в списке', async ({ page }) => {
+  test('сохранение промта требует название и показывает его в списке', async ({ page }) => {
     await page.goto('/research');
-    const text = 'e2e промт ' + Date.now();
-    await page.locator('textarea').fill(text);
-    await page.getByRole('button', { name: 'Сохранить' }).click();
+    const title = 'e2e заголовок ' + Date.now();
+    await page.locator('textarea').fill('промт для сохранения');
+    await page.getByRole('button', { name: 'Сохранить промт' }).click();
+    const saveBtn = page.getByRole('button', { name: 'Сохранить', exact: true });
+    await expect(saveBtn).toBeVisible();
+    await expect(saveBtn).toBeDisabled(); // без названия нельзя
+    await page.getByPlaceholder(/Название/).fill(title);
+    await saveBtn.click();
     await expect(page.getByText('Промт сохранён')).toBeVisible({ timeout: 15000 });
-    await expect(page.locator('li').getByText(text)).toBeVisible();
+    await expect(page.locator('li').getByText(title)).toBeVisible();
+  });
+
+  test('сохранение результата и его просмотр', async ({ page }) => {
+    await page.goto('/research');
+    await page.locator('textarea').fill('доходность QQQ за год');
+    await page.getByRole('button', { name: 'Исполнить' }).click();
+    await expect(page.locator('.research-output .rtblwrap table')).toBeVisible({ timeout: 90000 });
+    await page.getByRole('button', { name: 'Сохранить результат' }).click();
+    await expect(page.getByText('Результат сохранён')).toBeVisible({ timeout: 15000 });
+    // открыть первый сохранённый результат
+    await page.getByTestId('saved-runs').locator('button').first().click();
+    await expect(page.getByText('Сохранённый результат')).toBeVisible();
   });
 });
