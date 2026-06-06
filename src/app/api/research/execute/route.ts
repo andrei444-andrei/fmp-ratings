@@ -5,14 +5,14 @@ import { runResearchPython, type PriceRow } from '@/lib/research/python';
 import { logAppError } from '@/lib/app-errors';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 const STOP = new Set(['AI', 'AND', 'THE', 'FOR', 'VS', 'USD', 'ETF', 'SP', 'API', 'CEO', 'USA', 'GDP', 'PE', 'EPS']);
 
 function extractTickers(prompt: string): string[] {
   // Латинские тикеры, в т.ч. с цифрами и биржевым суффиксом (.L, .DE, .HK).
   const m = prompt.toUpperCase().match(/\b[A-Z][A-Z0-9]{0,5}(?:\.[A-Z]{1,4})?\b/g) ?? [];
-  return [...new Set(m)].filter((t) => !STOP.has(t) && /[A-Z]/.test(t)).slice(0, 8);
+  return [...new Set(m)].filter((t) => !STOP.has(t) && /[A-Z]/.test(t)).slice(0, 50);
 }
 
 function escapeHtml(s: string): string {
@@ -27,7 +27,9 @@ function stripFences(code: string): string {
 
 const TICKER_SYS =
   'Подбери тикеры (символы, котируемые на FMP) под запрос пользователя и верни СТРОГО JSON ' +
-  'вида {"tickers": ["EWJ", "EWZ"]}, от 1 до 8 штук. Используй реальные ликвидные символы. ' +
+  'вида {"tickers": ["EWJ", "EWZ"]}. Верни СТОЛЬКО тикеров, сколько уместно под запрос: ' +
+  'если пользователь просит конкретное число N (или «не меньше N») — верни примерно N (до 50). ' +
+  'Используй реальные ликвидные символы. ' +
   'Доступны НЕ только США. Для стран бери ликвидные страновые ETF (листинг в США): ' +
   'США SPY/QQQ, Япония EWJ, Германия EWG, Великобритания EWU, Франция EWQ, Швейцария EWL, ' +
   'Италия EWI, Испания EWP, Канада EWC, Австралия EWA, Китай FXI или MCHI, Гонконг EWH, ' +
@@ -41,7 +43,7 @@ async function resolveTickers(prompt: string): Promise<string[]> {
     try {
       const { content } = await aimlChatMeta({
         temperature: 0,
-        max_tokens: 200,
+        max_tokens: 500,
         response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: TICKER_SYS },
@@ -53,7 +55,7 @@ async function resolveTickers(prompt: string): Promise<string[]> {
       const tickers = arr
         .map((t: any) => String(t).toUpperCase().trim())
         .filter((t: string) => /^[A-Z][A-Z0-9.\-]{0,11}$/.test(t));
-      if (tickers.length) return [...new Set<string>(tickers)].slice(0, 8);
+      if (tickers.length) return [...new Set<string>(tickers)].slice(0, 50);
     } catch {
       /* падаем на regex */
     }
@@ -147,13 +149,19 @@ export async function POST(req: Request) {
         const from = new Date(Date.now() - 25 * 365 * 864e5).toISOString().slice(0, 10);
         const prices: Record<string, PriceRow[]> = {};
         let anyDemo = false;
-        for (const sym of tickers) {
-          let s = await getPrices(sym, from, to);
-          if (s.length < 5) {
-            s = syntheticSeries(sym);
-            anyDemo = true;
-          }
-          prices[sym] = s.map((r) => ({ date: r.date, close: r.close }));
+        // Тикеров может быть много (до 50) — тянем цены с ограниченной параллельностью.
+        const CONC = 6;
+        for (let i = 0; i < tickers.length; i += CONC) {
+          await Promise.all(
+            tickers.slice(i, i + CONC).map(async (sym) => {
+              let s = await getPrices(sym, from, to);
+              if (s.length < 5) {
+                s = syntheticSeries(sym);
+                anyDemo = true;
+              }
+              prices[sym] = s.map((r) => ({ date: r.date, close: r.close }));
+            }),
+          );
         }
         if (anyDemo) send({ type: 'block', html: `<p class="rmuted">Часть данных синтетическая (demo): нет FMP-ключа или истории по тикеру.</p>` });
 
