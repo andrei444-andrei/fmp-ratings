@@ -74,15 +74,16 @@ export async function savePrompt(prompt: string, title: string): Promise<number>
   return Number(r.lastInsertRowid ?? 0);
 }
 
-export type SavedRunItem = { id: number; title: string | null; created_at: string };
+export type SavedRunItem = { id: number; prompt_id: number | null; title: string | null; created_at: string };
 
 export async function listRuns(): Promise<SavedRunItem[]> {
   await ensureResearchTables();
   const r = await libsqlClient.execute(
-    `SELECT id, title, created_at FROM research_runs ORDER BY id DESC LIMIT 50`,
+    `SELECT id, prompt_id, title, created_at FROM research_runs ORDER BY id DESC LIMIT 50`,
   );
   return r.rows.map((x) => ({
     id: Number(x.id),
+    prompt_id: x.prompt_id != null ? Number(x.prompt_id) : null,
     title: x.title != null ? String(x.title) : null,
     created_at: String(x.created_at),
   }));

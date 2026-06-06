@@ -23,7 +23,7 @@ import {
 hljs.registerLanguage('python', python);
 
 type SavedPrompt = { id: number; title: string | null; prompt: string; created_at: string };
-type SavedRunItem = { id: number; title: string | null; created_at: string };
+type SavedRunItem = { id: number; prompt_id: number | null; title: string | null; created_at: string };
 
 function esc(s: string): string {
   return s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!));
@@ -255,6 +255,18 @@ function Research() {
   }
 
   const hasOutput = code.length > 0 || blocks.length > 0 || log.length > 0 || running;
+  // Результаты, сгруппированные по промту (вкладываем под каждый промт).
+  const runsByPrompt = useMemo(() => {
+    const m = new Map<number, SavedRunItem[]>();
+    for (const r of savedRuns ?? []) {
+      if (r.prompt_id == null) continue;
+      const arr = m.get(r.prompt_id) ?? [];
+      arr.push(r);
+      m.set(r.prompt_id, arr);
+    }
+    return m;
+  }, [savedRuns]);
+
   const hasFreshOutput = blocks.length > 0 || log.length > 0;
   // Результат можно сохранить, только если текущий текст — это сохранённый промт.
   const promptSaved = !!activePrompt && activePrompt.text === prompt.trim();
@@ -304,6 +316,7 @@ function Research() {
           <Card>
             <CardHeader>
               <CardTitle>Сохранённые промты</CardTitle>
+              <CardDescription>Промт и сохранённые к нему результаты прогонов.</CardDescription>
             </CardHeader>
             <CardContent>
               {savedPrompts === null ? (
@@ -314,70 +327,66 @@ function Research() {
               ) : savedPrompts.length === 0 ? (
                 <p className="text-sm text-ink-3">Пока пусто. Сохрани первый промт — с названием.</p>
               ) : (
-                <ul className="space-y-2" data-testid="saved-prompts">
-                  {savedPrompts.map((p) => (
-                    <li key={p.id} className="flex items-stretch gap-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPrompt(p.prompt);
-                          setActivePrompt({ id: p.id, text: p.prompt });
-                        }}
-                        className="min-w-0 flex-1 rounded-fk border border-line bg-surface-elev px-3 py-2.5 text-left transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
-                      >
-                        <span className="block truncate text-sm font-semibold text-ink">{p.title || 'Без названия'}</span>
-                        <span className="mt-0.5 line-clamp-1 text-[12px] text-ink-3">{p.prompt}</span>
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="Удалить промт"
-                        title="Удалить"
-                        onClick={() => onDeletePrompt(p.id)}
-                        className="shrink-0 rounded-fk border border-line px-2 text-ink-3 transition-colors hover:border-down hover:text-down focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
-                      >
-                        <TrashIcon />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Сохранённые результаты</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {savedRuns === null ? (
-                <div className="space-y-2">
-                  <Skeleton className="h-10 w-full" />
-                </div>
-              ) : savedRuns.length === 0 ? (
-                <p className="text-sm text-ink-3">Сохрани результат прогона кнопкой «Сохранить результат».</p>
-              ) : (
-                <ul className="space-y-2" data-testid="saved-runs">
-                  {savedRuns.map((r) => (
-                    <li key={r.id} className="flex items-stretch gap-1">
-                      <button
-                        type="button"
-                        onClick={() => openSavedRun(r.id)}
-                        className="min-w-0 flex-1 rounded-fk border border-line bg-surface-elev px-3 py-2.5 text-left transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
-                      >
-                        <span className="block truncate text-sm font-medium text-ink">{r.title || `Результат #${r.id}`}</span>
-                        <span className="mt-0.5 block text-[11px] tabular-nums text-ink-3">{r.created_at.slice(0, 16).replace('T', ' ')}</span>
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="Удалить результат"
-                        title="Удалить"
-                        onClick={() => onDeleteRun(r.id)}
-                        className="shrink-0 rounded-fk border border-line px-2 text-ink-3 transition-colors hover:border-down hover:text-down focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
-                      >
-                        <TrashIcon />
-                      </button>
-                    </li>
-                  ))}
+                <ul className="space-y-3" data-testid="saved-prompts">
+                  {savedPrompts.map((p) => {
+                    const runs = runsByPrompt.get(p.id) ?? [];
+                    return (
+                      <li key={p.id} className="rounded-fk border border-line bg-surface-elev">
+                        <div className="flex items-stretch gap-1 p-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPrompt(p.prompt);
+                              setActivePrompt({ id: p.id, text: p.prompt });
+                            }}
+                            className="min-w-0 flex-1 rounded-fk-sm px-3 py-2 text-left transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
+                          >
+                            <span className="block truncate text-sm font-semibold text-ink">{p.title || 'Без названия'}</span>
+                            <span className="mt-0.5 line-clamp-1 text-[12px] text-ink-3">{p.prompt}</span>
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="Удалить промт"
+                            title="Удалить промт и его результаты"
+                            onClick={() => onDeletePrompt(p.id)}
+                            className="shrink-0 rounded-fk-sm px-2 text-ink-3 transition-colors hover:bg-surface-2 hover:text-down focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
+                          >
+                            <TrashIcon />
+                          </button>
+                        </div>
+                        {runs.length > 0 && (
+                          <ul className="space-y-1 border-t border-line px-2 pb-2 pt-1.5">
+                            {runs.map((r) => (
+                              <li key={r.id} className="flex items-stretch gap-1">
+                                <button
+                                  type="button"
+                                  data-testid="run-open"
+                                  onClick={() => openSavedRun(r.id)}
+                                  className="min-w-0 flex-1 rounded-fk-sm px-2.5 py-1.5 text-left transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
+                                >
+                                  <span className="flex items-center gap-2">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0 text-ink-3">
+                                      <path d="M4 19V5m0 14h16M8 15l3-4 3 3 4-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                    <span className="min-w-0 flex-1 truncate text-[13px] text-ink-2">{r.title || `Результат #${r.id}`}</span>
+                                  </span>
+                                </button>
+                                <button
+                                  type="button"
+                                  aria-label="Удалить результат"
+                                  title="Удалить результат"
+                                  onClick={() => onDeleteRun(r.id)}
+                                  className="shrink-0 rounded-fk-sm px-2 text-ink-3 transition-colors hover:bg-surface-2 hover:text-down focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
+                                >
+                                  <TrashIcon />
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </CardContent>
