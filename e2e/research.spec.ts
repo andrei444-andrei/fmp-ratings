@@ -48,7 +48,7 @@ test.describe('Research /research', () => {
     await page.getByRole('button', { name: 'Сохранить результат' }).click();
     await expect(page.getByText('Результат сохранён')).toBeVisible({ timeout: 15000 });
     // 4) открыть сохранённый результат
-    await page.getByTestId('saved-runs').locator('button').first().click();
+    await page.locator('[data-testid="run-open"]').first().click();
     await expect(page.getByText('Сохранённый результат')).toBeVisible();
   });
 
@@ -60,7 +60,7 @@ test.describe('Research /research', () => {
     await page.getByPlaceholder(/Название/).fill(title);
     await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
     await expect(page.getByText('Промт сохранён')).toBeVisible({ timeout: 15000 });
-    const item = page.getByTestId('saved-prompts').locator('li').filter({ hasText: title });
+    const item = page.getByTestId('saved-prompts').locator('> li').filter({ hasText: title });
     await expect(item).toBeVisible();
     await item.getByRole('button', { name: 'Удалить промт' }).click();
     await expect(page.getByText('Промт и его результаты удалены')).toBeVisible({ timeout: 15000 });
@@ -85,10 +85,10 @@ test.describe('Research /research', () => {
     await expect(page.locator('.research-output .rtblwrap table')).toBeVisible({ timeout: 90000 });
     await page.getByRole('button', { name: 'Сохранить результат' }).click();
     await expect(page.getByText('Результат сохранён')).toBeVisible({ timeout: 15000 });
-    await expect(page.getByTestId('saved-runs').getByText(title)).toBeVisible();
-    const item = page.getByTestId('saved-prompts').locator('li').filter({ hasText: title });
+    await expect(page.locator('[data-testid="run-open"]').filter({ hasText: title })).toBeVisible();
+    const item = page.getByTestId('saved-prompts').locator('> li').filter({ hasText: title });
     await item.getByRole('button', { name: 'Удалить промт' }).click();
     await expect(page.getByText('Промт и его результаты удалены')).toBeVisible({ timeout: 15000 });
-    await expect(page.getByTestId('saved-runs').getByText(title)).toHaveCount(0);
+    await expect(page.locator('[data-testid="run-open"]').filter({ hasText: title })).toHaveCount(0);
   });
 });
