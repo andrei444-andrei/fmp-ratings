@@ -91,3 +91,62 @@
   margin-left: 4px;
   vertical-align: middle;
 }
+
+/* Лог stdout исполнения */
+.research-output .rlog {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, "Roboto Mono", Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--fk-text-2);
+  background: var(--fk-surface-2);
+  border: 1px solid var(--fk-line);
+  border-radius: var(--fk-radius);
+  padding: 10px 12px;
+}
+
+/* Обёртка под таблицы pandas (to_html) */
+.research-output .rtblwrap {
+  overflow-x: auto;
+  padding: 4px 0;
+}
+.research-output .rtblwrap table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 0;
+  font-size: 13.5px;
+}
+.research-output .rtblwrap th,
+.research-output .rtblwrap td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--fk-line);
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.research-output .rtblwrap thead th {
+  color: var(--fk-text-3);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.research-output .rtblwrap th:first-child,
+.research-output .rtblwrap td:first-child {
+  text-align: left;
+  font-weight: 600;
+  color: var(--fk-text);
+}
+.research-output .rtblwrap tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* Графики */
+.research-output img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--fk-radius);
+}

@@ -1,12 +1,13 @@
 import { getPrices } from '@/lib/research/prices';
-import { syntheticSeries, computeMetrics } from '@/lib/research/metrics';
+import { syntheticSeries } from '@/lib/research/metrics';
 import { aimlChat } from '@/lib/aimlapi';
 import { saveRun } from '@/lib/research/store';
+import { runResearchPython, type PriceRow } from '@/lib/research/python';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const STOP = new Set(['AI', 'AND', 'THE', 'FOR', 'VS', 'USD', 'ETF', 'SP', 'API', 'CEO', 'USA', 'GDP']);
+const STOP = new Set(['AI', 'AND', 'THE', 'FOR', 'VS', 'USD', 'ETF', 'SP', 'API', 'CEO', 'USA', 'GDP', 'PE', 'EPS']);
 
 function extractTickers(prompt: string): string[] {
   const m = prompt.toUpperCase().match(/\b[A-Z]{1,5}\b/g) ?? [];
@@ -17,18 +18,26 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 }
 
-function svgSpark(closes: number[]): string {
-  if (closes.length < 2) return '';
-  const w = 96, h = 28, p = 2;
-  const min = Math.min(...closes), max = Math.max(...closes), span = max - min || 1;
-  const step = w / (closes.length - 1);
-  const d = closes
-    .map((v, i) => `${i ? 'L' : 'M'}${(i * step).toFixed(1)} ${(p + (h - 2 * p) - ((v - min) / span) * (h - 2 * p)).toFixed(1)}`)
-    .join(' ');
-  const up = closes[closes.length - 1] >= closes[0];
-  const c = up ? 'var(--fk-up)' : 'var(--fk-down)';
-  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" fill="none" preserveAspectRatio="none"><path d="${d}" stroke="${c}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+// Снимаем markdown-ограждения, если модель их добавила.
+function stripFences(code: string): string {
+  const m = code.match(/```(?:python|py)?\s*([\s\S]*?)```/i);
+  return (m ? m[1] : code).trim();
 }
+
+const SYS_PROMPT =
+  'Ты пишешь Python-скрипт для анализа трендов цен акций. В окружении УЖЕ доступны: ' +
+  '`pandas as pd`, `numpy`, и готовый DataFrame `df` с колонками `symbol` (тикер), `date` (datetime), ' +
+  '`close` (цена закрытия) по нескольким тикерам. Доступен matplotlib (backend Agg) — если нужен график, используй `plt`. ' +
+  'Требования: (1) используй df, не выдумывай данные; (2) посчитай ИМЕННО то, что просит пользователь; ' +
+  '(3) через print() кратко выведи ключевые выводы; (4) ОБЯЗАТЕЛЬНО присвой итоговую таблицу переменной `result` (pandas DataFrame). ' +
+  'Выводи ТОЛЬКО исполняемый Python, без markdown-ограждений и пояснений.';
+
+// Базовый скрипт, когда нет ключа AIMLAPI (всё равно реальный Python).
+const DEFAULT_SCRIPT = `g = df.sort_values('date').groupby('symbol')['close']
+ret = (g.last() / g.first() - 1) * 100
+result = ret.round(2).rename('Доходность, %').reset_index().rename(columns={'symbol': 'Тикер'})
+print('Доходность за период по тикерам:')
+print(result.to_string(index=False))`;
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
@@ -37,80 +46,80 @@ export async function POST(req: Request) {
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const send = (obj: unknown) => controller.enqueue(encoder.encode(JSON.stringify(obj) + '\n'));
-      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-      let generatedCode: string | null = null;
-      let finalHtml = '';
+      let closed = false;
+      const send = (obj: unknown) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(JSON.stringify(obj) + '\n'));
+        } catch {
+          closed = true;
+        }
+      };
+      let code = '';
       try {
         send({ type: 'status', text: 'Анализирую запрос…' });
-        await sleep(150);
-
         const found = extractTickers(prompt);
         const tickers = found.length ? found : ['AAPL', 'MSFT', 'NVDA'];
         send({ type: 'block', html: `<p class="rlead">Тикеры в анализе: <b>${tickers.map(escapeHtml).join(', ')}</b></p>` });
 
-        // Реальная AI-генерация Python (превью; исполнение — следующий шаг)
+        // 1) Сгенерировать скрипт (или взять базовый)
         if (process.env.AIMLAPI_KEY) {
           send({ type: 'status', text: 'Генерирую Python-скрипт…' });
           try {
-            generatedCode = await aimlChat({
+            const raw = await aimlChat({
               model: process.env.AIMLAPI_CODE_MODEL || undefined,
               temperature: 0.1,
-              max_tokens: 550,
+              max_tokens: 800,
               messages: [
-                { role: 'system', content: 'Ты пишешь короткий Python-скрипт (pandas) для анализа трендов цен акций. Выводи ТОЛЬКО код, без markdown-ограждений и пояснений.' },
-                { role: 'user', content: `Дан DataFrame df с колонками [symbol, date, close] по тикерам ${tickers.join(', ')}. Запрос пользователя: «${prompt}». Посчитай по каждому тикеру доходность за период, 50-дневную скользящую среднюю и максимальную просадку; собери итоговую таблицу result.` },
+                { role: 'system', content: SYS_PROMPT },
+                { role: 'user', content: `Доступные тикеры: ${tickers.join(', ')}. Запрос: «${prompt}». Напиши скрипт.` },
               ],
             });
-            send({ type: 'block', html: `<div class="rblk"><div class="rcap">Сгенерированный Python (превью — исполнение на следующем шаге)</div><pre class="rcode"><code>${escapeHtml(generatedCode.trim())}</code></pre></div>` });
+            code = stripFences(raw);
           } catch {
-            send({ type: 'block', html: `<p class="rmuted">AI-генерация недоступна (нет ключа/ошибка) — показываю прямой расчёт.</p>` });
+            code = '';
           }
-        } else {
-          send({ type: 'block', html: `<p class="rmuted">AIMLAPI_KEY не задан — пропускаю генерацию кода, считаю напрямую.</p>` });
         }
+        if (!code) {
+          code = DEFAULT_SCRIPT;
+          if (!process.env.AIMLAPI_KEY) send({ type: 'block', html: `<p class="rmuted">AIMLAPI_KEY не задан — выполняю базовый скрипт доходности.</p>` });
+        }
+        send({ type: 'block', html: `<div class="rblk"><div class="rcap">Python-скрипт</div><pre class="rcode"><code>${escapeHtml(code)}</code></pre></div>` });
 
-        send({ type: 'status', text: 'Считаю метрики по ценам…' });
+        // 2) Подготовить цены (кэш/FMP; синтетика как fallback)
+        send({ type: 'status', text: 'Готовлю данные по ценам…' });
         const to = new Date().toISOString().slice(0, 10);
         const from = new Date(Date.now() - 365 * 864e5).toISOString().slice(0, 10);
-        const rowsHtml: string[] = [];
+        const prices: Record<string, PriceRow[]> = {};
+        let anyDemo = false;
         for (const sym of tickers) {
-          let series = await getPrices(sym, from, to);
-          let demo = false;
-          if (series.length < 5) {
-            series = syntheticSeries(sym);
-            demo = true;
+          let s = await getPrices(sym, from, to);
+          if (s.length < 5) {
+            s = syntheticSeries(sym);
+            anyDemo = true;
           }
-          const m = computeMetrics(series);
-          const spark = svgSpark(series.map((s) => s.close));
-          const retCls = m.ret >= 0 ? 'up' : 'down';
-          const sign = m.ret >= 0 ? '+' : '−';
-          rowsHtml.push(
-            `<tr><td class="rsym"><b>${escapeHtml(sym)}</b>${demo ? ' <span class="rdemo">demo</span>' : ''}</td>` +
-              `<td>${spark}</td>` +
-              `<td class="rnum">$${m.last.toFixed(2)}</td>` +
-              `<td class="rnum ${retCls}">${sign}${Math.abs(m.ret).toFixed(2)}%</td>` +
-              `<td class="rnum">$${m.ma50.toFixed(2)}</td>` +
-              `<td class="rnum down">${m.maxDd.toFixed(2)}%</td></tr>`,
-          );
-          send({ type: 'status', text: `${sym}: готово` });
-          await sleep(120);
+          prices[sym] = s.map((r) => ({ date: r.date, close: r.close }));
         }
+        if (anyDemo) send({ type: 'block', html: `<p class="rmuted">Часть данных синтетическая (demo): нет FMP-ключа или истории по тикеру.</p>` });
 
-        finalHtml =
-          `<div class="rblk"><div class="rcap">Тренды за 12 месяцев</div>` +
-          `<table class="rtbl"><thead><tr><th>Тикер</th><th>График</th><th>Цена</th><th>Доходность</th><th>MA50</th><th>Max DD</th></tr></thead>` +
-          `<tbody>${rowsHtml.join('')}</tbody></table></div>`;
-        send({ type: 'block', html: finalHtml });
+        // 3) Исполнить Python (стрим stdout + таблица result + графики)
+        send({ type: 'status', text: 'Исполняю Python…' });
+        await runResearchPython(code, prices, (e) => send(e));
+
         send({ type: 'done' });
-        saveRun({ prompt, code: generatedCode, status: 'ok', resultHtml: finalHtml }).catch(() => {});
+        saveRun({ prompt, code, status: 'ok', resultHtml: null }).catch(() => {});
       } catch (e: any) {
         const msg = e?.message || String(e);
         send({ type: 'block', html: `<p class="rerr">Ошибка: ${escapeHtml(msg)}</p>` });
         send({ type: 'done' });
-        saveRun({ prompt, code: generatedCode, status: 'error', resultHtml: null, error: msg }).catch(() => {});
+        saveRun({ prompt, code: code || null, status: 'error', resultHtml: null, error: msg }).catch(() => {});
       } finally {
-        controller.close();
+        closed = true;
+        try {
+          controller.close();
+        } catch {
+          /* уже закрыт */
+        }
       }
     },
   });
