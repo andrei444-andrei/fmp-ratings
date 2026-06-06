@@ -1,0 +1,113 @@
+/* =====================================================================
+   UX Kit — «Светлый финтех». Design-токены.
+   Namespace: все переменные с префиксом --fk-* (не конфликтуют с легаси
+   --app-* / --hm-*). Переменные на :root безопасны: имена уникальны.
+   Подключается только на страницах кита (см. src/app/ui/layout.tsx).
+   ===================================================================== */
+:root {
+  /* Поверхности */
+  --fk-bg: #f4f6fb;            /* фон приложения */
+  --fk-surface-elev: #ffffff;  /* карточки, поднятые поверхности */
+  --fk-surface-2: #edf1f7;     /* приглушённый фон (сегменты, чипы) */
+
+  /* Линии */
+  --fk-line: #e4e9f1;
+  --fk-line-strong: #d2dae8;
+
+  /* Текст */
+  --fk-text: #0f1729;   /* основной — насыщенный near-navy */
+  --fk-text-2: #5a6478; /* вторичный */
+  --fk-text-3: #8b95a7; /* приглушённый / плейсхолдеры */
+
+  /* Бренд — индиго/виолет */
+  --fk-brand: #6d5bf0;
+  --fk-brand-600: #5b49e0;
+  --fk-brand-700: #4a38c4;
+  --fk-brand-50: #efedfe;
+  --fk-brand-100: #dedafd;
+
+  /* Рост / падение */
+  --fk-up: #12b981;
+  --fk-up-bg: #e3f7ef;
+  --fk-up-text: #0a8a60;
+  --fk-down: #f43f5e;
+  --fk-down-bg: #fee7ec;
+  --fk-down-text: #c81e3c;
+
+  /* Предупреждение */
+  --fk-warn: #f59e0b;
+  --fk-warn-bg: #fef2de;
+  --fk-warn-text: #b5740a;
+
+  /* Фокус-кольцо */
+  --fk-ring: rgba(109, 91, 240, 0.4);
+
+  /* Радиусы — крупные, дружелюбные */
+  --fk-radius-sm: 10px;
+  --fk-radius: 14px;
+  --fk-radius-lg: 20px;
+
+  /* Тени — мягкие, воздушные */
+  --fk-shadow-sm: 0 1px 2px rgba(15, 23, 41, 0.04), 0 1px 3px rgba(15, 23, 41, 0.06);
+  --fk-shadow: 0 6px 20px rgba(15, 23, 41, 0.08);
+  --fk-shadow-lg: 0 18px 50px rgba(15, 23, 41, 0.16);
+
+  /* Шрифт */
+  --fk-font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+}
+
+/* Корень кита: базовый текст/шрифт, наследуется всеми компонентами */
+.fk-root {
+  font-family: var(--fk-font);
+  color: var(--fk-text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+.fk-root ::selection {
+  background: var(--fk-brand-100);
+  color: var(--fk-brand-700);
+}
+
+/* ---------------------------------------------------------------------
+   Витрина /ui: вырываемся из тёмного легаси-шелла (.app-shell, max-width,
+   паддинги) и тёмной .app-nav, чтобы показать кит на чистом светлом фоне.
+   Скоупится только страницами, где есть .fk-page.
+   --------------------------------------------------------------------- */
+.fk-page {
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  margin-top: -22px;    /* гасим .app-shell padding-top:22px */
+  margin-bottom: -64px; /* гасим .app-shell padding-bottom:64px */
+  min-height: 100vh;
+  background: var(--fk-bg);
+  color: var(--fk-text);
+}
+body:has(.fk-page) .app-nav {
+  display: none; /* прячем тёмную легаси-навигацию на страницах кита */
+}
+
+/* ---------------------------------------------------------------------
+   Изоляция от легаси-правил globals.css (.app-shell ...), которые иначе
+   протекают в кит, т.к. витрина рендерится внутри .app-shell. Повышаем
+   специфичность через .fk-root.fk-page (0,2,x) — бьёт .app-shell (0,1,x).
+   --------------------------------------------------------------------- */
+.fk-root.fk-page h1,
+.fk-root.fk-page h2,
+.fk-root.fk-page h3,
+.fk-root.fk-page h4,
+.fk-root.fk-page h5,
+.fk-root.fk-page h6 {
+  color: var(--fk-text); /* отменяем .app-shell h1,h2 { color: var(--app-tx) } */
+}
+.fk-root.fk-page *,
+.fk-root.fk-page *::before,
+.fk-root.fk-page *::after {
+  border-color: var(--fk-line); /* отменяем .app-shell * { border-color: ... } */
+}
+/* возвращаем утилитам цветные/усиленные границы (3 класса > нейтрализатора) */
+.fk-root.fk-page .border-line-strong {
+  border-color: var(--fk-line-strong);
+}
+.fk-root.fk-page .border-down {
+  border-color: var(--fk-down);
+}
