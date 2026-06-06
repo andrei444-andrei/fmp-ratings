@@ -3,8 +3,10 @@
 import { useState, useEffect } from 'react';
 
 const TABLES = [
+  'app_errors',
   'sp500_current','sp500_changes','market_cap','grades','consensus_history',
   'top_n_per_year','rating_changes_filtered','runs',
+  'prices','research_prompts','research_runs',
 ];
 
 export default function AdminPage() {

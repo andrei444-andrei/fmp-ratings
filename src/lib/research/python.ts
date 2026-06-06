@@ -17,11 +17,10 @@ function getPyodide(): Promise<Pyodide> {
 }
 
 export type PriceRow = { date: string; close: number };
-export type PyEvent = { type: 'log'; text: string } | { type: 'block'; html: string };
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
-}
+export type PyEvent =
+  | { type: 'log'; text: string }
+  | { type: 'block'; html: string }
+  | { type: 'error'; message: string };
 
 // Прогоны сериализуются: один общий интерпретатор → без гонок за глобалами и stdout-хендлерами.
 let chain: Promise<unknown> = Promise.resolve();
@@ -66,7 +65,7 @@ async function execOnce(
       // Дофлашиваем хвост stdout/stderr в рамках ТЕКУЩЕГО запроса (пока stream открыт).
       await py.runPythonAsync('import sys as _sys\n_sys.stdout.flush()\n_sys.stderr.flush()');
     } catch (e: any) {
-      onEvent({ type: 'block', html: `<p class="rerr">Ошибка исполнения: ${escapeHtml(e?.message || String(e))}</p>` });
+      onEvent({ type: 'error', message: e?.message || String(e) });
       return;
     }
 

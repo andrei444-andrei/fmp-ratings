@@ -137,7 +137,7 @@ function Research() {
 
       <main className="mx-auto grid max-w-[1200px] grid-cols-1 gap-4 px-4 py-6 sm:px-6 lg:grid-cols-[380px_1fr] lg:py-8">
         {/* Левая колонка — чат/промт */}
-        <div className="flex flex-col gap-4">
+        <div className="flex min-w-0 flex-col gap-4">
           <Card>
             <CardHeader>
               <CardTitle>Запрос</CardTitle>
@@ -193,7 +193,7 @@ function Research() {
         </div>
 
         {/* Правая колонка — результат */}
-        <Card className="flex min-h-[60vh] flex-col">
+        <Card className="flex min-h-[60vh] min-w-0 flex-col">
           <CardHeader className="flex items-center justify-between">
             <CardTitle>Результат</CardTitle>
             {running ? (
