@@ -1,0 +1,30 @@
+// UX Kit «светлый финтех» — единая точка импорта.
+// Использование: import { Button, Card, useToast } from '@/components/ui';
+// Токены (tokens.css) подключаются на уровне страницы/лейаута кита.
+export { cn } from './cn';
+export { Spinner } from './Spinner';
+export { Button } from './Button';
+export type { ButtonProps, ButtonVariant, ButtonSize } from './Button';
+export { Input } from './Input';
+export type { InputProps } from './Input';
+export { Select } from './Select';
+export type { SelectProps } from './Select';
+export { Switch } from './Switch';
+export type { SwitchProps } from './Switch';
+export { SegmentedControl } from './SegmentedControl';
+export type { SegmentedControlProps, SegmentOption } from './SegmentedControl';
+export { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from './Card';
+export { Badge } from './Badge';
+export type { BadgeProps, BadgeVariant } from './Badge';
+export { Delta } from './Delta';
+export type { DeltaProps } from './Delta';
+export { Stat } from './Stat';
+export type { StatProps } from './Stat';
+export { Skeleton } from './Skeleton';
+export { Sparkline } from './Sparkline';
+export type { SparklineProps } from './Sparkline';
+export { Field, Label, FieldHint, FieldError } from './Field';
+export { Modal } from './Modal';
+export type { ModalProps } from './Modal';
+export { ToastProvider, useToast } from './Toast';
+export type { ToastOptions, ToastVariant } from './Toast';
