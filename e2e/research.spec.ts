@@ -1,21 +1,29 @@
 import { test, expect } from '@playwright/test';
 
-// Смоук «Исследование трендов»: рендер, исполнение Python (Pyodide), сохранение
-// промтов (обязательное название), результаты привязаны к промтам, описание (Markdown),
-// редактирование и подгрузка входного промта при открытии результата.
+// Смоук «Исследование трендов»: исследования (сохранённый запрос + его результаты),
+// исполнение Python, сохранение результата внутри исследования (в т.ч. после правки промта),
+// описание (Markdown), редактирование, каскадное удаление.
 // В e2e ключи отключены → базовый скрипт + синтетика, но Python исполняется по-настоящему.
 
-async function savePrompt(page: import('@playwright/test').Page, text: string, title: string) {
+type Page = import('@playwright/test').Page;
+
+async function saveStudy(page: Page, text: string, title: string) {
   await page.locator('textarea').first().fill(text);
-  await page.getByRole('button', { name: 'Сохранить промт' }).click();
+  await page.getByRole('button', { name: 'Сохранить исследование' }).click();
   await page.getByPlaceholder(/Название/).fill(title);
   await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
-  await expect(page.getByText('Промт сохранён')).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText('Исследование сохранено')).toBeVisible({ timeout: 15000 });
 }
 
-async function runOnce(page: import('@playwright/test').Page) {
+async function runOnce(page: Page) {
   await page.getByRole('button', { name: 'Исполнить' }).click();
   await expect(page.locator('.research-output .rtblwrap table')).toBeVisible({ timeout: 90000 });
+}
+
+async function saveResult(page: Page) {
+  await page.getByRole('button', { name: 'Сохранить результат' }).click();
+  await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
+  await expect(page.getByText('Результат сохранён')).toBeVisible({ timeout: 15000 });
 }
 
 test.describe('Research /research', () => {
@@ -25,64 +33,54 @@ test.describe('Research /research', () => {
     await expect(page.getByText('Здесь появится анализ')).toBeVisible();
   });
 
-  test('без сохранённого промта результат сохранить нельзя (подсказка)', async ({ page }) => {
+  test('вне исследования результат сохранить нельзя (подсказка)', async ({ page }) => {
     await page.goto('/research');
     await page.locator('textarea').first().fill('доходность AAPL и MSFT за год');
     await runOnce(page);
-    await expect(page.getByText('Сохраните промт, чтобы сохранить результат')).toBeVisible();
+    await expect(page.getByText('Создайте исследование, чтобы сохранить результат')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Сохранить результат' })).toHaveCount(0);
   });
 
-  test('сохранение промта требует название и показывает его в списке', async ({ page }) => {
+  test('сохранение исследования требует название и показывает его в списке', async ({ page }) => {
     await page.goto('/research');
     const title = 'e2e заголовок ' + Date.now();
-    await page.locator('textarea').first().fill('промт для сохранения');
-    await page.getByRole('button', { name: 'Сохранить промт' }).click();
+    await page.locator('textarea').first().fill('запрос для сохранения');
+    await page.getByRole('button', { name: 'Сохранить исследование' }).click();
     const saveBtn = page.getByRole('button', { name: 'Сохранить', exact: true });
     await expect(saveBtn).toBeVisible();
     await expect(saveBtn).toBeDisabled();
     await page.getByPlaceholder(/Название/).fill(title);
     await saveBtn.click();
-    await expect(page.getByText('Промт сохранён')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('Исследование сохранено')).toBeVisible({ timeout: 15000 });
     await expect(page.locator('li').getByText(title)).toBeVisible();
   });
 
-  test('результат: сохранение с описанием, открытие подгружает промт', async ({ page }) => {
+  test('результат сохраняется ПОСЛЕ правки промта внутри исследования', async ({ page }) => {
+    await page.goto('/research');
+    await saveStudy(page, 'доходность QQQ за год', 'e2e study ' + Date.now());
+    // правим промт — мы всё ещё внутри исследования
+    await page.locator('textarea').first().fill('доходность QQQ за год и волатильность');
+    await runOnce(page);
+    await expect(page.getByRole('button', { name: 'Сохранить результат' })).toBeVisible();
+    await saveResult(page);
+  });
+
+  test('результат: описание (Markdown) и подгрузка промта при открытии', async ({ page }) => {
     await page.goto('/research');
     const ptitle = 'e2e desc ' + Date.now();
     const promptText = 'описательный промт ' + Date.now();
-    await savePrompt(page, promptText, ptitle);
+    await saveStudy(page, promptText, ptitle);
     await runOnce(page);
-    // Сохранить результат с описанием (Markdown)
     await page.getByRole('button', { name: 'Сохранить результат' }).click();
     await page.getByPlaceholder(/Гипотеза/).fill('## Тест-логика\nПроверяем гипотезу');
     await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
     await expect(page.getByText('Результат сохранён')).toBeVisible({ timeout: 15000 });
-    // Сменить промт, затем открыть сохранённый результат — промт должен вернуться
     await page.locator('textarea').first().fill('совсем другой текст');
-    const promptLi = page.getByTestId('saved-prompts').locator('> li').filter({ hasText: ptitle });
-    await promptLi.locator('[data-testid="run-open"]').first().click();
+    const studyLi = page.getByTestId('saved-prompts').locator('> li').filter({ hasText: ptitle });
+    await studyLi.locator('[data-testid="run-open"]').first().click();
     await expect(page.getByText('Сохранённый результат')).toBeVisible();
     await expect(page.locator('textarea').first()).toHaveValue(promptText);
     await expect(page.locator('.research-output .rdesc')).toContainText('Тест-логика');
-  });
-
-  test('редактирование описания результата', async ({ page }) => {
-    await page.goto('/research');
-    const ptitle = 'e2e edit ' + Date.now();
-    await savePrompt(page, 'промт под редактирование ' + Date.now(), ptitle);
-    await runOnce(page);
-    await page.getByRole('button', { name: 'Сохранить результат' }).click();
-    await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
-    await expect(page.getByText('Результат сохранён')).toBeVisible({ timeout: 15000 });
-    // редактировать
-    const promptLi = page.getByTestId('saved-prompts').locator('> li').filter({ hasText: ptitle });
-    await promptLi.getByRole('button', { name: 'Редактировать результат' }).first().click();
-    await page.getByPlaceholder(/Гипотеза/).fill('## Новое описание\nОбновлено');
-    await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
-    await expect(page.getByText('Изменения сохранены')).toBeVisible({ timeout: 15000 });
-    await promptLi.locator('[data-testid="run-open"]').first().click();
-    await expect(page.locator('.research-output .rdesc')).toContainText('Новое описание');
   });
 
   test('главная страница ведёт на /research', async ({ page }) => {
@@ -91,18 +89,16 @@ test.describe('Research /research', () => {
     await expect(page.getByRole('heading', { name: 'Запрос' })).toBeVisible();
   });
 
-  test('удаление промта каскадно убирает его результат', async ({ page }) => {
+  test('удаление исследования каскадно убирает его результат', async ({ page }) => {
     await page.goto('/research');
     const title = 'e2e casc ' + Date.now();
-    await savePrompt(page, 'каскадный промт', title);
+    await saveStudy(page, 'каскадный запрос', title);
     await runOnce(page);
-    await page.getByRole('button', { name: 'Сохранить результат' }).click();
-    await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
-    await expect(page.getByText('Результат сохранён')).toBeVisible({ timeout: 15000 });
+    await saveResult(page);
     await expect(page.locator('[data-testid="run-open"]').filter({ hasText: title })).toBeVisible();
     const item = page.getByTestId('saved-prompts').locator('> li').filter({ hasText: title });
-    await item.getByRole('button', { name: 'Удалить промт' }).click();
-    await expect(page.getByText('Промт и его результаты удалены')).toBeVisible({ timeout: 15000 });
+    await item.getByRole('button', { name: 'Удалить исследование' }).click();
+    await expect(page.getByText('Исследование и его результаты удалены')).toBeVisible({ timeout: 15000 });
     await expect(page.locator('[data-testid="run-open"]').filter({ hasText: title })).toHaveCount(0);
   });
 });

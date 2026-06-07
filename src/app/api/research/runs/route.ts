@@ -32,9 +32,12 @@ export async function POST(req: Request) {
   try {
     const p = await getPrompt(promptId);
     if (!p) return Response.json({ error: 'prompt not found' }, { status: 400 });
+    // Сохраняем ТЕКУЩИЙ промт прогона (мог быть отредактирован внутри исследования).
+    const clientPrompt = (body?.prompt ?? '').toString();
+    const prompt = clientPrompt.trim() ? clientPrompt : p.prompt;
     const title = (body?.title ?? '').toString().trim() || autoTitle(p.title || p.prompt);
     const description = body?.description != null ? String(body.description) : null;
-    const id = await saveRun({ promptId, title, description, prompt: p.prompt, code, status: 'saved', resultHtml });
+    const id = await saveRun({ promptId, title, description, prompt, code, status: 'saved', resultHtml });
     return Response.json({ id, title });
   } catch (e: any) {
     return Response.json({ error: e?.message || 'db error' }, { status: 500 });
