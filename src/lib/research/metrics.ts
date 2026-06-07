@@ -14,7 +14,7 @@ export function syntheticSeries(symbol: string, n = 5000): PriceRow[] {
     v = Math.max(1, v * (1 + r / 100));
     const d = new Date(today);
     d.setDate(d.getDate() - i);
-    rows.push({ date: d.toISOString().slice(0, 10), close: Math.round(v * 100) / 100 });
+    rows.push({ date: d.toISOString().slice(0, 10), close: Math.round(v * 100) / 100, volume: Math.round(1e6 + (seed % 9e6)) });
   }
   return rows;
 }

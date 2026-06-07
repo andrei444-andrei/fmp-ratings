@@ -2,6 +2,8 @@ import { getPrices } from '@/lib/research/prices';
 import { syntheticSeries } from '@/lib/research/metrics';
 import { aimlChatMeta } from '@/lib/aimlapi';
 import { runResearchPython, type PriceRow } from '@/lib/research/python';
+import { getFundamentals } from '@/lib/research/fundamentals';
+import { getDividends } from '@/lib/research/dividends';
 import { logAppError } from '@/lib/app-errors';
 import { marked } from 'marked';
 
@@ -68,7 +70,9 @@ async function resolveTickers(prompt: string): Promise<string[]> {
 const SYS_PROMPT =
   'Ты пишешь Python-скрипт для анализа трендов цен акций. В окружении УЖЕ доступны: ' +
   '`pandas as pd`, `numpy`, и готовый DataFrame `df` с колонками `symbol` (тикер), `date` (datetime), ' +
-  '`close` (цена закрытия) по нескольким тикерам. Доступен matplotlib (backend Agg) — если нужен график, используй `plt`. ' +
+  '`close` (цена закрытия) и `volume` (объём) по нескольким тикерам. ' +
+  'Дополнительно доступны DataFrame `fundamentals` [symbol, company, sector, industry, exchange, country, currency, market_cap, beta, price, last_dividend] (снимок на тикер — сектора/размер/бета для секторного и факторного анализа) и `dividends` [symbol, date, dividend] (история выплат — для полной доходности). Обращайся к ним при необходимости. ' +
+  'Доступен matplotlib (backend Agg) — если нужен график, используй `plt`. ' +
   'Также доступны numpy (np), scipy, statsmodels, scikit-learn (sklearn) — импортируй их при необходимости (регрессии, стат-тесты, ARIMA, кластеризация, оптимизация, факторные модели). ' +
   'В df могут быть международные и страновые ETF (например EWJ, EWG, FXI, EWZ, INDA) — это нормально; ' +
   'работай с тем, что дано, и НИКОГДА не утверждай, что доступны только тикеры США. ' +
@@ -193,15 +197,28 @@ export async function POST(req: Request) {
                 s = syntheticSeries(sym);
                 anyDemo = true;
               }
-              prices[sym] = s.map((r) => ({ date: r.date, close: r.close }));
+              prices[sym] = s;
             }),
           );
         }
         if (anyDemo) send({ type: 'block', html: `<p class="rmuted">Часть данных синтетическая (demo): нет FMP-ключа или истории по тикеру.</p>` });
 
+        // 2b) Доп. датасеты тянем только если скрипт к ним обращается.
+        let fundamentals: Record<string, unknown>[] = [];
+        let dividends: Record<string, unknown>[] = [];
+        const useFund = /\bfundamentals\b/.test(code);
+        const useDiv = /\bdividends\b/.test(code);
+        if (useFund || useDiv) {
+          send({ type: 'status', text: 'Подгружаю фундаментал/дивиденды…' });
+          [fundamentals, dividends] = await Promise.all([
+            useFund ? getFundamentals(tickers) : Promise.resolve([]),
+            useDiv ? getDividends(tickers) : Promise.resolve([]),
+          ]);
+        }
+
         // 3) Исполнить Python (стрим stdout + таблица result + графики)
         send({ type: 'status', text: 'Исполняю Python…' });
-        await runResearchPython(code, prices, (e) => {
+        await runResearchPython(code, { prices, fundamentals, dividends }, (e) => {
           if (e.type === 'error') {
             // Понятное сообщение пользователю + лог полного трейсбэка в app_errors
             const lines = e.message.split('\n').filter(Boolean);

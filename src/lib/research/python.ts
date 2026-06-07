@@ -16,7 +16,12 @@ function getPyodide(): Promise<Pyodide> {
   return pyPromise;
 }
 
-export type PriceRow = { date: string; close: number };
+export type PriceRow = { date: string; close: number; volume?: number | null };
+export type ResearchData = {
+  prices: Record<string, PriceRow[]>;
+  fundamentals?: Record<string, unknown>[];
+  dividends?: Record<string, unknown>[];
+};
 export type PyEvent =
   | { type: 'log'; text: string }
   | { type: 'block'; html: string }
@@ -27,10 +32,10 @@ let chain: Promise<unknown> = Promise.resolve();
 
 export function runResearchPython(
   code: string,
-  prices: Record<string, PriceRow[]>,
+  data: ResearchData,
   onEvent: (e: PyEvent) => void,
 ): Promise<void> {
-  const task = () => execOnce(code, prices, onEvent);
+  const task = () => execOnce(code, data, onEvent);
   const p = chain.then(task, task);
   chain = p.catch(() => {});
   return p;
@@ -38,7 +43,7 @@ export function runResearchPython(
 
 async function execOnce(
   code: string,
-  prices: Record<string, PriceRow[]>,
+  data: ResearchData,
   onEvent: (e: PyEvent) => void,
 ): Promise<void> {
   const py = await getPyodide();
@@ -61,14 +66,20 @@ async function execOnce(
   py.setStderr({ batched: (s: string) => onEvent({ type: 'log', text: s }) });
 
   try {
-    const longRows: { symbol: string; date: string; close: number }[] = [];
-    for (const [sym, rows] of Object.entries(prices)) for (const r of rows) longRows.push({ symbol: sym, date: r.date, close: r.close });
+    const longRows: { symbol: string; date: string; close: number; volume: number | null }[] = [];
+    for (const [sym, rows] of Object.entries(data.prices))
+      for (const r of rows) longRows.push({ symbol: sym, date: r.date, close: r.close, volume: r.volume ?? null });
     py.globals.set('__DATA_JSON__', JSON.stringify(longRows));
+    py.globals.set('__FUND_JSON__', JSON.stringify(data.fundamentals ?? []));
+    py.globals.set('__DIV_JSON__', JSON.stringify(data.dividends ?? []));
 
     const prelude =
       `import json as __json\nimport pandas as pd\nimport numpy as np\n` +
       `df = pd.DataFrame(__json.loads(__DATA_JSON__))\n` +
       `if not df.empty:\n    df['date'] = pd.to_datetime(df['date'])\n` +
+      `fundamentals = pd.DataFrame(__json.loads(__FUND_JSON__))\n` +
+      `dividends = pd.DataFrame(__json.loads(__DIV_JSON__))\n` +
+      `if not dividends.empty:\n    dividends['date'] = pd.to_datetime(dividends['date'])\n` +
       `result = None\n` +
       (wantsPlot ? `import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\nplt.close('all')\n` : '');
 
