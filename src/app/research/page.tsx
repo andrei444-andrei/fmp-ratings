@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import hljs from 'highlight.js/lib/core';
 import python from 'highlight.js/lib/languages/python';
+import { marked } from 'marked';
 import {
   Badge,
   Button,
@@ -61,6 +62,22 @@ function TrashIcon() {
   );
 }
 
+function renderMd(md: string): string {
+  try {
+    return marked.parse(md || '', { async: false, breaks: true }) as string;
+  } catch {
+    return esc(md);
+  }
+}
+
+function EditIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M4 20h4L18 10a2 2 0 0 0 0-3l-1-1a2 2 0 0 0-3 0L4 16v4z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export default function ResearchPage() {
   return (
     <ToastProvider>
@@ -88,6 +105,14 @@ function Research() {
   const [titleInput, setTitleInput] = useState('');
   const [savingPrompt, setSavingPrompt] = useState(false);
   const [savingResult, setSavingResult] = useState(false);
+  // Модалка сохранения/редактирования результата (название + описание Markdown).
+  const [runModal, setRunModal] = useState<
+    { mode: 'save' | 'edit'; id?: number; title: string; description: string } | null
+  >(null);
+  const [runPreview, setRunPreview] = useState(false);
+  // Описание/идентификатор открытого сохранённого результата.
+  const [viewDesc, setViewDesc] = useState<string | null>(null);
+  const [viewRunId, setViewRunId] = useState<number | null>(null);
 
   const outRef = useRef<HTMLDivElement>(null);
 
@@ -144,20 +169,56 @@ function Research() {
     return logHtml + blocks.join('');
   }
 
-  async function saveResult() {
+  function openSaveResultModal() {
     if (!activePrompt) return;
-    const resultHtml = buildResultHtml();
-    if (!resultHtml) return;
+    const sp = (savedPrompts ?? []).find((p) => p.id === activePrompt.id);
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const ts = `${pad(d.getDate())}.${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    setRunModal({ mode: 'save', title: `${sp?.title || 'Результат'} · ${ts}`, description: '' });
+    setRunPreview(false);
+  }
+
+  async function openEditRun(id: number) {
+    try {
+      const d = await (await fetch(`/api/research/runs/${id}`)).json();
+      const run = d?.run;
+      if (!run) throw new Error('Результат не найден');
+      setRunModal({ mode: 'edit', id, title: run.title || '', description: run.description || '' });
+      setRunPreview(false);
+    } catch (e: any) {
+      toast({ variant: 'error', title: 'Не удалось открыть', description: e?.message });
+    }
+  }
+
+  async function confirmRunModal() {
+    if (!runModal || !runModal.title.trim()) return;
     setSavingResult(true);
     try {
-      const r = await fetch('/api/research/runs', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ promptId: activePrompt.id, code, resultHtml }),
-      });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(d?.error || 'Не удалось сохранить результат');
-      toast({ variant: 'success', title: 'Результат сохранён', description: d?.title });
+      if (runModal.mode === 'save') {
+        if (!activePrompt) throw new Error('нет активного промта');
+        const resultHtml = buildResultHtml();
+        if (!resultHtml) throw new Error('нечего сохранять');
+        const r = await fetch('/api/research/runs', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ promptId: activePrompt.id, code, resultHtml, title: runModal.title.trim(), description: runModal.description }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d?.error || 'Не удалось сохранить результат');
+        toast({ variant: 'success', title: 'Результат сохранён', description: d?.title });
+      } else {
+        const r = await fetch(`/api/research/runs/${runModal.id}`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ title: runModal.title.trim(), description: runModal.description }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d?.error || 'Не удалось сохранить');
+        toast({ variant: 'success', title: 'Изменения сохранены' });
+        if (viewRunId === runModal.id) setViewDesc(runModal.description || null);
+      }
+      setRunModal(null);
       loadRuns();
     } catch (e: any) {
       toast({ variant: 'error', title: 'Ошибка сохранения', description: e?.message });
@@ -176,7 +237,12 @@ function Research() {
       setCode(run.code || '');
       setLog('');
       setBlocks(run.result_html ? [run.result_html] : []);
+      setViewDesc(run.description || null);
+      setViewRunId(run.id);
       setStatus('Сохранённый результат');
+      // Подгружаем входной промт результата (привязка к его промту).
+      setPrompt(run.prompt || '');
+      setActivePrompt(run.prompt_id ? { id: run.prompt_id, text: run.prompt || '' } : null);
     } catch (e: any) {
       toast({ variant: 'error', title: 'Не удалось открыть', description: e?.message });
     }
@@ -213,6 +279,8 @@ function Research() {
     setCode('');
     setBlocks([]);
     setLog('');
+    setViewDesc(null);
+    setViewRunId(null);
     setStatus('Отправка запроса…');
     try {
       const res = await fetch('/api/research/execute', {
@@ -373,6 +441,15 @@ function Research() {
                                 </button>
                                 <button
                                   type="button"
+                                  aria-label="Редактировать результат"
+                                  title="Изменить название и описание"
+                                  onClick={() => openEditRun(r.id)}
+                                  className="shrink-0 rounded-fk-sm px-2 text-ink-3 transition-colors hover:bg-surface-2 hover:text-brand focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
+                                >
+                                  <EditIcon />
+                                </button>
+                                <button
+                                  type="button"
                                   aria-label="Удалить результат"
                                   title="Удалить результат"
                                   onClick={() => onDeleteRun(r.id)}
@@ -407,7 +484,7 @@ function Research() {
                 <Badge variant={status === 'Ошибка' ? 'down' : 'up'}>{status}</Badge>
               ) : null}
               {canSaveResult && (
-                <Button size="sm" variant="secondary" onClick={saveResult} loading={savingResult}>
+                <Button size="sm" variant="secondary" onClick={openSaveResultModal}>
                   Сохранить результат
                 </Button>
               )}
@@ -429,6 +506,7 @@ function Research() {
               </div>
             ) : (
               <div className="research-output">
+                {viewDesc && <div className="rdesc" dangerouslySetInnerHTML={{ __html: renderMd(viewDesc) }} />}
                 {code && <CodeBlock code={code} />}
                 {log && <pre className="rlog">{log}</pre>}
                 {blocks.map((html, i) => (
@@ -467,6 +545,57 @@ function Research() {
           />
           <p className="line-clamp-2 text-[13px] text-ink-3">{prompt}</p>
         </div>
+      </Modal>
+
+      <Modal
+        open={!!runModal}
+        onClose={() => setRunModal(null)}
+        title={runModal?.mode === 'edit' ? 'Редактировать результат' : 'Сохранить результат'}
+        description="Название и описание (какая логика тестировалась). Описание — Markdown: ## заголовки, списки, **жирный**."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setRunModal(null)}>
+              Отмена
+            </Button>
+            <Button onClick={confirmRunModal} loading={savingResult} disabled={!runModal?.title.trim()}>
+              Сохранить
+            </Button>
+          </>
+        }
+      >
+        {runModal && (
+          <div className="space-y-3 pt-1">
+            <Input
+              autoFocus
+              value={runModal.title}
+              onChange={(e) => setRunModal({ ...runModal, title: e.target.value })}
+              placeholder="Название результата"
+            />
+            <div className="flex items-center justify-between">
+              <span className="text-[12px] font-medium text-ink-2">Описание (Markdown)</span>
+              <button
+                type="button"
+                onClick={() => setRunPreview((v) => !v)}
+                className="text-[12px] font-medium text-brand hover:underline"
+              >
+                {runPreview ? 'Редактировать' : 'Предпросмотр'}
+              </button>
+            </div>
+            {runPreview ? (
+              <div
+                className="rdesc max-h-[44vh] overflow-auto rounded-fk border border-line bg-surface-2 px-3 py-2"
+                dangerouslySetInnerHTML={{ __html: renderMd(runModal.description || '_(пусто)_') }}
+              />
+            ) : (
+              <Textarea
+                value={runModal.description}
+                onChange={(e) => setRunModal({ ...runModal, description: e.target.value })}
+                placeholder={'## Гипотеза\nЧто проверяем…\n\n## Метод\n- снимки раз в месяц\n- 5 групп по моментуму\n\n## Выводы\n…'}
+                className="min-h-[180px] font-mono text-[13px]"
+              />
+            )}
+          </div>
+        )}
       </Modal>
     </>
   );

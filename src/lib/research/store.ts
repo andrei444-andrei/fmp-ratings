@@ -15,6 +15,7 @@ export async function ensureResearchTables(): Promise<void> {
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     prompt_id INTEGER,
     title TEXT,
+    description TEXT,
     prompt TEXT NOT NULL,
     code TEXT,
     status TEXT NOT NULL,
@@ -23,7 +24,7 @@ export async function ensureResearchTables(): Promise<void> {
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
   // Идемпотентные миграции для БД, созданных раньше (дубль колонки тихо игнорируем).
-  for (const col of ['title TEXT', 'prompt_id INTEGER']) {
+  for (const col of ['title TEXT', 'prompt_id INTEGER', 'description TEXT']) {
     try {
       await libsqlClient.execute(`ALTER TABLE research_runs ADD COLUMN ${col}`);
     } catch {
@@ -91,7 +92,9 @@ export async function listRuns(): Promise<SavedRunItem[]> {
 
 export type SavedRun = {
   id: number;
+  prompt_id: number | null;
   title: string | null;
+  description: string | null;
   prompt: string;
   code: string | null;
   result_html: string | null;
@@ -101,14 +104,16 @@ export type SavedRun = {
 export async function getRun(id: number): Promise<SavedRun | null> {
   await ensureResearchTables();
   const r = await libsqlClient.execute({
-    sql: `SELECT id, title, prompt, code, result_html, created_at FROM research_runs WHERE id = ?`,
+    sql: `SELECT id, prompt_id, title, description, prompt, code, result_html, created_at FROM research_runs WHERE id = ?`,
     args: [id],
   });
   const x = r.rows[0];
   if (!x) return null;
   return {
     id: Number(x.id),
+    prompt_id: x.prompt_id != null ? Number(x.prompt_id) : null,
     title: x.title != null ? String(x.title) : null,
+    description: x.description != null ? String(x.description) : null,
     prompt: String(x.prompt),
     code: x.code != null ? String(x.code) : null,
     result_html: x.result_html != null ? String(x.result_html) : null,
@@ -116,9 +121,30 @@ export async function getRun(id: number): Promise<SavedRun | null> {
   };
 }
 
+export async function updateRun(
+  id: number,
+  o: { title?: string | null; description?: string | null },
+): Promise<void> {
+  await ensureResearchTables();
+  const sets: string[] = [];
+  const args: any[] = [];
+  if (o.title !== undefined) {
+    sets.push('title = ?');
+    args.push(o.title);
+  }
+  if (o.description !== undefined) {
+    sets.push('description = ?');
+    args.push(o.description);
+  }
+  if (!sets.length) return;
+  args.push(id);
+  await libsqlClient.execute({ sql: `UPDATE research_runs SET ${sets.join(', ')} WHERE id = ?`, args });
+}
+
 export async function saveRun(o: {
   promptId: number;
   title?: string | null;
+  description?: string | null;
   prompt: string;
   code: string | null;
   status: string;
@@ -128,8 +154,8 @@ export async function saveRun(o: {
   await ensureResearchTables();
   const now = new Date().toISOString();
   const r = await libsqlClient.execute({
-    sql: `INSERT INTO research_runs (prompt_id, title, prompt, code, status, result_html, error, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    args: [o.promptId, o.title ?? null, o.prompt, o.code, o.status, o.resultHtml, o.error ?? null, now],
+    sql: `INSERT INTO research_runs (prompt_id, title, description, prompt, code, status, result_html, error, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [o.promptId, o.title ?? null, o.description ?? null, o.prompt, o.code, o.status, o.resultHtml, o.error ?? null, now],
   });
   return Number(r.lastInsertRowid ?? 0);
 }
