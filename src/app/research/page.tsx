@@ -108,7 +108,7 @@ function Research() {
   const [log, setLog] = useState('');
   const [isFresh, setIsFresh] = useState(false); // свежий прогон (можно сохранить результат)
   // К какому СОХРАНЁННОМУ промту относится текущий текст (результат привязывается к нему).
-  const [activePrompt, setActivePrompt] = useState<{ id: number; text: string } | null>(null);
+  const [activePrompt, setActivePrompt] = useState<{ id: number; title: string } | null>(null);
 
   const [saveOpen, setSaveOpen] = useState(false);
   const [titleInput, setTitleInput] = useState('');
@@ -218,8 +218,8 @@ function Research() {
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d?.error || 'Не удалось сохранить');
-      setActivePrompt({ id: Number(d.id), text: prompt.trim() });
-      toast({ variant: 'success', title: 'Промт сохранён' });
+      setActivePrompt({ id: Number(d.id), title });
+      toast({ variant: 'success', title: 'Исследование сохранено' });
       setSaveOpen(false);
       setTitleInput('');
       loadPrompts();
@@ -268,7 +268,7 @@ function Research() {
         const r = await fetch('/api/research/runs', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ promptId: activePrompt.id, code, resultHtml, title: runModal.title.trim(), description: runModal.description }),
+          body: JSON.stringify({ promptId: activePrompt.id, prompt: prompt.trim(), code, resultHtml, title: runModal.title.trim(), description: runModal.description }),
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d?.error || 'Не удалось сохранить результат');
@@ -308,7 +308,8 @@ function Research() {
       setStatus('Сохранённый результат');
       // Подгружаем входной промт результата (привязка к его промту).
       setPrompt(run.prompt || '');
-      setActivePrompt(run.prompt_id ? { id: run.prompt_id, text: run.prompt || '' } : null);
+      const studyTitle = (savedPrompts ?? []).find((sp) => sp.id === run.prompt_id)?.title || 'Исследование';
+      setActivePrompt(run.prompt_id ? { id: run.prompt_id, title: studyTitle } : null);
     } catch (e: any) {
       toast({ variant: 'error', title: 'Не удалось открыть', description: e?.message });
     }
@@ -319,7 +320,7 @@ function Research() {
       const r = await fetch(`/api/research/prompts/${id}`, { method: 'DELETE' });
       if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Ошибка');
       if (activePrompt?.id === id) setActivePrompt(null);
-      toast({ variant: 'success', title: 'Промт и его результаты удалены' });
+      toast({ variant: 'success', title: 'Исследование и его результаты удалены' });
       loadPrompts();
       loadRuns();
     } catch (e: any) {
@@ -336,6 +337,18 @@ function Research() {
     } catch (e: any) {
       toast({ variant: 'error', title: 'Не удалось удалить', description: e?.message });
     }
+  }
+
+  function newStudy() {
+    setActivePrompt(null);
+    setPrompt('');
+    setCode('');
+    setBlocks([]);
+    setLog('');
+    setViewDesc(null);
+    setViewRunId(null);
+    setIsFresh(false);
+    setStatus('');
   }
 
   async function execute() {
@@ -403,9 +416,8 @@ function Research() {
 
   const hasFreshOutput = blocks.length > 0 || log.length > 0;
   // Результат можно сохранить, только если текущий текст — это сохранённый промт.
-  const promptSaved = !!activePrompt && activePrompt.text === prompt.trim();
-  const canSaveResult = isFresh && !running && hasFreshOutput && promptSaved;
-  const showSaveHint = isFresh && !running && hasFreshOutput && !promptSaved;
+  const canSaveResult = isFresh && !running && hasFreshOutput && !!activePrompt;
+  const showSaveHint = isFresh && !running && hasFreshOutput && !activePrompt;
 
   return (
     <>
@@ -431,6 +443,20 @@ function Research() {
               <CardDescription>Опишите, какой тренд исследовать. Тикеры — заглавными (AAPL, MSFT…).</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
+              {activePrompt && (
+                <div className="flex items-center justify-between gap-2 rounded-fk bg-brand-50 px-3 py-2">
+                  <span className="inline-flex min-w-0 items-center gap-1.5 text-[12px] font-semibold text-brand-700">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0">
+                      <path d="M9 3v6l-5.2 8.3A2 2 0 0 0 5.5 20.5h13a2 2 0 0 0 1.7-3.2L15 9V3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M9 3h6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                    </svg>
+                    <span className="truncate">Исследование: {activePrompt.title}</span>
+                  </span>
+                  <button type="button" onClick={newStudy} className="shrink-0 text-[12px] font-medium text-brand hover:underline">
+                    Новое
+                  </button>
+                </div>
+              )}
               <Textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
@@ -452,7 +478,7 @@ function Research() {
                   {running ? 'Выполняется…' : 'Исполнить'}
                 </Button>
                 <Button variant="secondary" onClick={() => setSaveOpen(true)} disabled={!prompt.trim()}>
-                  Сохранить промт
+                  {activePrompt ? 'Сохранить как новое' : 'Сохранить исследование'}
                 </Button>
               </div>
             </CardContent>
@@ -460,8 +486,8 @@ function Research() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Сохранённые промты</CardTitle>
-              <CardDescription>Промт и сохранённые к нему результаты прогонов.</CardDescription>
+              <CardTitle>Исследования</CardTitle>
+              <CardDescription>Исследование = запрос + сохранённые к нему результаты. Кликните, чтобы провалиться внутрь.</CardDescription>
             </CardHeader>
             <CardContent>
               {savedPrompts === null ? (
@@ -470,7 +496,7 @@ function Research() {
                   <Skeleton className="h-12 w-full" />
                 </div>
               ) : savedPrompts.length === 0 ? (
-                <p className="text-sm text-ink-3">Пока пусто. Сохрани первый промт — с названием.</p>
+                <p className="text-sm text-ink-3">Пока пусто. Создайте первое исследование — с названием.</p>
               ) : (
                 <ul className="space-y-3" data-testid="saved-prompts">
                   {savedPrompts.map((p) => {
@@ -482,7 +508,7 @@ function Research() {
                             type="button"
                             onClick={() => {
                               setPrompt(p.prompt);
-                              setActivePrompt({ id: p.id, text: p.prompt });
+                              setActivePrompt({ id: p.id, title: p.title || 'Без названия' });
                             }}
                             className="min-w-0 flex-1 rounded-fk-sm px-3 py-2 text-left transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
                           >
@@ -491,8 +517,8 @@ function Research() {
                           </button>
                           <button
                             type="button"
-                            aria-label="Удалить промт"
-                            title="Удалить промт и его результаты"
+                            aria-label="Удалить исследование"
+                            title="Удалить исследование и его результаты"
                             onClick={() => onDeletePrompt(p.id)}
                             className="shrink-0 rounded-fk-sm px-2 text-ink-3 transition-colors hover:bg-surface-2 hover:text-down focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
                           >
@@ -566,7 +592,7 @@ function Research() {
                 </Button>
               )}
               {showSaveHint && (
-                <span className="text-[12px] text-ink-3">Сохраните промт, чтобы сохранить результат</span>
+                <span className="text-[12px] text-ink-3">Создайте исследование, чтобы сохранить результат</span>
               )}
             </div>
           </CardHeader>
@@ -599,8 +625,8 @@ function Research() {
       <Modal
         open={saveOpen}
         onClose={() => setSaveOpen(false)}
-        title="Сохранить промт"
-        description="Дайте промту понятное название — по нему найдёте его в списке."
+        title="Сохранить исследование"
+        description="Назовите исследование — по нему найдёте его и его результаты."
         footer={
           <>
             <Button variant="ghost" onClick={() => setSaveOpen(false)}>
