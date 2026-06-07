@@ -45,10 +45,17 @@ async function execOnce(
   const wantsPlot = /matplotlib|pyplot|\bplt\b/.test(code);
   // Цветные таблицы через pandas Styler: нужен jinja2 (рендер) + matplotlib (градиенты).
   const wantsStyle = /\.style\b|background_gradient|text_gradient|Styler|set_caption/.test(code);
-  const pkgs = ['pandas'];
-  if (wantsPlot || wantsStyle) pkgs.push('matplotlib');
-  if (wantsStyle) pkgs.push('jinja2');
-  await py.loadPackage(pkgs);
+  await py.loadPackage('pandas');
+  // Авто-подгрузка пакетов под импорты кода: numpy, scipy, statsmodels, sklearn и т.п.
+  try {
+    await py.loadPackagesFromImports(code);
+  } catch {
+    /* недоступные в Pyodide пакеты игнорируем — упадёт уже на импорте в коде */
+  }
+  const extra: string[] = [];
+  if (wantsPlot || wantsStyle) extra.push('matplotlib');
+  if (wantsStyle) extra.push('jinja2');
+  if (extra.length) await py.loadPackage(extra);
 
   py.setStdout({ batched: (s: string) => onEvent({ type: 'log', text: s }) });
   py.setStderr({ batched: (s: string) => onEvent({ type: 'log', text: s }) });
