@@ -76,7 +76,8 @@ async function execOnce(
           `def __render(r):\n` +
           `    if r is None: return ''\n` +
           `    if isinstance(r, _pd.Series): return r.to_frame().to_html()\n` +
-          `    if isinstance(r, _pd.DataFrame): return r.to_html(index=False)\n` +
+          `    if isinstance(r, _pd.DataFrame):\n` +
+          `        return r.to_html(index=not isinstance(r.index, _pd.RangeIndex))\n` +
           `    return '<pre>' + str(r) + '</pre>'\n` +
           `__render(result)\n`,
       );
