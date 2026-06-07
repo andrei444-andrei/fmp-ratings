@@ -3,6 +3,7 @@ import { syntheticSeries } from '@/lib/research/metrics';
 import { aimlChatMeta } from '@/lib/aimlapi';
 import { runResearchPython, type PriceRow } from '@/lib/research/python';
 import { logAppError } from '@/lib/app-errors';
+import { marked } from 'marked';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -88,6 +89,33 @@ result = ret.round(2).rename('Доходность, %').reset_index().rename(col
 print('Доходность за период по тикерам:')
 print(result.to_string(index=False))`;
 
+const EXPLAIN_SYS =
+  'Ты объясняешь готовый Python-скрипт финансового анализа простыми словами для пользователя, ' +
+  'который хочет оценить корректность и допущения. Дай КРАТКУЮ читаемую инструкцию в Markdown по шаблону:\n' +
+  '## Что делает\nкороткий список шагов (3–6 пунктов).\n' +
+  '## Допущения и упрощения\nкак считаются метрики, что принято на веру, какие данные берутся, какие приближения сделаны.\n' +
+  '## Ограничения\nпропуски/NaN, края периода, размер выборки, источник и глубина данных.\n' +
+  'Без повторения кода целиком и без воды. По-русски, используй заголовки ## и списки.';
+
+// Читаемое пояснение «как реализовано / допущения» по сгенерированному коду.
+async function generateExplanation(prompt: string, code: string): Promise<string | null> {
+  if (!process.env.AIMLAPI_KEY) return null;
+  try {
+    const { content } = await aimlChatMeta({
+      model: process.env.AIMLAPI_EXPLAIN_MODEL?.trim() || 'gpt-4o',
+      temperature: 0.2,
+      max_tokens: 800,
+      messages: [
+        { role: 'system', content: EXPLAIN_SYS },
+        { role: 'user', content: `Запрос пользователя: «${prompt}».\n\nКод:\n\`\`\`python\n${code}\n\`\`\`` },
+      ],
+    });
+    return content.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const prompt: string = (body?.prompt ?? '').toString();
@@ -142,6 +170,8 @@ export async function POST(req: Request) {
           if (!process.env.AIMLAPI_KEY) send({ type: 'block', html: `<p class="rmuted">AIMLAPI_KEY не задан — выполняю базовый скрипт доходности.</p>` });
         }
         send({ type: 'code', code });
+        // Пояснение «как реализовано / допущения» готовим параллельно с исполнением.
+        const explainPromise = generateExplanation(prompt, code);
 
         // 2) Подготовить цены (кэш/FMP; синтетика как fallback)
         send({ type: 'status', text: 'Готовлю данные по ценам…' });
@@ -186,6 +216,17 @@ export async function POST(req: Request) {
             send(e);
           }
         });
+
+        // Пояснение к коду (допущения/нюансы): рендерим Markdown → HTML и отдаём блоком.
+        try {
+          const explainMd = await explainPromise;
+          if (explainMd) {
+            const html = marked.parse(explainMd, { async: false }) as string;
+            send({ type: 'block', html: `<div class="rblk"><div class="rcap">Как реализовано — допущения и нюансы</div><div class="rdesc">${html}</div></div>` });
+          }
+        } catch {
+          /* пояснение не критично */
+        }
 
         send({ type: 'done' });
       } catch (e: any) {
