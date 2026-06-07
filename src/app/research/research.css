@@ -156,3 +156,63 @@
   height: auto;
   border-radius: var(--fk-radius);
 }
+
+/* Markdown-описание результата (.rdesc) — в панели результата и в превью модалки */
+.rdesc {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--fk-text);
+}
+.rdesc > * + * {
+  margin-top: 8px;
+}
+.rdesc h1 {
+  font-size: 18px;
+  font-weight: 700;
+}
+.rdesc h2 {
+  font-size: 16px;
+  font-weight: 700;
+}
+.rdesc h3 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--fk-text-2);
+}
+.rdesc p {
+  margin: 0;
+}
+.rdesc ul,
+.rdesc ol {
+  margin: 0;
+  padding-left: 20px;
+}
+.rdesc li {
+  margin: 2px 0;
+}
+.rdesc a {
+  color: var(--fk-brand);
+  text-decoration: underline;
+}
+.rdesc strong {
+  font-weight: 700;
+}
+.rdesc code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  background: var(--fk-surface-2);
+  padding: 1px 5px;
+  border-radius: 6px;
+}
+.rdesc blockquote {
+  border-left: 3px solid var(--fk-line-strong);
+  padding-left: 10px;
+  color: var(--fk-text-2);
+}
+/* В панели результата описание оформляем как карточку */
+.research-output .rdesc {
+  border: 1px solid var(--fk-line);
+  background: var(--fk-surface-2);
+  border-radius: var(--fk-radius);
+  padding: 12px 14px;
+}

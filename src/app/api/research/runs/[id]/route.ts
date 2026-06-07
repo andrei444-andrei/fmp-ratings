@@ -1,6 +1,20 @@
-import { deleteRun, getRun } from '@/lib/research/store';
+import { deleteRun, getRun, updateRun } from '@/lib/research/store';
 
 export const dynamic = 'force-dynamic';
+
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const body = await req.json().catch(() => ({}));
+  const patch: { title?: string | null; description?: string | null } = {};
+  if (typeof body?.title === 'string') patch.title = body.title.trim() || null;
+  if (typeof body?.description === 'string') patch.description = body.description;
+  try {
+    await updateRun(Number(id), patch);
+    return Response.json({ ok: true });
+  } catch (e: any) {
+    return Response.json({ error: e?.message || 'db error' }, { status: 500 });
+  }
+}
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

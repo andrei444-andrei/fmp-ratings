@@ -36,7 +36,7 @@ export function Modal({ open, onClose, title, description, children, footer, siz
 
   return createPortal(
     <div
-      className="fk-root fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4 bg-[rgba(15,23,41,0.45)] backdrop-blur-sm animate-overlay-in"
+      className="fk-root fixed inset-0 z-[100] flex items-center justify-center p-4 bg-[rgba(15,23,41,0.45)] backdrop-blur-sm animate-overlay-in"
       onMouseDown={onClose}
       role="dialog"
       aria-modal="true"
@@ -44,8 +44,8 @@ export function Modal({ open, onClose, title, description, children, footer, siz
       <div
         onMouseDown={(e) => e.stopPropagation()}
         className={cn(
-          'w-full bg-surface-elev shadow-fk-lg animate-modal-in flex flex-col max-h-[92vh] overflow-hidden',
-          'rounded-t-fk-lg sm:rounded-fk-lg',
+          'w-full bg-surface-elev shadow-fk-lg animate-modal-in flex flex-col max-h-[90vh] overflow-hidden',
+          'rounded-fk-lg',
           SIZES[size],
         )}
       >
@@ -67,7 +67,7 @@ export function Modal({ open, onClose, title, description, children, footer, siz
             </button>
           </div>
         )}
-        {children && <div className="px-5 pb-5 sm:px-6 overflow-auto text-[15px] text-ink-2">{children}</div>}
+        {children && <div className="px-5 pb-5 sm:px-6 overflow-auto min-h-0 text-[15px] text-ink-2">{children}</div>}
         {footer && (
           <div className="px-5 py-4 sm:px-6 border-t border-line flex items-center justify-end gap-3">
             {footer}
