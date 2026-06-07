@@ -43,7 +43,12 @@ async function execOnce(
 ): Promise<void> {
   const py = await getPyodide();
   const wantsPlot = /matplotlib|pyplot|\bplt\b/.test(code);
-  await py.loadPackage(wantsPlot ? ['pandas', 'matplotlib'] : ['pandas']);
+  // Цветные таблицы через pandas Styler: нужен jinja2 (рендер) + matplotlib (градиенты).
+  const wantsStyle = /\.style\b|background_gradient|text_gradient|Styler|set_caption/.test(code);
+  const pkgs = ['pandas'];
+  if (wantsPlot || wantsStyle) pkgs.push('matplotlib');
+  if (wantsStyle) pkgs.push('jinja2');
+  await py.loadPackage(pkgs);
 
   py.setStdout({ batched: (s: string) => onEvent({ type: 'log', text: s }) });
   py.setStderr({ batched: (s: string) => onEvent({ type: 'log', text: s }) });
@@ -78,6 +83,11 @@ async function execOnce(
           `    if isinstance(r, _pd.Series): return r.to_frame().to_html()\n` +
           `    if isinstance(r, _pd.DataFrame):\n` +
           `        return r.to_html(index=not isinstance(r.index, _pd.RangeIndex))\n` +
+          `    if hasattr(r, 'to_html'):\n` +
+          `        try:\n` +
+          `            return r.to_html()\n` +
+          `        except Exception:\n` +
+          `            pass\n` +
           `    return '<pre>' + str(r) + '</pre>'\n` +
           `__render(result)\n`,
       );
