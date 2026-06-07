@@ -78,6 +78,15 @@ function EditIcon() {
   );
 }
 
+function MicIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M19 11a7 7 0 0 1-14 0M12 18v3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export default function ResearchPage() {
   return (
     <ToastProvider>
@@ -113,8 +122,65 @@ function Research() {
   // Описание/идентификатор открытого сохранённого результата.
   const [viewDesc, setViewDesc] = useState<string | null>(null);
   const [viewRunId, setViewRunId] = useState<number | null>(null);
+  // Голосовой ввод (Web Speech API).
+  const [listening, setListening] = useState(false);
+  const [micSupported, setMicSupported] = useState(false);
+  const recogRef = useRef<any>(null);
+  const dictBaseRef = useRef('');
+  const dictFinalRef = useRef('');
 
   const outRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setMicSupported(
+      typeof window !== 'undefined' &&
+        !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition),
+    );
+  }, []);
+
+  function toggleMic() {
+    if (listening) {
+      recogRef.current?.stop?.();
+      return;
+    }
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) {
+      toast({ variant: 'error', title: 'Голосовой ввод не поддерживается этим браузером' });
+      return;
+    }
+    const r = new SR();
+    r.lang = 'ru-RU';
+    r.continuous = true;
+    r.interimResults = true;
+    dictBaseRef.current = prompt ? prompt.replace(/\s+$/, '') + ' ' : '';
+    dictFinalRef.current = '';
+    r.onresult = (e: any) => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) dictFinalRef.current += t + ' ';
+        else interim += t;
+      }
+      setPrompt((dictBaseRef.current + dictFinalRef.current + interim).replace(/\s{2,}/g, ' '));
+    };
+    r.onerror = (e: any) => {
+      if (e?.error && e.error !== 'no-speech' && e.error !== 'aborted') {
+        toast({ variant: 'error', title: 'Ошибка микрофона', description: String(e.error) });
+      }
+      setListening(false);
+    };
+    r.onend = () => {
+      setListening(false);
+      recogRef.current = null;
+    };
+    recogRef.current = r;
+    setListening(true);
+    try {
+      r.start();
+    } catch {
+      setListening(false);
+    }
+  }
 
   async function loadPrompts() {
     try {
@@ -369,7 +435,18 @@ function Research() {
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 placeholder="Напр.: сравни доходность AAPL и MSFT за год и покажи просадки"
+                style={{ minHeight: 200 }}
               />
+              {micSupported && (
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] text-ink-3">
+                    {listening ? 'Слушаю… говорите' : 'Можно надиктовать голосом'}
+                  </span>
+                  <Button size="sm" variant={listening ? 'danger' : 'ghost'} onClick={toggleMic} leftIcon={<MicIcon />}>
+                    {listening ? 'Стоп' : 'Голос'}
+                  </Button>
+                </div>
+              )}
               <div className="flex gap-2">
                 <Button onClick={execute} loading={running} disabled={!prompt.trim()} fullWidth>
                   {running ? 'Выполняется…' : 'Исполнить'}
