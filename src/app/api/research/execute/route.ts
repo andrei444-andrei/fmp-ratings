@@ -35,6 +35,25 @@ function pickCodeModel(body: any): string {
   return process.env.AIMLAPI_CODE_MODEL?.trim() || 'claude-opus-4-7';
 }
 
+// Ликвидные страновые ETF (US-листинг) → реальная страна. FMP в profile.country отдаёт
+// домициль (для этих ETF — США), поэтому для разрезов «по странам» нужна явная карта.
+const ETF_COUNTRY: Record<string, string> = {
+  SPY: 'США', QQQ: 'США', EWJ: 'Япония', EWG: 'Германия', EWU: 'Великобритания',
+  EWQ: 'Франция', EWL: 'Швейцария', EWI: 'Италия', EWP: 'Испания', EWC: 'Канада',
+  EWA: 'Австралия', FXI: 'Китай', MCHI: 'Китай', EWH: 'Гонконг', EWT: 'Тайвань',
+  EWY: 'Корея', INDA: 'Индия', EWZ: 'Бразилия', EWW: 'Мексика', EZA: 'ЮАР',
+  EPOL: 'Польша', TUR: 'Турция', THD: 'Таиланд',
+};
+
+// Корзина страновых ETF (по одному на страну) — подставляется на общий запрос «по странам».
+const COUNTRY_ETF_BASKET = [
+  'SPY', 'EWJ', 'EWG', 'EWU', 'EWQ', 'EWL', 'EWI', 'EWP', 'EWC', 'EWA',
+  'FXI', 'EWH', 'EWT', 'EWY', 'INDA', 'EWZ', 'EWW', 'EZA', 'EPOL', 'TUR',
+];
+
+// Запрос «в целом про страны» (без явного списка тикеров/стран).
+const COUNTRY_THEME_RE = /стран|countr|географ|geograph/i;
+
 const TICKER_SYS =
   'Подбери тикеры (символы, котируемые на FMP) под запрос пользователя и верни СТРОГО JSON ' +
   'вида {"tickers": ["EWJ", "EWZ"]}. Верни СТОЛЬКО тикеров, сколько уместно под запрос: ' +
@@ -45,10 +64,14 @@ const TICKER_SYS =
   'Италия EWI, Испания EWP, Канада EWC, Австралия EWA, Китай FXI или MCHI, Гонконг EWH, ' +
   'Тайвань EWT, Корея EWY, Индия INDA, Бразилия EWZ, Мексика EWW, ЮАР EZA, Тайланд THD, ' +
   'Турция TUR, Польша EPOL, развивающиеся рынки EEM/VWO, Европа VGK, весь мир ACWI. ' +
-  'Если пользователь назвал конкретные тикеры — используй их. Возвращай ТОЛЬКО JSON.';
+  'Если пользователь назвал конкретные тикеры — используй их. ' +
+  'ВАЖНО: если речь про страны/регионы В ЦЕЛОМ («доходность по странам», «какие страны…», «which countries») ' +
+  'и конкретные страны/тикеры НЕ названы — верни ШИРОКУЮ корзину из 15–20 РАЗНЫХ страновых ETF из списка выше (а не один-два). ' +
+  'Возвращай ТОЛЬКО JSON.';
 
 // Подбор тикеров под запрос: сперва AI (понимает страны/международные ETF), иначе regex.
 async function resolveTickers(prompt: string): Promise<string[]> {
+  const countryTheme = COUNTRY_THEME_RE.test(prompt);
   if (process.env.AIMLAPI_KEY) {
     try {
       const { content } = await aimlChatMeta({
@@ -65,13 +88,20 @@ async function resolveTickers(prompt: string): Promise<string[]> {
       const tickers = arr
         .map((t: any) => String(t).toUpperCase().trim())
         .filter((t: string) => /^[A-Z][A-Z0-9.\-]{0,11}$/.test(t));
-      if (tickers.length) return [...new Set<string>(tickers)].slice(0, 50);
+      if (tickers.length) {
+        // Общий запрос «по странам», а модель скатилась к дефолту US — расширяем до корзины.
+        const onlyUsDefault = tickers.every((t: string) => t === 'SPY' || t === 'QQQ');
+        if (countryTheme && onlyUsDefault) return [...COUNTRY_ETF_BASKET];
+        return [...new Set<string>(tickers)].slice(0, 50);
+      }
     } catch {
       /* падаем на regex */
     }
   }
   const found = extractTickers(prompt);
-  return found.length ? found : ['SPY', 'QQQ'];
+  if (found.length) return found;
+  // Нет явных тикеров: общий запрос про страны → корзина страновых ETF, иначе базовый дефолт.
+  return countryTheme ? [...COUNTRY_ETF_BASKET] : ['SPY', 'QQQ'];
 }
 
 const SYS_PROMPT =
@@ -83,6 +113,8 @@ const SYS_PROMPT =
   'Также доступны numpy (np), scipy, statsmodels, scikit-learn (sklearn) — импортируй их при необходимости (регрессии, стат-тесты, ARIMA, кластеризация, оптимизация, факторные модели). ' +
   'В df могут быть международные и страновые ETF (например EWJ, EWG, FXI, EWZ, INDA) — это нормально; ' +
   'работай с тем, что дано, и НИКОГДА не утверждай, что доступны только тикеры США. ' +
+  'Для страновых ETF поле `country` в `fundamentals` уже приведено к реальной стране (Япония, Германия, Китай…), ' +
+  'поэтому для разрезов «по странам/рынкам» группируй именно по `fundamentals.country`. ' +
   'Требования: (1) используй df, не выдумывай данные; (2) посчитай ИМЕННО то, что просит пользователь; ' +
   '(3) через print() кратко выведи ключевые выводы; ' +
   '(4) ОБЯЗАТЕЛЬНО присвой итог переменной `result`. По умолчанию `result` — это ОДИН DataFrame; для большинства задач этого достаточно, не усложняй без нужды. ' +
@@ -238,6 +270,12 @@ export async function POST(req: Request) {
             useFund ? getFundamentals(tickers) : Promise.resolve([]),
             useDiv ? getDividends(tickers) : Promise.resolve([]),
           ]);
+          // Для известных страновых ETF подменяем country на реальную страну
+          // (FMP отдаёт домициль US) — чтобы разрезы «по странам» не схлопывались.
+          for (const f of fundamentals) {
+            const c = ETF_COUNTRY[String((f as any).symbol).toUpperCase()];
+            if (c) (f as any).country = c;
+          }
         }
 
         // 3) Исполнить Python (стрим stdout + таблица result + графики)
