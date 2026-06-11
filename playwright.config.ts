@@ -30,6 +30,6 @@ export default defineConfig({
     timeout: 180_000,
     // Локальная SQLite + детерминизм: без ключей AIMLAPI/FMP исполняется
     // базовый Python-скрипт на синтетических ценах.
-    env: { LOCAL_SQLITE_PATH: 'local.db', AIMLAPI_KEY: '', FMP_API_KEY: '' },
+    env: { LOCAL_SQLITE_PATH: 'local.db', AIMLAPI_KEY: '', FMP_API_KEY: '', E2E_ALLOW_CODE: '1' },
   },
 });

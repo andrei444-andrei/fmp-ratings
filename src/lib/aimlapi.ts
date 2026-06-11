@@ -34,27 +34,33 @@ export type ChatOpts = {
 // Полный вариант: возвращает контент И finish_reason (нужно ловить обрезку 'length').
 export async function aimlChatMeta(opts: ChatOpts): Promise<{ content: string; finishReason: string | null }> {
   const key = getAimlApiKey();
-  const body: any = {
+  const baseBody: any = {
     model: opts.model || getAimlModel(),
     messages: opts.messages,
-    temperature: opts.temperature ?? 0.2,
     max_tokens: opts.max_tokens ?? 600,
   };
-  if (opts.response_format) body.response_format = opts.response_format;
-  const res = await fetch(`${BASE}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'authorization': `Bearer ${key}`,
-    },
-    body: JSON.stringify(body),
-    cache: 'no-store',
-  });
-  if (!res.ok) {
-    const t = await res.text().catch(() => '');
-    throw new Error(`aimlapi ${res.status}: ${t.slice(0, 300)}`);
+  if (opts.response_format) baseBody.response_format = opts.response_format;
+
+  const call = async (b: any) => {
+    const res = await fetch(`${BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'authorization': `Bearer ${key}` },
+      body: JSON.stringify(b),
+      cache: 'no-store',
+    });
+    const text = await res.text().catch(() => '');
+    return { ok: res.ok, status: res.status, text };
+  };
+
+  // Сначала с temperature; новые Claude-модели его не принимают — тогда повторяем без него.
+  let r = await call({ ...baseBody, temperature: opts.temperature ?? 0.2 });
+  if (!r.ok && r.status === 400 && /temperature/i.test(r.text)) {
+    r = await call(baseBody);
   }
-  const data = await res.json();
+  if (!r.ok) {
+    throw new Error(`aimlapi ${r.status}: ${r.text.slice(0, 300)}`);
+  }
+  const data = JSON.parse(r.text);
   const content = data?.choices?.[0]?.message?.content;
   if (typeof content !== 'string') {
     throw new Error('aimlapi: пустой ответ');

@@ -216,3 +216,35 @@
   border-radius: var(--fk-radius);
   padding: 12px 14px;
 }
+
+/* Карточка ошибки */
+.research-output .rerrblk {
+  border-color: var(--fk-down);
+}
+.research-output .rerrblk .rcap {
+  color: var(--fk-down-text);
+  border-bottom-color: var(--fk-down);
+}
+.research-output .rerrbody {
+  padding: 12px 14px;
+}
+.research-output .rerrbody > p {
+  margin: 0 0 8px;
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--fk-down-text);
+}
+.research-output .rerrpre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--fk-text-2);
+  background: var(--fk-surface-2);
+  border: 1px solid var(--fk-line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  max-height: 240px;
+  overflow: auto;
+}
