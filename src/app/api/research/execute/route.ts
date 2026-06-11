@@ -95,12 +95,18 @@ const SYS_PROMPT =
   'аккуратно обрабатывай пропуски и крайние даты (не показывай NaN как есть); ' +
   'пиши читаемый код: строки не длиннее ~90 символов, длинные выражения разбивай на несколько строк.';
 
-// Базовый скрипт, когда нет ключа AIMLAPI (всё равно реальный Python).
-const DEFAULT_SCRIPT = `g = df.sort_values('date').groupby('symbol')['close']
+// Детерминированный скрипт ТОЛЬКО для e2e-харнесса (флаг E2E_ALLOW_CODE). В проде не используется.
+const E2E_SCRIPT = `g = df.sort_values('date').groupby('symbol')['close']
 ret = (g.last() / g.first() - 1) * 100
 result = ret.round(2).rename('Доходность, %').reset_index().rename(columns={'symbol': 'Тикер'})
 print('Доходность за период по тикерам:')
 print(result.to_string(index=False))`;
+
+// Карточка ошибки для панели результата (заголовок + причина + опц. трейсбэк).
+function errorCard(title: string, message: string, detail?: string): string {
+  const det = detail ? `<pre class="rerrpre">${escapeHtml(detail)}</pre>` : '';
+  return `<div class="rblk rerrblk"><div class="rcap">${escapeHtml(title)}</div><div class="rerrbody"><p>${escapeHtml(message)}</p>${det}</div></div>`;
+}
 
 const EXPLAIN_SYS =
   'Ты объясняешь готовый Python-скрипт финансового анализа простыми словами для пользователя, ' +
@@ -154,34 +160,41 @@ export async function POST(req: Request) {
         tickers = await resolveTickers(prompt);
         send({ type: 'block', html: `<p class="rlead">Тикеры в анализе: <b>${tickers.map(escapeHtml).join(', ')}</b></p>` });
 
-        // 1) Сгенерировать скрипт (или взять базовый)
+        // 1) Сгенерировать скрипт
+        let codegenError = '';
         if (process.env.AIMLAPI_KEY) {
           send({ type: 'status', text: 'Генерирую Python-скрипт…' });
           try {
             const { content: raw, finishReason } = await aimlChatMeta({
               model: codeModel,
               temperature: 0.1,
-              max_tokens: 3500,
+              max_tokens: 6000,
               messages: [
                 { role: 'system', content: SYS_PROMPT },
                 { role: 'user', content: `Доступные тикеры: ${tickers.join(', ')}. Запрос: «${prompt}». Напиши скрипт.` },
               ],
             });
             if (finishReason === 'length') {
-              // Генерация обрезана по лимиту → код почти наверняка с SyntaxError, не исполняем.
-              send({ type: 'block', html: `<p class="rmuted">Скрипт получился слишком длинным и был обрезан по лимиту токенов — упростите запрос (меньше горизонтов/тикеров). Ниже — базовый расчёт.</p>` });
-              logAppError({ route: '/api/research/execute', level: 'warn', message: 'codegen truncated (finish_reason=length)', user_agent: ua, meta: { prompt, tickers } }).catch(() => {});
-              code = '';
+              codegenError = 'модель обрезала скрипт по лимиту токенов — упростите запрос или возьмите модель помощнее';
             } else {
               code = stripFences(raw);
             }
-          } catch {
-            code = '';
+          } catch (e: any) {
+            codegenError = e?.message || 'ошибка генерации';
           }
         }
+        // Детерминированный скрипт только для e2e-харнесса (в проде флаг не выставлен).
+        if (!code && !process.env.AIMLAPI_KEY && process.env.E2E_ALLOW_CODE === '1') {
+          code = E2E_SCRIPT;
+        }
         if (!code) {
-          code = DEFAULT_SCRIPT;
-          if (!process.env.AIMLAPI_KEY) send({ type: 'block', html: `<p class="rmuted">AIMLAPI_KEY не задан — выполняю базовый скрипт доходности.</p>` });
+          const reason = process.env.AIMLAPI_KEY
+            ? `Модель ${codeModel}: ${codegenError}. Повторите запрос или смените «Модель кода».`
+            : 'Генерация кода недоступна — не настроен ключ AIMLAPI.';
+          send({ type: 'block', html: errorCard('Не удалось сгенерировать скрипт', reason) });
+          logAppError({ route: '/api/research/execute', message: 'codegen failed', stack: codegenError || reason, user_agent: ua, meta: { model: codeModel, prompt, tickers } }).catch(() => {});
+          send({ type: 'done' });
+          return;
         }
         send({ type: 'code', code });
         // Пояснение «как реализовано / допущения» готовим параллельно с исполнением.
@@ -228,16 +241,17 @@ export async function POST(req: Request) {
         send({ type: 'status', text: 'Исполняю Python…' });
         await runResearchPython(code, { prices, fundamentals, dividends }, (e) => {
           if (e.type === 'error') {
-            // Понятное сообщение пользователю + лог полного трейсбэка в app_errors
+            // Понятная карточка ошибки (ключевая строка + хвост трейсбэка) + лог полного трейсбэка.
             const lines = e.message.split('\n').filter(Boolean);
-            const first = lines.reverse().find((l) => /Error|Exception/.test(l)) || lines[0] || e.message;
-            send({ type: 'block', html: `<p class="rerr">Ошибка исполнения: ${escapeHtml(first.slice(0, 300))}</p>` });
+            const key = [...lines].reverse().find((l) => /Error|Exception/.test(l)) || lines[lines.length - 1] || e.message;
+            const tb = e.message.trim().split('\n').slice(-15).join('\n');
+            send({ type: 'block', html: errorCard('Ошибка выполнения скрипта', key.slice(0, 300), tb) });
             logAppError({
               route: '/api/research/execute',
               message: 'Python execution error',
               stack: e.message,
               user_agent: ua,
-              meta: { prompt, tickers, code },
+              meta: { model: codeModel, prompt, tickers, code },
             }).catch(() => {});
           } else {
             send(e);
@@ -258,14 +272,14 @@ export async function POST(req: Request) {
         send({ type: 'done' });
       } catch (e: any) {
         const msg = e?.message || String(e);
-        send({ type: 'block', html: `<p class="rerr">Ошибка: ${escapeHtml(msg)}</p>` });
+        send({ type: 'block', html: errorCard('Ошибка', msg, e?.stack ? String(e.stack).split('\n').slice(0, 8).join('\n') : undefined) });
         send({ type: 'done' });
         logAppError({
           route: '/api/research/execute',
           message: msg,
           stack: e?.stack,
           user_agent: ua,
-          meta: { prompt, tickers, code },
+          meta: { model: codeModel, prompt, tickers, code },
         }).catch(() => {});
       } finally {
         closed = true;
