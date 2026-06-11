@@ -33,6 +33,7 @@
 | **Marketaux News API** | `MARKETAUX_KEY` (+ опц. `MARKETAUX_MONTHLY_CAP`, default 8000) | `src/lib/marketaux.ts` | `/api/ai/news` (заголовки), `/api/events/month-news`, `/api/events/usage`, `/api/marketaux/debug` | `/heatmap` (новости дня + поиск событий), `/admin/marketaux` (отладка) |
 | **GDELT 2.0 DOC** (бесплатный) | — (без ключа) | `src/lib/gdelt.ts` | `/api/news/gdelt`, `/api/gdelt/debug` | `/market-events` (поиск архивных статей), `/admin/gdelt` (отладка) |
 | **NewsAPI.ai / Event Registry** | `NEWSAPI_AI_KEY` | `src/lib/newsapi-ai.ts` | `/api/newsapi-ai/debug` | `/admin/newsapi-ai` (отладка; `event/getEvents` = автокластеризованные события по охвату) |
+| **QuantConnect** | — (креды в БД, вводятся в `/admin/quantconnect`) | `src/lib/quantconnect/*` | `/api/quantconnect/*` (credentials, projects, backtests, algorithms, portfolio) | `/quant`, `/admin/quantconnect` |
 
 **Где задать переменные:**
 - Локально: `cp .env.example .env.local` → заполнить.
@@ -127,6 +128,8 @@ FMP-вызовы идут с клиента к нашему backend-проксе
 - `/results` — финальные апгрейды по годам, CSV-экспорт
 - `/heatmap` — дневная доходность тикеров × дни с маркерами событий
 - `/market-events` — AI ищет исторические события по текстовому запросу, таблица доходности актива (по умолчанию SPY) на T+1d/T+2d/.../T+180d
+- `/quant` — **Аналитика алгоритмов QuantConnect**: портфель алгоритмов + матрица годовых метрик из бектестов
+- `/admin/quantconnect` — ввод/хранение кредов доступа QuantConnect (User ID + API Token)
 - `/admin` — DB browser: статистика, просмотр любой таблицы, SQL-консоль (read-only)
 
 ### Market Events (AI + GDELT)
@@ -186,6 +189,21 @@ GDELT остаётся **только** в `/market-events` (там диапаз
 
 Расход показывает `GET /api/events/usage` → `{ used, cap, remaining }`.
 
+### Аналитика алгоритмов (QuantConnect)
+
+Раздел `/quant` оценивает алгоритмы QuantConnect по годовым метрикам из бектестов.
+
+1. **Креды** вводятся в `/admin/quantconnect` (QuantConnect → Account → Security: User ID + API Token)
+   и хранятся в БД (`qc_credentials`). Токен наружу не отдаётся. Авторизация — SHA-256 HMAC по
+   схеме QuantConnect API v2 (`Authorization: Basic`, заголовок `Timestamp`).
+2. **Добавить алгоритм** — поиском по проектам (`/projects/read`, выпадающий список) или вводом
+   `projectId`/`backtestId` вручную. Алгоритмы складываются в портфель (`qc_algorithms`).
+3. **Матрица**: строки — годы; для каждого алгоритма три колонки (макс. просадка за год,
+   доходность за год, накопительная), затем бенчмарк. Данные считаются из кривой капитала
+   бектеста (`Strategy Equity`) и серии `Benchmark` (`/backtests/chart/read`). Посчитанные
+   метрики кэшируются по `backtestId` (`qc_backtest_cache`) — бектест неизменен, кэш бессрочный;
+   кнопка «Пересчитать» обходит кэш.
+
 ## Таблицы
 
 | Таблица | Назначение |
@@ -197,6 +215,9 @@ GDELT остаётся **только** в `/market-events` (там диапаз
 | `top_n_per_year` | computed top-N на 31.12 каждого года |
 | `rating_changes_filtered` | финал: апгрейды с фильтром, ready for CSV |
 | `runs` | метаданные запусков pipeline |
+| `qc_credentials` | креды доступа QuantConnect (singleton; токен не отдаётся на клиент) |
+| `qc_algorithms` | портфель алгоритмов QuantConnect (projectId + опц. backtestId + метка) |
+| `qc_backtest_cache` | кэш посчитанных годовых метрик бектеста (ключ — projectId:backtestId) |
 
 ## Лицензия
 

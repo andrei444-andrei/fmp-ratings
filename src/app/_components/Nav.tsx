@@ -7,6 +7,7 @@ const LINKS = [
   { href: '/heatmap', label: 'Heatmap' },
   { href: '/ticker', label: 'Тикер' },
   { href: '/superinvestor', label: 'Superinvestors' },
+  { href: '/quant', label: 'Алгоритмы' },
   { href: '/admin/ai-events', label: 'AI Events' },
   { href: '/admin/ticker-sets', label: 'Тикеры' },
   { href: '/admin', label: 'Admin' },
