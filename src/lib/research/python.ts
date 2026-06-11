@@ -30,6 +30,74 @@ export type PyEvent =
   | { type: 'block'; html: string }
   | { type: 'error'; message: string };
 
+// UX-кит: готовые компоненты для дашбордного вывода. Функции возвращают
+// {'__kit__': True, 'html': ...}; весь текст экранируется (_esc). Модель собирает
+// из них result (можно списком вперемешку с таблицами).
+const KIT_PRELUDE = `
+def _kit(h):
+    return {'__kit__': True, 'html': h}
+def _esc(x):
+    import html as _h
+    return _h.escape('' if x is None else str(x))
+def kpi(label, value, delta=None, hint=None):
+    d = ''
+    if delta is not None:
+        s = str(delta).strip()
+        try:
+            neg = float(s.replace('%', '').replace(' ', '').replace(',', '.')) < 0
+        except Exception:
+            neg = s.startswith('-')
+        d = '<div class="rkit-kpi-delta ' + ('rkit-down' if neg else 'rkit-up') + '">' + _esc(delta) + '</div>'
+    hh = '<div class="rkit-kpi-hint">' + _esc(hint) + '</div>' if hint is not None else ''
+    return _kit('<div class="rkit-kpi"><div class="rkit-kpi-label">' + _esc(label) +
+                '</div><div class="rkit-kpi-value">' + _esc(value) + '</div>' + d + hh + '</div>')
+def row(*items):
+    inner = ''
+    for it in items:
+        if isinstance(it, dict) and it.get('__kit__'):
+            inner += it['html']
+        else:
+            inner += '<div class="rkit-kpi"><div class="rkit-kpi-value">' + _esc(it) + '</div></div>'
+    return _kit('<div class="rkit-row">' + inner + '</div>')
+def badge(text, tone='neutral'):
+    tones = {'up': 'rkit-b-up', 'good': 'rkit-b-up', 'down': 'rkit-b-down', 'bad': 'rkit-b-down',
+             'warn': 'rkit-b-warn', 'brand': 'rkit-b-brand', 'neutral': 'rkit-b-neutral'}
+    return _kit('<span class="rkit-badge ' + tones.get(str(tone), 'rkit-b-neutral') + '">' + _esc(text) + '</span>')
+def callout(body, tone='info', title=None):
+    tones = {'info': 'rkit-c-info', 'good': 'rkit-c-good', 'warn': 'rkit-c-warn', 'bad': 'rkit-c-bad'}
+    t = '<div class="rkit-callout-title">' + _esc(title) + '</div>' if title else ''
+    return _kit('<div class="rkit-callout ' + tones.get(str(tone), 'rkit-c-info') + '">' + t +
+                '<div class="rkit-callout-body">' + _esc(body) + '</div></div>')
+def bars(data, title=None):
+    items = list(data.items()) if hasattr(data, 'items') else list(enumerate(list(data)))
+    nums = []
+    for _k, _v in items:
+        try: nums.append(abs(float(_v)))
+        except Exception: nums.append(0.0)
+    mx = (max(nums) if nums else 0) or 1
+    body = ''
+    for k, v in items:
+        try: fv = float(v)
+        except Exception: fv = 0.0
+        w = max(2.0, min(100.0, abs(fv) / mx * 100))
+        cls = 'rkit-bar-neg' if fv < 0 else 'rkit-bar-pos'
+        body += ('<div class="rkit-bar-row"><div class="rkit-bar-label">' + _esc(k) +
+                 '</div><div class="rkit-bar-track"><div class="rkit-bar-fill ' + cls +
+                 '" style="width:' + str(round(w, 1)) + '%"></div></div><div class="rkit-bar-val">' +
+                 _esc('%.2f' % fv) + '</div></div>')
+    t = '<div class="rkit-bars-title">' + _esc(title) + '</div>' if title else ''
+    return _kit('<div class="rkit-bars">' + t + body + '</div>')
+`;
+
+// Лёгкая защита raw-HTML из кита/строк: убираем опасные теги, обработчики событий и javascript:-URL.
+// Инлайновый style (ширина баров) сохраняется. Таблицы pandas/Styler через это не проходят.
+function sanitizeKit(html: string): string {
+  return html
+    .replace(/<\/?(?:script|style|iframe|object|embed|link|meta|base|form)\b[^>]*>/gi, '')
+    .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/(?:href|src)\s*=\s*("?\s*)javascript:[^\s">]*/gi, '$1#');
+}
+
 // Прогоны сериализуются: один общий интерпретатор → без гонок за глобалами и stdout-хендлерами.
 let chain: Promise<unknown> = Promise.resolve();
 
@@ -109,6 +177,7 @@ async function execOnce(
       `    __r = __aj.dumps({'prompt': prompt, 'model': model, 'system': system,\n` +
       `                      'web': bool(web), 'temperature': temperature, 'max_tokens': max_tokens})\n` +
       `    return await __b(__r)\n` +
+      KIT_PRELUDE +
       (wantsPlot ? `import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\nplt.close('all')\n` : '');
 
     try {
@@ -133,30 +202,54 @@ async function execOnce(
       return;
     }
 
-    // Итоговые таблицы из переменной result: один DataFrame ИЛИ словарь/список
-    // именованных таблиц (этапы) — каждая рисуется отдельной подписанной таблицей.
+    // Итог из переменной result: DataFrame/Styler, словарь/список (этапы), либо компоненты
+    // UX-кита (kind='block'). Каждый элемент рисуется отдельным блоком.
     try {
       const tablesJson = await py.runPythonAsync(
         `import json as _json, html as _html\nimport pandas as _pd\n` +
+          `def _is_kit(v):\n` +
+          `    return isinstance(v, dict) and v.get('__kit__') is True and isinstance(v.get('html'), str)\n` +
           `def _one(v):\n` +
-          `    if isinstance(v, _pd.Series): return v.to_frame().to_html()\n` +
-          `    if isinstance(v, _pd.DataFrame): return v.to_html(index=not isinstance(v.index, _pd.RangeIndex))\n` +
+          `    if _is_kit(v): return ('block', v['html'])\n` +
+          `    if isinstance(v, _pd.Series): return ('table', v.to_frame().to_html())\n` +
+          `    if isinstance(v, _pd.DataFrame): return ('table', v.to_html(index=not isinstance(v.index, _pd.RangeIndex)))\n` +
           `    if hasattr(v, 'to_html'):\n` +
-          `        try: return v.to_html()\n` +
+          `        try: return ('table', v.to_html())\n` +
           `        except Exception: pass\n` +
-          `    return '<pre>' + _html.escape(str(v)) + '</pre>'\n` +
+          `    return ('block', '<pre class="rlog">' + _html.escape(str(v)) + '</pre>')\n` +
           `def _tables(r):\n` +
           `    if r is None: return []\n` +
-          `    if isinstance(r, dict): return [(str(k), _one(v)) for k, v in r.items()]\n` +
-          `    if isinstance(r, (list, tuple)): return [('Таблица ' + str(i + 1), _one(v)) for i, v in enumerate(r)]\n` +
-          `    return [('Результат', _one(r))]\n` +
-          `_json.dumps([{'title': _html.escape(t), 'html': h} for (t, h) in _tables(result)])\n`,
+          `    if _is_kit(r): return [('', 'block', r['html'])]\n` +
+          `    if isinstance(r, dict):\n` +
+          `        out = []\n` +
+          `        for k, v in r.items():\n` +
+          `            kind, h = _one(v); out.append((str(k), kind, h))\n` +
+          `        return out\n` +
+          `    if isinstance(r, (list, tuple)):\n` +
+          `        out = []\n` +
+          `        for v in r:\n` +
+          `            kind, h = _one(v); out.append(('', kind, h))\n` +
+          `        return out\n` +
+          `    kind, h = _one(r)\n` +
+          `    return [('Результат' if kind == 'table' else '', kind, h)]\n` +
+          `_json.dumps([{'title': _html.escape(t), 'kind': k, 'html': h} for (t, k, h) in _tables(result)])\n`,
       );
-      const tables = JSON.parse(String(tablesJson || '[]')) as { title: string; html: string }[];
+      const tables = JSON.parse(String(tablesJson || '[]')) as { title: string; kind: string; html: string }[];
       for (const t of tables) {
-        // Отрицательные числа в простых ячейках (без Styler) подсвечиваем красным.
-        const html = t.html.replace(/<td>(\s*-\d[\d.,]*\s*)<\/td>/g, '<td class="rneg">$1</td>');
-        onEvent({ type: 'block', html: `<div class="rblk"><div class="rcap">${t.title}</div><div class="rtblwrap">${html}</div></div>` });
+        if (t.kind === 'table') {
+          // Отрицательные числа в простых ячейках (без Styler) подсвечиваем красным.
+          const html = t.html.replace(/<td>(\s*-\d[\d.,]*\s*)<\/td>/g, '<td class="rneg">$1</td>');
+          const cap = t.title ? `<div class="rcap">${t.title}</div>` : '';
+          onEvent({ type: 'block', html: `<div class="rblk">${cap}<div class="rtblwrap">${html}</div></div>` });
+        } else {
+          const safe = sanitizeKit(t.html);
+          onEvent({
+            type: 'block',
+            html: t.title
+              ? `<div class="rblk"><div class="rcap">${t.title}</div><div class="rkitbody">${safe}</div></div>`
+              : safe,
+          });
+        }
       }
     } catch {
       /* result не задан / ошибка рендера — не критично */

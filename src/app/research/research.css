@@ -173,6 +173,170 @@
   font-weight: 600;
 }
 
+/* ───────────── UX-кит: kpi / badge / callout / bars ───────────── */
+.research-output .rkitbody {
+  padding: 12px 14px;
+}
+.research-output .rkit-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.research-output .rkit-row > * {
+  flex: 1 1 160px;
+}
+.research-output .rkit-kpi {
+  border: 1px solid var(--fk-line);
+  border-radius: var(--fk-radius);
+  background: var(--fk-surface-elev);
+  padding: 14px 16px;
+  min-width: 0;
+}
+.research-output .rkit-kpi-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fk-text-3);
+}
+.research-output .rkit-kpi-value {
+  margin-top: 4px;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--fk-text);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.research-output .rkit-kpi-delta {
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.research-output .rkit-kpi-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--fk-text-3);
+}
+.research-output .rkit-up {
+  color: var(--fk-up-text);
+}
+.research-output .rkit-down {
+  color: var(--fk-down-text);
+}
+
+.research-output .rkit-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 2px 9px;
+  line-height: 1.5;
+}
+.research-output .rkit-b-up {
+  color: var(--fk-up-text);
+  background: rgba(16, 185, 129, 0.12);
+}
+.research-output .rkit-b-down {
+  color: var(--fk-down-text);
+  background: rgba(239, 68, 68, 0.12);
+}
+.research-output .rkit-b-warn {
+  color: #92600a;
+  background: rgba(245, 158, 11, 0.15);
+}
+.research-output .rkit-b-brand {
+  color: var(--fk-brand);
+  background: rgba(109, 91, 240, 0.12);
+}
+.research-output .rkit-b-neutral {
+  color: var(--fk-text-2);
+  background: var(--fk-surface-2);
+}
+
+.research-output .rkit-callout {
+  border: 1px solid var(--fk-line);
+  border-left-width: 3px;
+  border-radius: var(--fk-radius);
+  padding: 10px 14px;
+  background: var(--fk-surface-2);
+}
+.research-output .rkit-callout-title {
+  font-weight: 700;
+  font-size: 13px;
+  margin-bottom: 2px;
+  color: var(--fk-text);
+}
+.research-output .rkit-callout-body {
+  font-size: 13.5px;
+  color: var(--fk-text-2);
+}
+.research-output .rkit-c-info {
+  border-left-color: var(--fk-brand);
+}
+.research-output .rkit-c-good {
+  border-left-color: var(--fk-up-text);
+}
+.research-output .rkit-c-warn {
+  border-left-color: #f59e0b;
+}
+.research-output .rkit-c-bad {
+  border-left-color: var(--fk-down-text);
+}
+
+.research-output .rkit-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.research-output .rkit-bars-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fk-text-3);
+  margin-bottom: 2px;
+}
+.research-output .rkit-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.research-output .rkit-bar-label {
+  flex: 0 0 34%;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--fk-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.research-output .rkit-bar-track {
+  flex: 1 1 auto;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--fk-surface-2);
+  overflow: hidden;
+}
+.research-output .rkit-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+}
+.research-output .rkit-bar-pos {
+  background: var(--fk-up-text);
+}
+.research-output .rkit-bar-neg {
+  background: var(--fk-down-text);
+}
+.research-output .rkit-bar-val {
+  flex: 0 0 auto;
+  min-width: 56px;
+  text-align: right;
+  font-size: 12.5px;
+  color: var(--fk-text-2);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Графики */
 .research-output img {
   display: block;
