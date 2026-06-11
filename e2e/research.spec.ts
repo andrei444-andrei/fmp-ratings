@@ -134,6 +134,16 @@ test.describe('Research /research', () => {
     await expect(page.locator('[data-testid="run-open"]').filter({ hasText: title })).toHaveCount(0);
   });
 
+  test('общий запрос «по странам» подставляет корзину страновых ETF', async ({ page }) => {
+    await stubExecute(page, SINGLE_SCRIPT);
+    await page.goto('/research');
+    await page.locator('textarea').first().fill('сравни среднюю доходность по странам за всё время');
+    await page.getByRole('button', { name: 'Исполнить' }).click();
+    const lead = page.locator('.research-output .rlead');
+    await expect(lead).toContainText('EWJ', { timeout: 30000 });
+    await expect(lead).toContainText('EWG'); // корзина, а не дефолтная пара SPY/QQQ
+  });
+
   test('многоэтапный результат рисует несколько подписанных таблиц', async ({ page }) => {
     await stubExecute(page, MULTI_SCRIPT);
     await page.goto('/research');
