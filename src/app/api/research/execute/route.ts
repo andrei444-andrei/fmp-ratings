@@ -1,14 +1,15 @@
 import { getPrices } from '@/lib/research/prices';
 import { syntheticSeries } from '@/lib/research/metrics';
-import { aimlChatMeta } from '@/lib/aimlapi';
-import { runResearchPython, type PriceRow } from '@/lib/research/python';
+import { aimlChatMeta, aimlChatWithCitations, getAimlSonarModel } from '@/lib/aimlapi';
+import { runResearchPython, type PriceRow, type AskAiFn } from '@/lib/research/python';
 import { getFundamentals } from '@/lib/research/fundamentals';
 import { getDividends } from '@/lib/research/dividends';
 import { logAppError } from '@/lib/app-errors';
 import { marked } from 'marked';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 120;
+// Скрипт может делать запросы к LLM (ask_ai) пачками — даём запас по времени.
+export const maxDuration = 300;
 
 const STOP = new Set(['AI', 'AND', 'THE', 'FOR', 'VS', 'USD', 'ETF', 'SP', 'API', 'CEO', 'USA', 'GDP', 'PE', 'EPS']);
 
@@ -111,6 +112,11 @@ const SYS_PROMPT =
   'Дополнительно доступны DataFrame `fundamentals` [symbol, company, sector, industry, exchange, country, currency, market_cap, beta, price, last_dividend] (снимок на тикер — сектора/размер/бета для секторного и факторного анализа) и `dividends` [symbol, date, dividend] (история выплат — для полной доходности). Обращайся к ним при необходимости. ' +
   'Доступен matplotlib (backend Agg) — если нужен график, используй `plt`. ' +
   'Также доступны numpy (np), scipy, statsmodels, scikit-learn (sklearn) — импортируй их при необходимости (регрессии, стат-тесты, ARIMA, кластеризация, оптимизация, факторные модели). ' +
+  'Доступна async-функция `ask_ai(prompt, model=None, system=None, web=False)` — запрос к LLM прямо из скрипта (ключи живут на сервере, тебе их знать не нужно): вызывай `await ask_ai(...)`. ' +
+  'web=True включает живой веб-поиск с источниками (Perplexity Sonar) — это лучший способ собрать НОВОСТИ/события по стране/тикеру за период; ' +
+  'model=… позволяет выбрать конкретную модель (например "gpt-4o-mini", "gpt-4o" или Claude-модель). ' +
+  'Вызовы платные и не мгновенные — делай их по делу (например только для отобранных строк/событий, а не для всех подряд) и печатай прогресс через print(); жёстких лимитов на число вызовов нет. ' +
+  'Если используешь ask_ai в цикле — оборачивай каждый вызов в try/except, чтобы единичный сбой не ронял весь прогон. ' +
   'В df могут быть международные и страновые ETF (например EWJ, EWG, FXI, EWZ, INDA) — это нормально; ' +
   'работай с тем, что дано, и НИКОГДА не утверждай, что доступны только тикеры США. ' +
   'Для страновых ETF поле `country` в `fundamentals` уже приведено к реальной стране (Япония, Германия, Китай…), ' +
@@ -129,6 +135,35 @@ const SYS_PROMPT =
   'сортируй `result` осмысленно (обычно по убыванию ключевой метрики); ' +
   'аккуратно обрабатывай пропуски и крайние даты (не показывай NaN как есть); ' +
   'пиши читаемый код: строки не длиннее ~90 символов, длинные выражения разбивай на несколько строк.';
+
+// Мост ask_ai для скрипта: любой запрос из песочницы исполняем здесь, ключ остаётся на сервере.
+// web=true → живой веб-поиск с источниками (Perplexity Sonar), иначе обычный чат на выбранной модели.
+// Жёстких лимитов на число вызовов нет — запросы бывают разные.
+function makeAskAi(): AskAiFn | undefined {
+  if (!process.env.AIMLAPI_KEY) return undefined;
+  return async (req: any): Promise<string> => {
+    const prompt = String(req?.prompt ?? '').trim();
+    if (!prompt) return '';
+    const model = typeof req?.model === 'string' && req.model.trim() ? req.model.trim() : undefined;
+    const system = typeof req?.system === 'string' && req.system.trim() ? req.system.trim() : undefined;
+    const temperature = typeof req?.temperature === 'number' ? req.temperature : undefined;
+    const maxTokens = typeof req?.max_tokens === 'number' ? req.max_tokens : undefined;
+    const messages: { role: 'system' | 'user'; content: string }[] = [];
+    if (system) messages.push({ role: 'system', content: system });
+    messages.push({ role: 'user', content: prompt });
+    if (req?.web) {
+      const { content, citations } = await aimlChatWithCitations({
+        messages,
+        model: model || getAimlSonarModel(),
+        temperature,
+        max_tokens: maxTokens ?? 700,
+      });
+      return citations.length ? `${content}\n\nИсточники: ${citations.join('; ')}` : content;
+    }
+    const { content } = await aimlChatMeta({ model, messages, temperature, max_tokens: maxTokens ?? 800 });
+    return content;
+  };
+}
 
 // Карточка ошибки для панели результата (заголовок + причина + опц. трейсбэк).
 function errorCard(title: string, message: string, detail?: string): string {
@@ -278,7 +313,7 @@ export async function POST(req: Request) {
           }
         }
 
-        // 3) Исполнить Python (стрим stdout + таблица result + графики)
+        // 3) Исполнить Python (стрим stdout + таблица result + графики; ask_ai → LLM по требованию)
         send({ type: 'status', text: 'Исполняю Python…' });
         await runResearchPython(code, { prices, fundamentals, dividends }, (e) => {
           if (e.type === 'error') {
@@ -297,7 +332,7 @@ export async function POST(req: Request) {
           } else {
             send(e);
           }
-        });
+        }, makeAskAi());
 
         // Пояснение к коду (допущения/нюансы): рендерим Markdown → HTML и отдаём блоком.
         try {

@@ -22,6 +22,9 @@ export type ResearchData = {
   fundamentals?: Record<string, unknown>[];
   dividends?: Record<string, unknown>[];
 };
+// Мост «скрипт → LLM»: хост выполняет запрос к AIMLAPI (ключ остаётся на сервере),
+// скрипт получает только текст. req — распарсенный JSON {prompt, model, system, web, …}.
+export type AskAiFn = (req: any) => Promise<string>;
 export type PyEvent =
   | { type: 'log'; text: string }
   | { type: 'block'; html: string }
@@ -34,8 +37,9 @@ export function runResearchPython(
   code: string,
   data: ResearchData,
   onEvent: (e: PyEvent) => void,
+  askAi?: AskAiFn,
 ): Promise<void> {
-  const task = () => execOnce(code, data, onEvent);
+  const task = () => execOnce(code, data, onEvent, askAi);
   const p = chain.then(task, task);
   chain = p.catch(() => {});
   return p;
@@ -45,6 +49,7 @@ async function execOnce(
   code: string,
   data: ResearchData,
   onEvent: (e: PyEvent) => void,
+  askAi?: AskAiFn,
 ): Promise<void> {
   const py = await getPyodide();
   const wantsPlot = /matplotlib|pyplot|\bplt\b/.test(code);
@@ -72,6 +77,20 @@ async function execOnce(
     py.globals.set('__DATA_JSON__', JSON.stringify(longRows));
     py.globals.set('__FUND_JSON__', JSON.stringify(data.fundamentals ?? []));
     py.globals.set('__DIV_JSON__', JSON.stringify(data.dividends ?? []));
+    // Мост к LLM: ставим JS-функцию, если есть провайдер; иначе None (ask_ai даст понятную ошибку).
+    // Ставим КАЖДЫЙ прогон (интерпретатор общий), чтобы не утёк мост из прошлого запроса.
+    py.globals.set(
+      '__ask_ai__',
+      askAi
+        ? async (jsonStr: string) => {
+            try {
+              return await askAi(JSON.parse(jsonStr));
+            } catch (e: any) {
+              return `[ошибка AI: ${e?.message || String(e)}]`;
+            }
+          }
+        : null,
+    );
 
     const prelude =
       `import json as __json\nimport pandas as pd\nimport numpy as np\n` +
@@ -81,6 +100,15 @@ async function execOnce(
       `dividends = pd.DataFrame(__json.loads(__DIV_JSON__))\n` +
       `if not dividends.empty:\n    dividends['date'] = pd.to_datetime(dividends['date'])\n` +
       `result = None\n` +
+      // Обращение к LLM прямо из скрипта: await ask_ai("...", web=True) и т.п.
+      `async def ask_ai(prompt, model=None, system=None, web=False, temperature=None, max_tokens=None):\n` +
+      `    import json as __aj\n` +
+      `    __b = globals().get('__ask_ai__')\n` +
+      `    if __b is None:\n` +
+      `        raise RuntimeError('ask_ai недоступна: не настроен AIMLAPI_KEY на сервере')\n` +
+      `    __r = __aj.dumps({'prompt': prompt, 'model': model, 'system': system,\n` +
+      `                      'web': bool(web), 'temperature': temperature, 'max_tokens': max_tokens})\n` +
+      `    return await __b(__r)\n` +
       (wantsPlot ? `import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\nplt.close('all')\n` : '');
 
     try {
