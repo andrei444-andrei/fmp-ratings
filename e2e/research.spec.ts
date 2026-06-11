@@ -3,9 +3,36 @@ import { test, expect } from '@playwright/test';
 // Смоук «Исследование трендов»: исследования (сохранённый запрос + его результаты),
 // исполнение Python, сохранение результата внутри исследования (в т.ч. после правки промта),
 // описание (Markdown), редактирование, каскадное удаление.
-// В e2e ключи отключены → базовый скрипт + синтетика, но Python исполняется по-настоящему.
+// В e2e ключи отключены и дефолтного скрипта в продукте НЕТ — поэтому харнесс сам
+// подкладывает готовый Python в тело запроса (флаг E2E_ALLOW_CODE на сервере),
+// а Python исполняется по-настоящему на синтетических ценах.
 
 type Page = import('@playwright/test').Page;
+
+// Один DataFrame: доходность за период по тикерам.
+const SINGLE_SCRIPT = `g = df.sort_values('date').groupby('symbol')['close']
+ret = (g.last() / g.first() - 1) * 100
+result = ret.round(2).rename('Доходность, %').reset_index().rename(columns={'symbol': 'Тикер'})
+print('Доходность за период по тикерам:')
+print(result.to_string(index=False))`;
+
+// Многоэтапный результат: словарь именованных таблиц (рендерится отдельными блоками).
+const MULTI_SCRIPT = `g = df.sort_values('date').groupby('symbol')['close']
+ret = (g.last() / g.first() - 1) * 100
+t1 = ret.round(2).rename('Доходность, %').reset_index().rename(columns={'symbol': 'Тикер'})
+t2 = df.groupby('symbol').size().rename('Точек').reset_index().rename(columns={'symbol': 'Тикер'})
+print('Готово:', len(t1), 'тикеров')
+result = {'Этап 1 — доходность': t1, 'Этап 2 — объём данных': t2}`;
+
+// Подменяем тело POST /execute, добавляя готовый Python (сервер примет его только под флагом).
+async function stubExecute(page: Page, code: string) {
+  await page.unroute('**/api/research/execute').catch(() => {});
+  await page.route('**/api/research/execute', async (route) => {
+    const body = JSON.parse(route.request().postData() || '{}');
+    body.code = code;
+    await route.continue({ postData: JSON.stringify(body) });
+  });
+}
 
 async function saveStudy(page: Page, text: string, title: string) {
   await page.locator('textarea').first().fill(text);
@@ -27,6 +54,11 @@ async function saveResult(page: Page) {
 }
 
 test.describe('Research /research', () => {
+  // По умолчанию исполняем простой одно-табличный скрипт.
+  test.beforeEach(async ({ page }) => {
+    await stubExecute(page, SINGLE_SCRIPT);
+  });
+
   test('страница и пустое состояние рендерятся', async ({ page }) => {
     await page.goto('/research');
     await expect(page.getByRole('heading', { name: 'Запрос' })).toBeVisible();
@@ -100,5 +132,15 @@ test.describe('Research /research', () => {
     await item.getByRole('button', { name: 'Удалить исследование' }).click();
     await expect(page.getByText('Исследование и его результаты удалены')).toBeVisible({ timeout: 15000 });
     await expect(page.locator('[data-testid="run-open"]').filter({ hasText: title })).toHaveCount(0);
+  });
+
+  test('многоэтапный результат рисует несколько подписанных таблиц', async ({ page }) => {
+    await stubExecute(page, MULTI_SCRIPT);
+    await page.goto('/research');
+    await page.locator('textarea').first().fill('многоэтапный анализ AAPL и MSFT');
+    await page.getByRole('button', { name: 'Исполнить' }).click();
+    await expect(page.getByText('Этап 1 — доходность')).toBeVisible({ timeout: 90000 });
+    await expect(page.getByText('Этап 2 — объём данных')).toBeVisible();
+    await expect(page.locator('.research-output .rtblwrap table')).toHaveCount(2);
   });
 });
