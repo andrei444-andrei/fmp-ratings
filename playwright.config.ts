@@ -28,8 +28,9 @@ export default defineConfig({
     url: `${baseURL}/research`,
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,
-    // Локальная SQLite + детерминизм: без ключей AIMLAPI/FMP исполняется
-    // базовый Python-скрипт на синтетических ценах.
+    // Локальная SQLite + детерминизм: без ключей AIMLAPI/FMP. Дефолтного скрипта в
+    // продукте нет — под флагом E2E_ALLOW_CODE сервер принимает Python из тела запроса
+    // (его подкладывает сам тест), Python исполняется по-настоящему на синтетических ценах.
     env: { LOCAL_SQLITE_PATH: 'local.db', AIMLAPI_KEY: '', FMP_API_KEY: '', E2E_ALLOW_CODE: '1' },
   },
 });

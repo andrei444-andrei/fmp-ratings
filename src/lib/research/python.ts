@@ -92,28 +92,31 @@ async function execOnce(
       return;
     }
 
-    // Итоговая таблица из переменной result
+    // Итоговые таблицы из переменной result: один DataFrame ИЛИ словарь/список
+    // именованных таблиц (этапы) — каждая рисуется отдельной подписанной таблицей.
     try {
-      const resultHtml = await py.runPythonAsync(
-        `import pandas as _pd\n` +
-          `def __render(r):\n` +
-          `    if r is None: return ''\n` +
-          `    if isinstance(r, _pd.Series): return r.to_frame().to_html()\n` +
-          `    if isinstance(r, _pd.DataFrame):\n` +
-          `        return r.to_html(index=not isinstance(r.index, _pd.RangeIndex))\n` +
-          `    if hasattr(r, 'to_html'):\n` +
-          `        try:\n` +
-          `            return r.to_html()\n` +
-          `        except Exception:\n` +
-          `            pass\n` +
-          `    return '<pre>' + str(r) + '</pre>'\n` +
-          `__render(result)\n`,
+      const tablesJson = await py.runPythonAsync(
+        `import json as _json, html as _html\nimport pandas as _pd\n` +
+          `def _one(v):\n` +
+          `    if isinstance(v, _pd.Series): return v.to_frame().to_html()\n` +
+          `    if isinstance(v, _pd.DataFrame): return v.to_html(index=not isinstance(v.index, _pd.RangeIndex))\n` +
+          `    if hasattr(v, 'to_html'):\n` +
+          `        try: return v.to_html()\n` +
+          `        except Exception: pass\n` +
+          `    return '<pre>' + _html.escape(str(v)) + '</pre>'\n` +
+          `def _tables(r):\n` +
+          `    if r is None: return []\n` +
+          `    if isinstance(r, dict): return [(str(k), _one(v)) for k, v in r.items()]\n` +
+          `    if isinstance(r, (list, tuple)): return [('Таблица ' + str(i + 1), _one(v)) for i, v in enumerate(r)]\n` +
+          `    return [('Результат', _one(r))]\n` +
+          `_json.dumps([{'title': _html.escape(t), 'html': h} for (t, h) in _tables(result)])\n`,
       );
-      if (resultHtml) {
-        onEvent({ type: 'block', html: `<div class="rblk"><div class="rcap">Результат</div><div class="rtblwrap">${String(resultHtml)}</div></div>` });
+      const tables = JSON.parse(String(tablesJson || '[]')) as { title: string; html: string }[];
+      for (const t of tables) {
+        onEvent({ type: 'block', html: `<div class="rblk"><div class="rcap">${t.title}</div><div class="rtblwrap">${t.html}</div></div>` });
       }
     } catch {
-      /* result не задан — не критично */
+      /* result не задан / ошибка рендера — не критично */
     }
 
     // Графики matplotlib → PNG
