@@ -3,8 +3,8 @@ import './globals.css';
 import Nav from './_components/Nav';
 
 export const metadata: Metadata = {
-  title: 'Market Lab — heatmap, superinvestors, AI events',
-  description: 'Дневной хитмап рынка, копи-альфа суперинвесторов и AI-исследователь событий.',
+  title: 'Market Lab — исследование трендов и аналитика алгоритмов',
+  description: 'Python-исследование рыночных данных и годовая аналитика QuantConnect-алгоритмов.',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
