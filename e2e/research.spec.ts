@@ -170,6 +170,20 @@ test.describe('Research /research', () => {
     await expect(page.locator('.research-output .rcode')).not.toContainText('asyncio.run(');
   });
 
+  test('отрицательные числа в таблице подсвечиваются красным (.rneg)', async ({ page }) => {
+    await stubExecute(
+      page,
+      'import pandas as pd\nresult = pd.DataFrame({"Период": ["A", "B"], "Моментум, %": [-41.42, 3.1]})',
+    );
+    await page.goto('/research');
+    await page.locator('textarea').first().fill('тест окраски чисел');
+    await page.getByRole('button', { name: 'Исполнить' }).click();
+    const neg = page.locator('.research-output .rtblwrap td.rneg');
+    await expect(neg).toHaveText(/-41\.42/, { timeout: 90000 });
+    // положительное значение не помечается классом .rneg
+    await expect(page.locator('.research-output .rtblwrap td', { hasText: '3.1' })).not.toHaveClass(/rneg/);
+  });
+
   test('многоэтапный результат рисует несколько подписанных таблиц', async ({ page }) => {
     await stubExecute(page, MULTI_SCRIPT);
     await page.goto('/research');
