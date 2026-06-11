@@ -8,7 +8,7 @@ import { test, expect } from '@playwright/test';
 test.describe('Аналитика алгоритмов /quant', () => {
   test('страница рендерится: заголовок, методология, форма добавления', async ({ page }) => {
     await page.goto('/quant');
-    await expect(page.getByText('Аналитика алгоритмов', { exact: true })).toBeVisible();
+    await expect(page.locator('.qc-title')).toHaveText('Аналитика алгоритмов');
     await expect(page.getByText('Как читать матрицу')).toBeVisible();
     await expect(page.locator('.qc-panel-h').filter({ hasText: 'Добавить алгоритм' })).toBeVisible();
     // строки/колонки описаны в методологии
@@ -31,9 +31,10 @@ test.describe('Аналитика алгоритмов /quant', () => {
     await expect(page.getByPlaceholder('123456')).toBeVisible();
   });
 
-  test('навигация содержит ссылку «Алгоритмы»', async ({ page }) => {
+  test('навигация содержит ссылки на оба раздела', async ({ page }) => {
     await page.goto('/quant');
-    await expect(page.getByRole('link', { name: 'Алгоритмы' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Аналитика алгоритмов' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Исследование трендов' })).toBeVisible();
   });
 
   // Матрица на синтетических данных (живой путь к QuantConnect в e2e недоступен):

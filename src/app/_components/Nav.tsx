@@ -4,12 +4,8 @@ import { usePathname } from 'next/navigation';
 import ThemeToggle from './ThemeToggle';
 
 const LINKS = [
-  { href: '/heatmap', label: 'Heatmap' },
-  { href: '/ticker', label: 'Тикер' },
-  { href: '/superinvestor', label: 'Superinvestors' },
-  { href: '/quant', label: 'Алгоритмы' },
-  { href: '/admin/ai-events', label: 'AI Events' },
-  { href: '/admin/ticker-sets', label: 'Тикеры' },
+  { href: '/research', label: 'Исследование трендов' },
+  { href: '/quant', label: 'Аналитика алгоритмов' },
   { href: '/admin', label: 'Admin' },
 ];
 
@@ -21,7 +17,7 @@ export default function Nav() {
   return (
     <header className="app-nav">
       <div className="app-nav-in">
-        <a href="/heatmap" className="app-brand" aria-label="Heatmap">
+        <a href="/research" className="app-brand" aria-label="Market Lab">
           <span className="app-brand-dot" />
         </a>
         <nav className="app-nav-links">
