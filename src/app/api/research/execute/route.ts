@@ -29,6 +29,22 @@ function stripFences(code: string): string {
   return (m ? m[1] : code).trim();
 }
 
+// В рантайме Vercel нет WebAssembly stack switching, поэтому блокирующий запуск корутин
+// (asyncio.run / loop.run_until_complete) падает. Код с ask_ai должен использовать top-level
+// await — переписываем типовые «драйверы» на него (Pyodide исполняет await через хост-цикл).
+function normalizeAsyncDriver(code: string): string {
+  return code
+    .split('\n')
+    .map((line) => {
+      const run = line.match(/^(\s*)(?:(\w+)\s*=\s*)?asyncio\.run\((.+)\)\s*$/);
+      if (run) return `${run[1]}${run[2] ? run[2] + ' = ' : ''}await ${run[3]}`;
+      const ruc = line.match(/^(\s*)(?:(\w+)\s*=\s*)?.*?\brun_until_complete\((.+)\)\s*$/);
+      if (ruc) return `${ruc[1]}${ruc[2] ? ruc[2] + ' = ' : ''}await ${ruc[3]}`;
+      return line;
+    })
+    .join('\n');
+}
+
 // Модель кодогенерации: выбранная пользователем Claude-модель (валидируем) или дефолт.
 function pickCodeModel(body: any): string {
   const m = (body?.model ?? '').toString().trim();
@@ -117,6 +133,9 @@ const SYS_PROMPT =
   'model=… позволяет выбрать конкретную модель (например "gpt-4o-mini", "gpt-4o" или Claude-модель). ' +
   'Вызовы платные и не мгновенные — делай их по делу (например только для отобранных строк/событий, а не для всех подряд) и печатай прогресс через print(); жёстких лимитов на число вызовов нет. ' +
   'Если используешь ask_ai в цикле — оборачивай каждый вызов в try/except, чтобы единичный сбой не ронял весь прогон. ' +
+  'ВАЖНО про async: среда исполняет код с поддержкой top-level await — вызывай `await ask_ai(...)` ПРЯМО на верхнем уровне (в т.ч. внутри обычного for-цикла). ' +
+  'НИКОГДА не используй asyncio.run(), asyncio.get_event_loop(), loop.run_until_complete(), asyncio.new_event_loop() — в этой среде они падают (нет stack switching). ' +
+  'Если нужна вспомогательная корутина — объяви `async def helper(...)` и вызови её `await helper(...)` на верхнем уровне. ' +
   'В df могут быть международные и страновые ETF (например EWJ, EWG, FXI, EWZ, INDA) — это нормально; ' +
   'работай с тем, что дано, и НИКОГДА не утверждай, что доступны только тикеры США. ' +
   'Для страновых ETF поле `country` в `fundamentals` уже приведено к реальной стране (Япония, Германия, Китай…), ' +
@@ -140,7 +159,18 @@ const SYS_PROMPT =
 // web=true → живой веб-поиск с источниками (Perplexity Sonar), иначе обычный чат на выбранной модели.
 // Жёстких лимитов на число вызовов нет — запросы бывают разные.
 function makeAskAi(): AskAiFn | undefined {
-  if (!process.env.AIMLAPI_KEY) return undefined;
+  if (!process.env.AIMLAPI_KEY) {
+    // Детерминированная заглушка для e2e (флаг E2E_ALLOW_CODE): реальных вызовов LLM нет,
+    // но успешный путь моста ask_ai тестируется. В проде флаг не выставлен → ask_ai недоступна.
+    if (process.env.E2E_ALLOW_CODE === '1') {
+      return async (req: any): Promise<string> => {
+        const p = String(req?.prompt ?? '').slice(0, 60);
+        const model = req?.model ? String(req.model) : 'default';
+        return `[AI:${model}:${req?.web ? 'web' : 'chat'}] ${p}`;
+      };
+    }
+    return undefined;
+  }
   return async (req: any): Promise<string> => {
     const prompt = String(req?.prompt ?? '').trim();
     if (!prompt) return '';
@@ -266,6 +296,8 @@ export async function POST(req: Request) {
           send({ type: 'done' });
           return;
         }
+        // Перед исполнением чиним блокирующую асинхронность (asyncio.run → top-level await).
+        code = normalizeAsyncDriver(code);
         send({ type: 'code', code });
         // Пояснение «как реализовано / допущения» готовим параллельно с исполнением.
         const explainPromise = generateExplanation(prompt, code);

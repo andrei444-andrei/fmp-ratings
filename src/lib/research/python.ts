@@ -116,7 +116,20 @@ async function execOnce(
       // Дофлашиваем хвост stdout/stderr в рамках ТЕКУЩЕГО запроса (пока stream открыт).
       await py.runPythonAsync('import sys as _sys\n_sys.stdout.flush()\n_sys.stderr.flush()');
     } catch (e: any) {
-      onEvent({ type: 'error', message: e?.message || String(e) });
+      const msg = e?.message || String(e);
+      // Рантайм без WebAssembly stack switching: блокирующий запуск корутин не поддержан.
+      // Подсказываем правильный путь — top-level await — вместо криптического сообщения.
+      if (/stack switching/i.test(msg)) {
+        onEvent({
+          type: 'error',
+          message:
+            'Асинхронность запущена неверно: используй top-level await — пиши `await ask_ai(...)` ' +
+            'напрямую (можно в обычном for-цикле), без asyncio.run() / loop.run_until_complete() / ' +
+            'asyncio.new_event_loop() (в этой среде они не работают).',
+        });
+        return;
+      }
+      onEvent({ type: 'error', message: msg });
       return;
     }
 
