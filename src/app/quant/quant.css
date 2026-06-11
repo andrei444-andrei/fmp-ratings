@@ -1,0 +1,133 @@
+/* Раздел «Аналитика алгоритмов» (QuantConnect). Самодостаточные стили: переменные
+   маппятся на глобальные --app-* (они уже переключаются между тёмной/светлой темой). */
+
+.qc-root {
+  --qc-surf: var(--app-surf);
+  --qc-surf2: var(--app-surf2);
+  --qc-line: var(--app-line);
+  --qc-line2: var(--app-line2);
+  --qc-tx: var(--app-tx);
+  --qc-tx2: var(--app-tx2);
+  --qc-tx3: var(--app-tx3);
+  --qc-acc: var(--app-acc);
+  --qc-acc-bg: var(--app-acc-bg);
+  --qc-acc-bd: var(--app-acc-bd);
+  --qc-pos: var(--app-pos);
+  --qc-neg: var(--app-neg);
+  --qc-on-acc: var(--app-on-acc);
+  --qc-rad: var(--app-rad);
+  --qc-rad-lg: var(--app-rad-lg);
+  --qc-mono: var(--app-mono);
+  font-size: 14px;
+}
+.qc-root * { box-sizing: border-box; }
+
+/* шапка */
+.qc-top { margin-bottom: 14px; }
+.qc-title { font-size: 20px; font-weight: 700; letter-spacing: .2px; color: var(--qc-tx); }
+.qc-sub { font-size: 12.5px; color: var(--qc-tx3); margin-top: 3px; }
+
+/* методология */
+.qc-method {
+  background: linear-gradient(180deg, var(--qc-acc-bg), var(--qc-surf));
+  border: .5px solid var(--qc-acc-bd); border-radius: var(--qc-rad-lg);
+  padding: 13px 16px; margin-bottom: 16px; font-size: 12.5px; line-height: 1.55; color: var(--qc-tx2);
+}
+.qc-method h4 { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--qc-acc); margin: 0 0 7px; font-weight: 700; }
+.qc-method ul { margin: 0; padding-left: 16px; }
+.qc-method li { margin: 3px 0; }
+.qc-method b { color: var(--qc-tx); }
+
+/* панель */
+.qc-panel { background: var(--qc-surf); border: .5px solid var(--qc-line); border-radius: var(--qc-rad-lg); padding: 16px; margin-bottom: 16px; }
+.qc-panel-h { font-size: 13px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: baseline; gap: 8px; color: var(--qc-tx); }
+.qc-panel-h .c { font-size: 11px; color: var(--qc-tx3); font-weight: 400; }
+
+/* уведомление «нет кредов» */
+.qc-note {
+  background: var(--qc-surf); border: .5px solid var(--qc-acc-bd); border-radius: var(--qc-rad-lg);
+  padding: 14px 16px; margin-bottom: 16px; font-size: 13px; color: var(--qc-tx2); line-height: 1.5;
+}
+.qc-note a { color: var(--qc-on-acc); text-decoration: none; font-weight: 600; }
+.qc-note a:hover { text-decoration: underline; }
+
+/* бар управления */
+.qc-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.qc-spacer { flex: 1; }
+
+/* формы / кнопки */
+.qc-seg { display: inline-flex; background: var(--qc-surf); border: .5px solid var(--qc-line2); border-radius: var(--qc-rad); overflow: hidden; }
+.qc-seg button { background: transparent; border: 0; color: var(--qc-tx2); font: inherit; font-size: 12px; padding: 6px 12px; cursor: pointer; border-right: .5px solid var(--qc-line2); }
+.qc-seg button:last-child { border-right: 0; }
+.qc-seg button.on { background: var(--qc-acc-bg); color: var(--qc-on-acc); }
+
+.qc-form { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); align-items: end; }
+.qc-field { min-width: 0; }
+.qc-field label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--qc-tx3); margin-bottom: 4px; }
+.qc-input, .qc-select {
+  width: 100%; background: var(--app-bg2); border: .5px solid var(--qc-line2); color: var(--qc-tx);
+  font: inherit; font-size: 12.5px; padding: 7px 9px; border-radius: var(--qc-rad);
+}
+.qc-input:focus, .qc-select:focus { outline: none; border-color: var(--qc-acc-bd); }
+
+.qc-btn {
+  background: transparent; border: .5px solid var(--qc-line2); color: var(--qc-tx2);
+  font: inherit; font-size: 12.5px; padding: 7px 12px; border-radius: var(--qc-rad); cursor: pointer; white-space: nowrap;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.qc-btn:hover { background: var(--qc-surf2); color: var(--qc-tx); }
+.qc-btn:disabled { opacity: .4; cursor: not-allowed; }
+.qc-btn.primary { background: var(--qc-acc-bg); border-color: var(--qc-acc-bd); color: var(--qc-on-acc); }
+.qc-btn.primary:hover { background: var(--qc-acc-bd); }
+
+/* выпадающий список совпадений */
+.qc-matches { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; max-height: 240px; overflow: auto; }
+.qc-match { text-align: left; background: var(--qc-surf2); border: .5px solid var(--qc-line); color: var(--qc-tx2); border-radius: 7px; padding: 7px 10px; cursor: pointer; font-size: 12.5px; display: flex; justify-content: space-between; gap: 10px; }
+.qc-match:hover { color: var(--qc-tx); border-color: var(--qc-line2); }
+.qc-match .meta { color: var(--qc-tx3); font-family: var(--qc-mono); font-size: 10.5px; white-space: nowrap; }
+
+/* чипы портфеля */
+.qc-chiplist { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.qc-chip { display: flex; align-items: center; gap: 8px; font-size: 12px; background: var(--qc-surf2); border: .5px solid var(--qc-line); border-radius: 99px; padding: 5px 8px 5px 12px; color: var(--qc-tx2); }
+.qc-chip .pid { color: var(--qc-tx3); font-family: var(--qc-mono); font-size: 10.5px; }
+.qc-chip button { background: transparent; border: 0; color: var(--qc-tx3); cursor: pointer; font-size: 15px; line-height: 1; padding: 0 2px; }
+.qc-chip button:hover { color: var(--qc-neg); }
+
+/* матрица */
+.qc-tblwrap { overflow-x: auto; border: .5px solid var(--qc-line); border-radius: var(--qc-rad-lg); background: var(--qc-surf); }
+.qc-matrix { border-collapse: separate; border-spacing: 0; font-size: 12.5px; min-width: 100%; }
+.qc-matrix th, .qc-matrix td { padding: 8px 12px; white-space: nowrap; text-align: right; border-bottom: .5px solid var(--qc-line); }
+.qc-matrix thead th {
+  position: sticky; top: 0; z-index: 2; background: var(--qc-surf2);
+  font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--qc-tx3);
+  border-bottom: .5px solid var(--qc-line2);
+}
+.qc-matrix thead tr.groups th { font-size: 11px; color: var(--qc-tx); text-align: center; font-weight: 700; letter-spacing: .2px; }
+.qc-matrix thead tr.groups th.bench { color: var(--qc-acc); }
+.qc-matrix .grp { border-left: 1px solid var(--qc-line2); }
+.qc-matrix th.yr, .qc-matrix td.yr {
+  position: sticky; left: 0; z-index: 1; text-align: left;
+  background: var(--qc-surf); font-family: var(--qc-mono); color: var(--qc-tx);
+}
+.qc-matrix thead th.yr { z-index: 3; background: var(--qc-surf2); }
+.qc-matrix tbody td { font-family: var(--qc-mono); color: var(--qc-tx); }
+.qc-matrix tbody tr:hover td { background: var(--app-hover); }
+.qc-matrix tbody tr:hover td.yr { background: var(--qc-surf2); }
+.qc-matrix tfoot td { padding: 9px 12px; font-family: var(--qc-mono); font-weight: 700; border-top: .5px solid var(--qc-line2); background: var(--qc-surf2); color: var(--qc-tx); text-align: right; }
+.qc-matrix tfoot td.yr { text-align: left; }
+.qc-matrix .colerr { color: var(--qc-neg); font-family: -apple-system, sans-serif; font-size: 11px; text-align: center; }
+
+.qc-pos { color: var(--qc-pos); }
+.qc-neg { color: var(--qc-neg); }
+.qc-mut { color: var(--qc-tx3); }
+
+/* состояния */
+.qc-state { padding: 36px 20px; text-align: center; color: var(--qc-tx3); font-size: 13px; line-height: 1.6; }
+.qc-err { color: var(--qc-neg); }
+
+.qc-root ::-webkit-scrollbar { height: 9px; width: 9px; }
+.qc-root ::-webkit-scrollbar-thumb { background: var(--qc-line2); border-radius: 6px; }
+
+@media (max-width: 720px) {
+  .qc-form { grid-template-columns: 1fr 1fr; }
+}

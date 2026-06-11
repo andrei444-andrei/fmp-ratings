@@ -7,6 +7,7 @@ const TABLES = [
   'sp500_current','sp500_changes','market_cap','grades','consensus_history',
   'top_n_per_year','rating_changes_filtered','runs',
   'prices','research_prompts','research_runs','fundamentals','dividends',
+  'qc_algorithms','qc_backtest_cache',
 ];
 
 export default function AdminPage() {
@@ -101,6 +102,10 @@ export default function AdminPage() {
         <p className="text-xs text-neutral-500 mt-2">
           Нажмите «Run DB migrations» один раз после подключения Turso через Vercel Marketplace — создаст таблицы.
         </p>
+        <div className="mt-3 flex gap-2 items-center flex-wrap">
+          <a className="btn" href="/admin/quantconnect">QuantConnect — креды доступа</a>
+          <a className="btn" href="/quant">Аналитика алгоритмов</a>
+        </div>
       </section>
 
       <section className="card">
