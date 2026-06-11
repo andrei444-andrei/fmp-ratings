@@ -144,15 +144,30 @@ test.describe('Research /research', () => {
     await expect(lead).toContainText('EWG'); // корзина, а не дефолтная пара SPY/QQQ
   });
 
-  test('ask_ai подключён: без ключа даёт понятную ошибку', async ({ page }) => {
-    // Мост ask_ai существует (нет NameError) и без AIMLAPI_KEY отдаёт внятную причину.
-    await stubExecute(page, 'x = await ask_ai("привет")\nresult = x');
+  test('ask_ai: top-level await возвращает текст в результат', async ({ page }) => {
+    await stubExecute(
+      page,
+      'import pandas as pd\nout = await ask_ai("Новости по рынку", web=True)\nresult = pd.DataFrame({"Ответ": [out]})',
+    );
     await page.goto('/research');
     await page.locator('textarea').first().fill('тест ask_ai');
     await page.getByRole('button', { name: 'Исполнить' }).click();
-    const err = page.locator('.research-output .rerrblk');
-    await expect(err).toBeVisible({ timeout: 90000 });
-    await expect(err).toContainText('ask_ai');
+    // Заглушка моста под флагом e2e возвращает маркер [AI:…] — путь ask_ai → результат рабочий.
+    await expect(page.locator('.research-output .rtblwrap')).toContainText('[AI:default:web]', { timeout: 90000 });
+  });
+
+  test('asyncio.run переписывается на top-level await (без stack switching)', async ({ page }) => {
+    await stubExecute(
+      page,
+      'import asyncio, pandas as pd\nasync def main():\n    return await ask_ai("hi")\nout = asyncio.run(main())\nresult = pd.DataFrame({"Ответ": [out]})',
+    );
+    await page.goto('/research');
+    await page.locator('textarea').first().fill('тест async driver');
+    await page.getByRole('button', { name: 'Исполнить' }).click();
+    // Результат дошёл до ask_ai (нет ошибки stack switching), а в коде нет блокирующего asyncio.run.
+    await expect(page.locator('.research-output .rtblwrap')).toContainText('[AI:', { timeout: 90000 });
+    await expect(page.locator('.research-output .rcode')).toContainText('await main()');
+    await expect(page.locator('.research-output .rcode')).not.toContainText('asyncio.run(');
   });
 
   test('многоэтапный результат рисует несколько подписанных таблиц', async ({ page }) => {
