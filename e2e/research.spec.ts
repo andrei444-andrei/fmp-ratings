@@ -184,13 +184,31 @@ test.describe('Research /research', () => {
     await expect(page.locator('.research-output .rtblwrap td', { hasText: '3.1' })).not.toHaveClass(/rneg/);
   });
 
+  test('UX-кит: kpi/bars/callout рендерятся вместе с таблицей', async ({ page }) => {
+    await stubExecute(
+      page,
+      'import pandas as pd\n' +
+        "df = pd.DataFrame({'Тикер': ['EWZ', 'EWJ'], 'Доходность, %': [12.3, -4.5]})\n" +
+        "result = [row(kpi('CAGR', '11.5%', '+2.1%'), kpi('Просадка', '-41%')), " +
+        "bars({'EWZ': 12.3, 'EWJ': -4.5}, title='Рейтинг'), df, " +
+        "callout('Демо-данные', tone='warn', title='Внимание')]",
+    );
+    await page.goto('/research');
+    await page.locator('textarea').first().fill('тест ux-кит');
+    await page.getByRole('button', { name: 'Исполнить' }).click();
+    await expect(page.locator('.research-output .rkit-kpi').first()).toBeVisible({ timeout: 90000 });
+    await expect(page.locator('.research-output .rkit-bars')).toBeVisible({ timeout: 30000 });
+    await expect(page.locator('.research-output .rkit-callout')).toContainText('Демо-данные', { timeout: 30000 });
+    await expect(page.locator('.research-output .rtblwrap table')).toBeVisible({ timeout: 30000 });
+  });
+
   test('многоэтапный результат рисует несколько подписанных таблиц', async ({ page }) => {
     await stubExecute(page, MULTI_SCRIPT);
     await page.goto('/research');
     await page.locator('textarea').first().fill('многоэтапный анализ AAPL и MSFT');
     await page.getByRole('button', { name: 'Исполнить' }).click();
     await expect(page.getByText('Этап 1 — доходность')).toBeVisible({ timeout: 90000 });
-    await expect(page.getByText('Этап 2 — объём данных')).toBeVisible();
-    await expect(page.locator('.research-output .rtblwrap table')).toHaveCount(2);
+    await expect(page.getByText('Этап 2 — объём данных')).toBeVisible({ timeout: 30000 });
+    await expect(page.locator('.research-output .rtblwrap table')).toHaveCount(2, { timeout: 30000 });
   });
 });
