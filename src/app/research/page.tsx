@@ -14,6 +14,7 @@ import {
   CardTitle,
   Input,
   Modal,
+  Select,
   Skeleton,
   Spinner,
   Textarea,
@@ -100,6 +101,8 @@ function Research() {
   const [prompt, setPrompt] = useState('');
   const [savedPrompts, setSavedPrompts] = useState<SavedPrompt[] | null>(null);
   const [savedRuns, setSavedRuns] = useState<SavedRunItem[] | null>(null);
+  const [models, setModels] = useState<{ id: string; label: string }[]>([]);
+  const [model, setModel] = useState('');
 
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState('');
@@ -201,7 +204,28 @@ function Research() {
   useEffect(() => {
     loadPrompts();
     loadRuns();
+    (async () => {
+      try {
+        const d = await (await fetch('/api/research/models')).json();
+        setModels(Array.isArray(d?.models) ? d.models : []);
+      } catch {
+        setModels([]);
+      }
+    })();
+    try {
+      const saved = localStorage.getItem('codeModel');
+      if (saved) setModel(saved);
+    } catch {
+      /* нет localStorage */
+    }
   }, []);
+  useEffect(() => {
+    try {
+      localStorage.setItem('codeModel', model);
+    } catch {
+      /* нет localStorage */
+    }
+  }, [model]);
   useEffect(() => {
     outRef.current?.scrollTo({ top: outRef.current.scrollHeight, behavior: 'smooth' });
   }, [blocks, log, status, code]);
@@ -365,7 +389,7 @@ function Research() {
       const res = await fetch('/api/research/execute', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ prompt: prompt.trim() }),
+        body: JSON.stringify({ prompt: prompt.trim(), model: model || undefined }),
       });
       if (!res.body) throw new Error('Нет потока ответа');
       const reader = res.body.getReader();
@@ -481,6 +505,19 @@ function Research() {
                   {activePrompt ? 'Сохранить как новое' : 'Сохранить исследование'}
                 </Button>
               </div>
+              {models.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="shrink-0 text-[12px] text-ink-3">Модель кода:</span>
+                  <Select value={model} onChange={(e) => setModel(e.target.value)} aria-label="Модель кода">
+                    <option value="">По умолчанию (Opus)</option>
+                    {models.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              )}
             </CardContent>
           </Card>
 

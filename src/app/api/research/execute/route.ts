@@ -28,6 +28,13 @@ function stripFences(code: string): string {
   return (m ? m[1] : code).trim();
 }
 
+// Модель кодогенерации: выбранная пользователем Claude-модель (валидируем) или дефолт.
+function pickCodeModel(body: any): string {
+  const m = (body?.model ?? '').toString().trim();
+  if (/^claude-[a-z0-9.\-]{1,50}$/i.test(m)) return m;
+  return process.env.AIMLAPI_CODE_MODEL?.trim() || 'claude-opus-4-7';
+}
+
 const TICKER_SYS =
   'Подбери тикеры (символы, котируемые на FMP) под запрос пользователя и верни СТРОГО JSON ' +
   'вида {"tickers": ["EWJ", "EWZ"]}. Верни СТОЛЬКО тикеров, сколько уместно под запрос: ' +
@@ -125,6 +132,7 @@ async function generateExplanation(prompt: string, code: string): Promise<string
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const prompt: string = (body?.prompt ?? '').toString();
+  const codeModel = pickCodeModel(body);
   const ua = req.headers.get('user-agent');
 
   const encoder = new TextEncoder();
@@ -151,7 +159,7 @@ export async function POST(req: Request) {
           send({ type: 'status', text: 'Генерирую Python-скрипт…' });
           try {
             const { content: raw, finishReason } = await aimlChatMeta({
-              model: process.env.AIMLAPI_CODE_MODEL?.trim() || 'claude-opus-4-7',
+              model: codeModel,
               temperature: 0.1,
               max_tokens: 3500,
               messages: [
