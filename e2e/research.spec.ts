@@ -144,6 +144,17 @@ test.describe('Research /research', () => {
     await expect(lead).toContainText('EWG'); // корзина, а не дефолтная пара SPY/QQQ
   });
 
+  test('ask_ai подключён: без ключа даёт понятную ошибку', async ({ page }) => {
+    // Мост ask_ai существует (нет NameError) и без AIMLAPI_KEY отдаёт внятную причину.
+    await stubExecute(page, 'x = await ask_ai("привет")\nresult = x');
+    await page.goto('/research');
+    await page.locator('textarea').first().fill('тест ask_ai');
+    await page.getByRole('button', { name: 'Исполнить' }).click();
+    const err = page.locator('.research-output .rerrblk');
+    await expect(err).toBeVisible({ timeout: 90000 });
+    await expect(err).toContainText('ask_ai');
+  });
+
   test('многоэтапный результат рисует несколько подписанных таблиц', async ({ page }) => {
     await stubExecute(page, MULTI_SCRIPT);
     await page.goto('/research');
