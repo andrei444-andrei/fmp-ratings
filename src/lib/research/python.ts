@@ -154,7 +154,9 @@ async function execOnce(
       );
       const tables = JSON.parse(String(tablesJson || '[]')) as { title: string; html: string }[];
       for (const t of tables) {
-        onEvent({ type: 'block', html: `<div class="rblk"><div class="rcap">${t.title}</div><div class="rtblwrap">${t.html}</div></div>` });
+        // Отрицательные числа в простых ячейках (без Styler) подсвечиваем красным.
+        const html = t.html.replace(/<td>(\s*-\d[\d.,]*\s*)<\/td>/g, '<td class="rneg">$1</td>');
+        onEvent({ type: 'block', html: `<div class="rblk"><div class="rcap">${t.title}</div><div class="rtblwrap">${html}</div></div>` });
       }
     } catch {
       /* result не задан / ошибка рендера — не критично */

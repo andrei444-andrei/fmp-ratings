@@ -115,8 +115,9 @@
 
 /* Обёртка под таблицы pandas (to_html) */
 .research-output .rtblwrap {
-  overflow-x: auto;
-  padding: 4px 0;
+  overflow: auto;
+  max-height: 520px;
+  border-radius: var(--fk-radius);
 }
 .research-output .rtblwrap table {
   width: 100%;
@@ -126,16 +127,27 @@
 }
 .research-output .rtblwrap th,
 .research-output .rtblwrap td {
-  padding: 8px 12px;
+  padding: 9px 14px;
   border-bottom: 1px solid var(--fk-line);
   text-align: right;
-  white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+/* Длинный текст в ячейках переносим, чтобы он не растягивал таблицу. */
+.research-output .rtblwrap td {
+  max-width: 420px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+/* Липкая шапка — при прокрутке длинных таблиц подписи колонок видны. */
 .research-output .rtblwrap thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--fk-surface-2);
   color: var(--fk-text-3);
   font-size: 11px;
   font-weight: 600;
+  white-space: nowrap;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -145,8 +157,20 @@
   font-weight: 600;
   color: var(--fk-text);
 }
+/* Зебра + ховер для читаемости длинных/широких таблиц. */
+.research-output .rtblwrap tbody tr:nth-child(even) {
+  background: var(--fk-surface-2);
+}
+.research-output .rtblwrap tbody tr:hover {
+  background: rgba(109, 91, 240, 0.06);
+}
 .research-output .rtblwrap tbody tr:last-child td {
   border-bottom: 0;
+}
+/* Отрицательные числовые значения — красным (финансовый акцент). */
+.research-output .rtblwrap td.rneg {
+  color: var(--fk-down-text);
+  font-weight: 600;
 }
 
 /* Графики */
