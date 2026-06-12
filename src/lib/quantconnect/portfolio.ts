@@ -7,6 +7,7 @@ import { listAlgorithms } from './algorithms';
 import { qcListBacktests, qcReadSeries } from './client';
 import { computeYearly, monthlyEquity } from './metrics';
 import { qcCacheGet, qcCacheSet } from './cache';
+import { getSpyBenchmark } from './benchmark';
 import type { AlgoColumn, BenchmarkColumn, MonthPoint, PortfolioResponse, SeriesResponse, YearMetric } from './types';
 
 function createdMs(v: string | number | undefined): number {
@@ -89,17 +90,24 @@ export async function buildPortfolio(force = false, includeArchived = false): Pr
   );
 
   const cols: AlgoColumn[] = [];
+
+  // Бенчмарк — SPY (из FMP). Фолбэк на бенчмарк бектеста, если SPY недоступен.
   let benchmark: BenchmarkColumn | null = null;
+  const spy = await getSpyBenchmark(force).catch(() => null);
+  if (spy && spy.yearly.length) {
+    const byYear: Record<number, YearMetric> = {};
+    for (const y of spy.yearly) byYear[y.year] = y;
+    benchmark = { name: spy.name, years: byYear, totalReturn: lastCumulative(spy.yearly) };
+  }
 
   for (const r of results) {
     const years: Record<number, YearMetric> = {};
     if (r.m) {
       for (const y of r.m.strategy) years[y.year] = y;
-      // Бенчмарк берём из первого алгоритма, где он есть.
       if (!benchmark && r.m.benchmark && r.m.benchmark.length) {
         const byYear: Record<number, YearMetric> = {};
         for (const y of r.m.benchmark) byYear[y.year] = y;
-        benchmark = { name: 'Бенчмарк', years: byYear, totalReturn: lastCumulative(r.m.benchmark) };
+        benchmark = { name: 'Бенчмарк (бектест)', years: byYear, totalReturn: lastCumulative(r.m.benchmark) };
       }
     }
     cols.push({
@@ -117,9 +125,10 @@ export async function buildPortfolio(force = false, includeArchived = false): Pr
     });
   }
 
+  // Годы матрицы — только из стратегий (бенчмарк SPY покрывает их с запасом,
+  // иначе появились бы пустые годы без стратегий).
   const yset = new Set<number>();
   for (const c of cols) for (const y of Object.keys(c.years)) yset.add(Number(y));
-  if (benchmark) for (const y of Object.keys(benchmark.years)) yset.add(Number(y));
   const years = [...yset].sort((a, b) => a - b);
 
   return { years, algos: cols, benchmark };
@@ -144,10 +153,14 @@ export async function buildSeries(force = false, includeArchived = false): Promi
     }),
   );
 
+  // Бенчмарк — SPY (из FMP); фолбэк на бенчмарк бектеста.
   let benchmark: { name: string; monthly: MonthPoint[] } | null = null;
+  const spy = await getSpyBenchmark(force).catch(() => null);
+  if (spy && spy.monthly.length) benchmark = { name: spy.name, monthly: spy.monthly };
+
   const outAlgos = results.map(r => {
     if (!benchmark && r.m?.monthlyBenchmark && r.m.monthlyBenchmark.length) {
-      benchmark = { name: 'Бенчмарк', monthly: r.m.monthlyBenchmark };
+      benchmark = { name: 'Бенчмарк (бектест)', monthly: r.m.monthlyBenchmark };
     }
     return {
       id: r.a.id, name: r.a.name, status: r.a.status, error: r.error,

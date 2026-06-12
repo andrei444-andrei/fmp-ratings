@@ -22,6 +22,7 @@ export default function QuantPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [includeArchived, setIncludeArchived] = useState(false);
+  const [startYear, setStartYear] = useState<number | undefined>(undefined);
   const [tab, setTab] = useState('compare');
 
   const loadCreds = useCallback(async () => {
@@ -100,14 +101,25 @@ export default function QuantPage() {
           <div className="qc-method">
             <h4>Как читать матрицу</h4>
             <ul>
-              <li><b>Строки</b> — годы; по каждой стратегии: <b>просадка</b> (макс. внутригодовая), <b>доходность</b> за год, <b>накопит.</b> с начала; затем бенчмарк.</li>
-              <li>Ячейка доходности залита <b className="qc-pos">зелёным</b> / <b className="qc-neg">красным</b> — стратегия за год <b>обыграла / проиграла бенчмарк</b> (наведи — увидишь разницу).</li>
-              <li>Внизу: <b>ср. доходность/просадка</b> за год, <b>CAGR</b> (среднегодовой рост), <b>разброс σ</b> (насколько год от года различается), <b>лучший/худший</b> год, <b>лет лучше БМ</b> и итог.</li>
+              <li><b>Строки</b> — годы; по каждой стратегии: <b>просадка</b> (макс. внутригодовая), <b>доходность</b> за год, <b>накопит.</b> с начала окна; затем бенчмарк <b>SPY</b>.</li>
+              <li>Ячейка доходности залита <b className="qc-pos">зелёным</b> / <b className="qc-neg">красным</b> — стратегия за год <b>обыграла / проиграла SPY</b> (наведи — увидишь разницу).</li>
+              <li>У бектестов разные периоды — селектор <b>«С года»</b> задаёт общее окно (накопит./CAGR/итог пересчитываются с него).</li>
+              <li>Внизу: <b>ср. доходность/просадка</b> за год, <b>CAGR</b> (среднегодовой рост), <b>разброс σ</b>, <b>лучший/худший</b> год, <b>лет лучше БМ</b> и итог.</li>
             </ul>
           </div>
 
           {algos.length > 0 && (
             <div className="qc-controls-bar">
+              {portfolio && portfolio.years.length > 1 && (
+                <label className="qc-toggle" title="У бектестов разные периоды — выберите общее окно анализа">
+                  С года:&nbsp;
+                  <select className="qc-select" style={{ width: 'auto' }} value={startYear ?? ''}
+                    onChange={e => setStartYear(e.target.value ? Number(e.target.value) : undefined)}>
+                    <option value="">{portfolio.years[0]} (все)</option>
+                    {portfolio.years.map(y => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                </label>
+              )}
               <span className="qc-spacer" />
               <label className="qc-toggle" title="Включать стратегии в статусе «архив» в анализ">
                 <input type="checkbox" checked={includeArchived} onChange={toggleArchived} /> архив в анализе
@@ -126,7 +138,7 @@ export default function QuantPage() {
           {loading && !portfolio ? (
             <div className="qc-panel"><div className="qc-state">Загрузка метрик бектестов…</div></div>
           ) : portfolio && algos.length > 0 ? (
-            <PortfolioMatrix data={portfolio} />
+            <PortfolioMatrix data={portfolio} startYear={startYear} />
           ) : null}
         </>
       ) : tab === 'combined' ? (

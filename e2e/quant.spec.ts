@@ -31,7 +31,7 @@ const PORTFOLIO = {
     },
   ],
   benchmark: {
-    name: 'Бенчмарк',
+    name: 'SPY',
     years: { 2022: { year: 2022, ret: 0.10, maxDD: -0.20, cumulative: 0.10 }, 2023: { year: 2023, ret: 0.20, maxDD: -0.10, cumulative: 0.32 } },
     totalReturn: 0.32,
   },
@@ -143,9 +143,10 @@ test.describe('Аналитика алгоритмов /quant', () => {
     await expect(strat.locator('.qc-strat-desc')).toContainText('плечо 2x');
     await expect(page.locator('.qc-strat', { hasText: 'Mean Reversion' }).locator('.qc-badge.research')).toHaveText('Исследование');
 
-    // матрица: заливка ячейки доходности vs бенчмарк (зелёная/красная)
+    // матрица: бенчмарк = SPY + заливка ячейки доходности vs бенчмарк
     const matrix = page.locator('.qc-matrix');
     await expect(matrix).toBeVisible();
+    await expect(matrix.locator('th.bench')).toHaveText('SPY');
     await expect(matrix.locator('td.qc-beat').first()).toBeVisible(); // обыграл БМ
     await expect(matrix.locator('td.qc-lag').first()).toBeVisible();  // проиграл БМ
 
@@ -156,6 +157,16 @@ test.describe('Аналитика алгоритмов /quant', () => {
     await expect(matrix.getByText('Лучший / худший')).toBeVisible();
     await expect(matrix.getByText('Лет лучше БМ')).toBeVisible();
     await expect(matrix.getByText('Итог', { exact: true })).toBeVisible();
+  });
+
+  test('выбор стартового года сужает окно анализа', async ({ page }) => {
+    await mockConfigured(page);
+    await page.goto('/quant');
+    const matrix = page.locator('.qc-matrix');
+    await expect(matrix.getByText('2022', { exact: true })).toBeVisible();
+    await page.locator('.qc-controls-bar select.qc-select').selectOption('2023');
+    await expect(matrix.getByText('2022', { exact: true })).toHaveCount(0);
+    await expect(matrix.getByText('2023', { exact: true })).toBeVisible();
   });
 
   test('удаление стратегии требует подтверждения', async ({ page }) => {
