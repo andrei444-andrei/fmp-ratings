@@ -96,10 +96,10 @@ export async function addAlgorithm(input: {
   return { algorithm: { id, projectId, backtestId, name, benchmark, description, status, sortOrder, createdAt: now } };
 }
 
-// Правка метки / описания / статуса (только переданные поля).
+// Правка метки / описания / статуса / источника (проект + бектест) — только переданные поля.
 export async function updateAlgorithm(
   id: number,
-  patch: { name?: string; description?: string | null; status?: string },
+  patch: { name?: string; description?: string | null; status?: string; projectId?: string | number; backtestId?: string | null },
 ): Promise<{ algorithm?: QcAlgorithm; error?: string }> {
   await ensureSchema();
   const sets: string[] = [];
@@ -115,6 +115,15 @@ export async function updateAlgorithm(
   }
   if (patch.status !== undefined) {
     sets.push('status = ?'); args.push(normStatus(patch.status));
+  }
+  if (patch.projectId !== undefined) {
+    const pid = String(patch.projectId).trim();
+    if (!/^\d+$/.test(pid)) return { error: 'projectId должен быть числом (ID проекта QuantConnect)' };
+    sets.push('project_id = ?'); args.push(pid);
+  }
+  if (patch.backtestId !== undefined) {
+    const bt = patch.backtestId ? String(patch.backtestId).trim() || null : null;
+    sets.push('backtest_id = ?'); args.push(bt);
   }
   if (!sets.length) return { error: 'Нечего обновлять' };
   args.push(id);

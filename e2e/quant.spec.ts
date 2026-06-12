@@ -68,6 +68,10 @@ async function mockConfigured(page: Page) {
   });
   await page.route('**/api/quantconnect/portfolio**', r => r.fulfill({ json: PORTFOLIO }));
   await page.route('**/api/quantconnect/series**', r => r.fulfill({ json: SERIES }));
+  await page.route('**/api/quantconnect/backtests**', r => r.fulfill({ json: { backtests: [
+    { backtestId: 'aaa111', name: 'run A', status: 'Completed.', completed: true },
+    { backtestId: 'bbb222', name: 'run B', status: 'Completed.', completed: true },
+  ] } }));
   await page.route('**/api/quantconnect/describe**', r => r.fulfill({ json: { description: '## Стратегия\n\nГенерированное **описание**.' } }));
   await page.route('**/api/quantconnect/chat**', r => r.fulfill({ json: { reply: 'Лучшая — **leverage with control DD**: выше CAGR и больше лет лучше SPY.' } }));
 }
@@ -213,8 +217,23 @@ test.describe('Аналитика алгоритмов /quant', () => {
     // превью рендерит markdown
     await modal.getByRole('button', { name: 'Превью', exact: true }).click();
     await expect(modal.locator('.qc-mde-preview .qc-md')).toContainText('Стратегия');
-    // статус + сохранить
-    await modal.locator('select.qc-select').selectOption('archive');
+    // можно сменить бектест (источник)
+    await modal.locator('select.qc-select').nth(1).selectOption('bbb222');
+    // статус (первый select) + сохранить
+    await modal.locator('select.qc-select').first().selectOption('archive');
+    await page.locator('.qc-modal-foot').getByRole('button', { name: 'Сохранить' }).click();
+    await expect(page.locator('.qc-modal-h').filter({ hasText: 'Редактировать стратегию' })).toHaveCount(0);
+  });
+
+  test('редактирование: выбор другого бектеста как источника', async ({ page }) => {
+    await mockConfigured(page);
+    await page.goto('/quant');
+    await page.locator('.qc-strat', { hasText: 'EMA Cross' }).getByTitle('Редактировать').click();
+    const modal = page.locator('.qc-modal');
+    await expect(modal.getByText('Источник — проект и бектест')).toBeVisible();
+    const btSelect = modal.locator('select.qc-select').nth(1);
+    await expect(btSelect.locator('option', { hasText: 'run B' })).toHaveCount(1);
+    await btSelect.selectOption('bbb222');
     await page.locator('.qc-modal-foot').getByRole('button', { name: 'Сохранить' }).click();
     await expect(page.locator('.qc-modal-h').filter({ hasText: 'Редактировать стратегию' })).toHaveCount(0);
   });
