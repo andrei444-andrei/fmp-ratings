@@ -37,6 +37,19 @@ test.describe('Аналитика алгоритмов /quant', () => {
     await expect(page.getByRole('link', { name: 'Исследование трендов' })).toBeVisible();
   });
 
+  test('страница всегда светлая, даже при глобальной тёмной теме', async ({ page }) => {
+    // глобально включаем тёмную тему — /quant всё равно должен быть белым
+    await page.addInitScript(() => { try { localStorage.setItem('theme', 'dark'); } catch {} });
+    await page.goto('/quant');
+    await expect(page.locator('.qc-title')).toBeVisible();
+    const probe = await page.evaluate(() => ({
+      htmlTheme: document.documentElement.dataset.theme,
+      navBg: getComputedStyle(document.querySelector('.app-nav')!).backgroundColor,
+    }));
+    expect(probe.htmlTheme).toBe('dark');                    // глобально — тёмная
+    expect(probe.navBg).toBe('rgba(255, 255, 255, 0.82)');   // но навбар на /quant светлый
+  });
+
   // Матрица на синтетических данных (живой путь к QuantConnect в e2e недоступен):
   // мокаем API-ответы и проверяем, что матрица строится — годы-строки, группы-колонки,
   // бенчмарк, форматирование процентов и строка «Итог».
