@@ -25,7 +25,14 @@ type Stats = {
   stdRet: number | null; stdDD: number | null;
   best: number | null; worst: number | null;
   beat: number | null; compared: number | null;
+  n: number;
 };
+
+// CAGR (среднегодовой геометрический рост) из накопительной за n лет.
+function cagr(total: number | null, n: number | null | undefined): number | null {
+  if (total == null || !isFinite(total) || total <= -1 || !n || n <= 0) return null;
+  return Math.pow(1 + total, 1 / n) - 1;
+}
 
 // Агрегаты по годам: средние, разброс (σ), лучший/худший год, «лет лучше БМ».
 function aggStats(yearsMap: Record<number, YearMetric>, years: number[], bench?: Record<number, YearMetric>): Stats {
@@ -52,19 +59,23 @@ function aggStats(yearsMap: Record<number, YearMetric>, years: number[], bench?:
     best: rets.length ? Math.max(...rets) : null,
     worst: rets.length ? Math.min(...rets) : null,
     beat: bench ? beat : null, compared: bench ? compared : null,
+    n: rets.length,
   };
 }
 
-// Тройка ячеек одной группы за год: просадка, доходность (+ маркер vs БМ), накопительная.
+// Тройка ячеек одной группы за год: просадка, доходность, накопительная.
+// Ячейка доходности заливается зелёным/красным = обыграла/проиграла бенчмарк за год.
 function TripleCells({ m, bench }: { m?: YearMetric; bench?: YearMetric }) {
-  const marker = (m && bench && m.ret != null && bench.ret != null)
-    ? (m.ret > bench.ret ? <span className="qc-bm up" title="Лучше бенчмарка">▲</span>
-      : m.ret < bench.ret ? <span className="qc-bm dn" title="Хуже бенчмарка">▼</span> : null)
-    : null;
+  let retClass = m ? cls(m.ret) : 'qc-mut';
+  if (m && bench && m.ret != null && bench.ret != null) {
+    retClass = m.ret > bench.ret ? 'qc-beat' : m.ret < bench.ret ? 'qc-lag' : retClass;
+  }
+  const title = (m && bench && m.ret != null && bench.ret != null)
+    ? `vs бенчмарк: ${fmtPct(m.ret - bench.ret)}` : undefined;
   return (
     <>
       <td className={'grp ' + (m ? cls(m.maxDD) : 'qc-mut')}>{m ? fmtPct(m.maxDD) : '—'}</td>
-      <td className={m ? cls(m.ret) : 'qc-mut'}>{marker}{m ? fmtPct(m.ret) : '—'}</td>
+      <td className={retClass} title={title}>{m ? fmtPct(m.ret) : '—'}</td>
       <td className={m ? cls(m.cumulative) : 'qc-mut'}>{m ? fmtPct(m.cumulative) : '—'}</td>
     </>
   );
@@ -163,6 +174,13 @@ export default function PortfolioMatrix({ data }: { data: PortfolioResponse }) {
                   ret={<span className={cls(st.avgRet)}>{fmtPct(st.avgRet)}</span>} />
               ))}
               {bStats && <StatTriple dd={<span className={cls(bStats.avgDD)}>{fmtPct(bStats.avgDD)}</span>} ret={<span className={cls(bStats.avgRet)}>{fmtPct(bStats.avgRet)}</span>} />}
+            </tr>
+            <tr className="stat">
+              <td className="yr" title="Среднегодовой геометрический рост (CAGR)">CAGR</td>
+              {algos.map((a, i) => (
+                <StatTriple key={a.id} ret={<span className={cls(cagr(a.totalReturn, stats[i].n))}>{fmtPct(cagr(a.totalReturn, stats[i].n))}</span>} />
+              ))}
+              {bStats && benchmark && <StatTriple ret={<span className={cls(cagr(benchmark.totalReturn, bStats.n))}>{fmtPct(cagr(benchmark.totalReturn, bStats.n))}</span>} />}
             </tr>
             <tr className="stat">
               <td className="yr">σ (разброс)</td>
