@@ -3,12 +3,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import PortfolioManager from './_components/PortfolioManager';
 import PortfolioMatrix from './_components/PortfolioMatrix';
+import CombinedPortfolio from './_components/CombinedPortfolio';
 import type { QcAlgorithm, QcCredStatus, PortfolioResponse } from '@/lib/quantconnect/types';
 
-// Реестр use-кейсов (вкладок). Готова пока одна — остальные по дорожной карте.
+// Реестр use-кейсов (вкладок). Остальные — по дорожной карте.
 const TABS: { key: string; label: string; ready: boolean }[] = [
   { key: 'compare', label: 'Сравнение по годам', ready: true },
-  { key: 'combined', label: 'Объединённый портфель', ready: false },
+  { key: 'combined', label: 'Объединённый портфель', ready: true },
   { key: 'summary', label: 'Сводка по стратегии', ready: false },
   { key: 'risk', label: 'Риск / корреляция', ready: false },
   { key: 'drawdown', label: 'Анализ просадок', ready: false },
@@ -128,6 +129,8 @@ export default function QuantPage() {
             <PortfolioMatrix data={portfolio} />
           ) : null}
         </>
+      ) : tab === 'combined' ? (
+        <CombinedPortfolio includeArchived={includeArchived} />
       ) : (
         <div className="qc-panel"><div className="qc-state">Раздел в разработке — скоро.</div></div>
       )}
