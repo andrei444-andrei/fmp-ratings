@@ -153,3 +153,12 @@ export async function qcReadSeries(
   }
   return [];
 }
+
+export type QcFile = { name: string; content: string };
+
+// Файлы (исходный код) проекта QuantConnect.
+export async function qcReadProjectFiles(projectId: number | string): Promise<QcFile[]> {
+  const data = await qcPost('/files/read', { projectId: Number(projectId) });
+  const arr = Array.isArray(data?.files) ? data.files : [];
+  return arr.map((f: any) => ({ name: String(f.name ?? ''), content: String(f.content ?? '') }));
+}

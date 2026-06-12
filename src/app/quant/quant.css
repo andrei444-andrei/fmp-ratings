@@ -254,6 +254,40 @@ body:has(.qc-root) {
 .qc-legend { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--qc-tx2); font-weight: 400; margin-left: 12px; }
 .qc-legend .ln { display: inline-block; width: 16px; height: 3px; border-radius: 2px; }
 
+/* markdown-редактор */
+.qc-mde { border: .5px solid var(--qc-line2); border-radius: var(--qc-rad); overflow: hidden; background: var(--app-bg2); }
+.qc-mde-bar { display: flex; align-items: center; gap: 3px; padding: 5px 6px; background: var(--qc-surf2); border-bottom: .5px solid var(--qc-line); flex-wrap: wrap; }
+.qc-mde-btn {
+  min-width: 28px; height: 26px; padding: 0 5px; border: .5px solid transparent; background: transparent; color: var(--qc-tx2);
+  border-radius: 6px; cursor: pointer; font-size: 12.5px; display: inline-flex; align-items: center; justify-content: center; font-family: var(--qc-mono);
+}
+.qc-mde-btn:hover { background: var(--app-bg2); color: var(--qc-tx); border-color: var(--qc-line2); }
+.qc-mde-gen { font-size: 11.5px; padding: 4px 9px; height: 26px; }
+.qc-mde-ta { display: block; width: 100%; border: 0 !important; border-radius: 0 !important; background: var(--app-bg2); resize: vertical; min-height: 90px; }
+.qc-mde-ta:focus { outline: none; box-shadow: none; }
+.qc-mde-preview { padding: 10px 12px; min-height: 90px; max-height: 340px; overflow: auto; }
+
+/* рендер markdown */
+.qc-md { font-size: 13px; line-height: 1.5; color: var(--qc-tx2); }
+.qc-md > :first-child { margin-top: 0; }
+.qc-md > :last-child { margin-bottom: 0; }
+.qc-md p { margin: 6px 0; }
+.qc-md h1, .qc-md h2, .qc-md h3, .qc-md h4 { margin: 10px 0 4px; color: var(--qc-tx); font-weight: 700; line-height: 1.3; }
+.qc-md h1 { font-size: 16px; } .qc-md h2 { font-size: 15px; } .qc-md h3 { font-size: 14px; } .qc-md h4 { font-size: 13px; }
+.qc-md ul, .qc-md ol { margin: 6px 0; padding-left: 20px; }
+.qc-md li { margin: 2px 0; }
+.qc-md strong, .qc-md b { color: var(--qc-tx); }
+.qc-md code { background: var(--qc-surf2); padding: 1px 5px; border-radius: 5px; font-family: var(--qc-mono); font-size: .9em; }
+.qc-md pre { background: var(--qc-surf2); padding: 10px; border-radius: var(--qc-rad); overflow: auto; }
+.qc-md pre code { background: none; padding: 0; }
+.qc-md blockquote { margin: 6px 0; padding: 2px 12px; border-left: 3px solid var(--qc-acc-bd); color: var(--qc-tx3); }
+.qc-md a { color: var(--qc-on-acc); text-decoration: none; }
+.qc-md a:hover { text-decoration: underline; }
+/* компактнее в списке стратегий */
+.qc-strat-desc .qc-md { font-size: 12px; }
+.qc-strat-desc .qc-md p { margin: 3px 0; }
+.qc-strat-desc .qc-md ul, .qc-strat-desc .qc-md ol { margin: 3px 0; }
+
 @media (max-width: 720px) {
   .qc-form { grid-template-columns: 1fr 1fr; }
 }

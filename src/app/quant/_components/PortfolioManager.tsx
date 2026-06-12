@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import AddAlgorithm from './AddAlgorithm';
+import Markdown from './Markdown';
+import MarkdownEditor from './MarkdownEditor';
 import { QC_STATUSES, QC_STATUS_LABEL, type QcAlgoStatus, type QcAlgorithm } from '@/lib/quantconnect/types';
 
 // Управление портфелем стратегий: добавление (кнопка), статус-бейджи, описание,
@@ -31,7 +33,7 @@ export default function PortfolioManager({
                 <div className="qc-strat-name">{a.name}
                   <span className="qc-strat-id">#{a.projectId}{a.backtestId ? ` · bt ${a.backtestId.slice(0, 6)}` : ' · последний'}</span>
                 </div>
-                {a.description && <div className="qc-strat-desc">{a.description}</div>}
+                {a.description && <div className="qc-strat-desc"><Markdown text={a.description} /></div>}
               </div>
               <div className="qc-strat-actions">
                 <button className="qc-icon" title="Редактировать" onClick={() => setEdit(a)}>✎</button>
@@ -53,6 +55,7 @@ function EditModal({ algo, onClose, onSaved }: { algo: QcAlgorithm; onClose: () 
   const [status, setStatus] = useState<QcAlgoStatus>(algo.status);
   const [description, setDescription] = useState(algo.description || '');
   const [busy, setBusy] = useState(false);
+  const [gen, setGen] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
@@ -60,6 +63,19 @@ function EditModal({ algo, onClose, onSaved }: { algo: QcAlgorithm; onClose: () 
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  async function generate() {
+    setGen(true); setErr(null);
+    try {
+      const res = await fetch('/api/quantconnect/describe', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ projectId: algo.projectId }),
+      }).then(r => r.json());
+      if (res.error) { setErr(res.error); return; }
+      setDescription(res.description || '');
+    } catch (e: any) { setErr(e.message); }
+    finally { setGen(false); }
+  }
 
   async function save() {
     setBusy(true); setErr(null);
@@ -96,7 +112,8 @@ function EditModal({ algo, onClose, onSaved }: { algo: QcAlgorithm; onClose: () 
             </div>
             <div className="qc-field" style={{ gridColumn: '1 / -1' }}>
               <label>Описание</label>
-              <textarea className="qc-input" rows={3} value={description} onChange={e => setDescription(e.target.value)} />
+              <MarkdownEditor value={description} onChange={setDescription} onGenerate={generate} generating={gen}
+                rows={6} placeholder="Markdown: **жирный**, ## заголовок, - список…" />
             </div>
           </div>
           {err && <div className="qc-err" style={{ fontSize: 12, marginTop: 8 }}>{err}</div>}
