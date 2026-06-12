@@ -162,3 +162,18 @@ export async function qcReadProjectFiles(projectId: number | string): Promise<Qc
   const arr = Array.isArray(data?.files) ? data.files : [];
   return arr.map((f: any) => ({ name: String(f.name ?? ''), content: String(f.content ?? '') }));
 }
+
+// Статистика бектеста (Sharpe, Sortino, трейды, win-rate и т.д.).
+export async function qcReadBacktest(
+  projectId: number | string,
+  backtestId: string,
+): Promise<{ statistics: Record<string, string>; runtimeStatistics: Record<string, string> }> {
+  const data = await qcPost('/backtests/read', { projectId: Number(projectId), backtestId: String(backtestId) });
+  const bt = data?.backtest ?? data?.Backtest ?? {};
+  const norm = (o: any): Record<string, string> => {
+    const out: Record<string, string> = {};
+    if (o && typeof o === 'object') for (const [k, v] of Object.entries(o)) out[String(k)] = String(v);
+    return out;
+  };
+  return { statistics: norm(bt.statistics ?? bt.Statistics), runtimeStatistics: norm(bt.runtimeStatistics ?? bt.RuntimeStatistics) };
+}
