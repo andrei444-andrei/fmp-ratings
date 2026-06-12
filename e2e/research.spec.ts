@@ -156,6 +156,23 @@ test.describe('Research /research', () => {
     await expect(page.locator('.research-output .rtblwrap')).toContainText('[AI:default:web]', { timeout: 90000 });
   });
 
+  test('ask_ai_many: параллельный батч возвращает ответы по порядку', async ({ page }) => {
+    await stubExecute(
+      page,
+      'import pandas as pd\n' +
+        'prompts = ["q0", "q1", "q2", "q3", "q4"]\n' +
+        'answers = await ask_ai_many(prompts, web=True, concurrency=3)\n' +
+        'result = pd.DataFrame({"Запрос": prompts, "Ответ": answers})',
+    );
+    await page.goto('/research');
+    await page.locator('textarea').first().fill('тест ask_ai_many');
+    await page.getByRole('button', { name: 'Исполнить' }).click();
+    const tbl = page.locator('.research-output .rtblwrap');
+    await expect(tbl).toContainText('[AI:default:web] q0', { timeout: 90000 });
+    await expect(tbl).toContainText('[AI:default:web] q4');
+    await expect(tbl.locator('tbody tr')).toHaveCount(5, { timeout: 30000 });
+  });
+
   test('asyncio.run переписывается на top-level await (без stack switching)', async ({ page }) => {
     await stubExecute(
       page,
