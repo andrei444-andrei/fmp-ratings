@@ -31,6 +31,23 @@ export type PyEvent =
   | { type: 'block'; html: string }
   | { type: 'error'; message: string };
 
+// Параллельный батч-вызов LLM: модель собирает список промптов и получает ответы в том же
+// порядке. Конкурентность ограничена семафором, ошибки ловятся поштучно (одна не валит весь
+// батч). Так десятки/сотни обогащений укладываются в лимит времени, в отличие от for+await.
+const MANY_PRELUDE = `
+async def ask_ai_many(prompts, model=None, system=None, web=False, temperature=None, max_tokens=None, concurrency=8):
+    import asyncio as __aio
+    __items = list(prompts)
+    __sem = __aio.Semaphore(max(1, int(concurrency)))
+    async def __oneq(p):
+        async with __sem:
+            try:
+                return await ask_ai(p, model=model, system=system, web=web, temperature=temperature, max_tokens=max_tokens)
+            except Exception as __e:
+                return '[ошибка AI: ' + str(__e) + ']'
+    return await __aio.gather(*[__oneq(p) for p in __items])
+`;
+
 // UX-кит: готовые компоненты для дашбордного вывода. Функции возвращают
 // {'__kit__': True, 'html': ...}; весь текст экранируется (_esc). Модель собирает
 // из них result (можно списком вперемешку с таблицами).
@@ -194,6 +211,7 @@ async function execOnce(
       `    __r = __aj.dumps({'prompt': prompt, 'model': model, 'system': system,\n` +
       `                      'web': bool(web), 'temperature': temperature, 'max_tokens': max_tokens})\n` +
       `    return await __b(__r)\n` +
+      MANY_PRELUDE +
       KIT_PRELUDE +
       (wantsPlot ? `import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\nplt.close('all')\n` : '');
 
