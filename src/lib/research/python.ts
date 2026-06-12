@@ -35,16 +35,24 @@ export type PyEvent =
 // порядке. Конкурентность ограничена семафором, ошибки ловятся поштучно (одна не валит весь
 // батч). Так десятки/сотни обогащений укладываются в лимит времени, в отличие от for+await.
 const MANY_PRELUDE = `
-async def ask_ai_many(prompts, model=None, system=None, web=False, temperature=None, max_tokens=None, concurrency=8):
-    import asyncio as __aio
+async def ask_ai_many(prompts, model=None, system=None, web=False, temperature=None, max_tokens=None, concurrency=8, progress=True):
+    import asyncio as __aio, sys as __sys
     __items = list(prompts)
+    __total = len(__items)
     __sem = __aio.Semaphore(max(1, int(concurrency)))
+    __done = [0]
+    __step = max(1, __total // 10)
     async def __oneq(p):
         async with __sem:
             try:
-                return await ask_ai(p, model=model, system=system, web=web, temperature=temperature, max_tokens=max_tokens)
+                __res = await ask_ai(p, model=model, system=system, web=web, temperature=temperature, max_tokens=max_tokens)
             except Exception as __e:
-                return '[ошибка AI: ' + str(__e) + ']'
+                __res = '[ошибка AI: ' + str(__e) + ']'
+            __done[0] += 1
+            if progress and (__done[0] % __step == 0 or __done[0] == __total):
+                print('  …обработано', __done[0], 'из', __total)
+                __sys.stdout.flush()
+            return __res
     return await __aio.gather(*[__oneq(p) for p in __items])
 `;
 
