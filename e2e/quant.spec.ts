@@ -144,7 +144,8 @@ test.describe('Аналитика алгоритмов /quant', () => {
     const strat = page.locator('.qc-strat', { hasText: 'EMA Cross' });
     await expect(strat).toBeVisible();
     await expect(strat.locator('.qc-badge.active')).toHaveText('Активно');
-    await expect(strat.locator('.qc-strat-desc')).toContainText('плечо 2x');
+    await expect(strat.locator('.qc-spoiler > summary')).toHaveText('описание'); // описание под спойлером
+    await expect(strat).toContainText('плечо 2x');
     await expect(page.locator('.qc-strat', { hasText: 'Mean Reversion' }).locator('.qc-badge.research')).toHaveText('Исследование');
 
     // матрица: бенчмарк = SPY + заливка ячейки доходности vs бенчмарк

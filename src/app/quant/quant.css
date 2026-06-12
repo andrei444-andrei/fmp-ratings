@@ -283,10 +283,19 @@ body:has(.qc-root) {
 .qc-md blockquote { margin: 6px 0; padding: 2px 12px; border-left: 3px solid var(--qc-acc-bd); color: var(--qc-tx3); }
 .qc-md a { color: var(--qc-on-acc); text-decoration: none; }
 .qc-md a:hover { text-decoration: underline; }
-/* компактнее в списке стратегий */
-.qc-strat-desc .qc-md { font-size: 12px; }
-.qc-strat-desc .qc-md p { margin: 3px 0; }
-.qc-strat-desc .qc-md ul, .qc-strat-desc .qc-md ol { margin: 3px 0; }
+/* описание-спойлер в списке стратегий */
+.qc-spoiler { margin-top: 5px; }
+.qc-spoiler > summary {
+  cursor: pointer; font-size: 11.5px; color: var(--qc-acc); list-style: none;
+  display: inline-flex; align-items: center; gap: 5px; user-select: none;
+}
+.qc-spoiler > summary::-webkit-details-marker { display: none; }
+.qc-spoiler > summary::before { content: '▸'; font-size: 9px; transition: transform .12s; }
+.qc-spoiler[open] > summary::before { transform: rotate(90deg); }
+.qc-spoiler > summary:hover { color: var(--qc-on-acc); }
+.qc-spoiler .qc-md { font-size: 12px; margin-top: 6px; }
+.qc-spoiler .qc-md p { margin: 3px 0; }
+.qc-spoiler .qc-md ul, .qc-spoiler .qc-md ol { margin: 3px 0; }
 
 /* AI-чат (всплывающий) */
 .qc-chat-fab {

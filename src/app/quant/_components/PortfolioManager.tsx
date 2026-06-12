@@ -33,7 +33,12 @@ export default function PortfolioManager({
                 <div className="qc-strat-name">{a.name}
                   <span className="qc-strat-id">#{a.projectId}{a.backtestId ? ` · bt ${a.backtestId.slice(0, 6)}` : ' · последний'}</span>
                 </div>
-                {a.description && <div className="qc-strat-desc"><Markdown text={a.description} /></div>}
+                {a.description && (
+                  <details className="qc-spoiler">
+                    <summary>описание</summary>
+                    <Markdown text={a.description} />
+                  </details>
+                )}
               </div>
               <div className="qc-strat-actions">
                 <button className="qc-icon" title="Редактировать" onClick={() => setEdit(a)}>✎</button>
