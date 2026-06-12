@@ -145,10 +145,11 @@ body:has(.qc-root) {
 .qc-matrix tfoot tr.total td { font-weight: 700; font-size: 12.5px; }
 .qc-matrix .colerr { color: var(--qc-neg); font-family: -apple-system, sans-serif; font-size: 11px; text-align: center; }
 
-/* маркер vs бенчмарк у доходности */
-.qc-bm { font-size: 9px; margin-right: 4px; vertical-align: middle; }
-.qc-bm.up { color: var(--qc-pos); }
-.qc-bm.dn { color: var(--qc-neg); }
+/* заливка ячейки доходности vs бенчмарк: зелёная — обыграла, красная — проиграла */
+.qc-matrix td.qc-beat { background: rgba(15, 157, 99, .15); color: var(--qc-tx); font-weight: 600; }
+.qc-matrix td.qc-lag  { background: rgba(219, 59, 68, .13); color: var(--qc-tx); font-weight: 600; }
+.qc-matrix tbody tr:hover td.qc-beat { background: rgba(15, 157, 99, .22); }
+.qc-matrix tbody tr:hover td.qc-lag  { background: rgba(219, 59, 68, .20); }
 
 .qc-pos { color: var(--qc-pos); }
 .qc-neg { color: var(--qc-neg); }

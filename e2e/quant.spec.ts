@@ -106,14 +106,15 @@ test.describe('Аналитика алгоритмов /quant', () => {
     await expect(strat.locator('.qc-strat-desc')).toContainText('плечо 2x');
     await expect(page.locator('.qc-strat', { hasText: 'Mean Reversion' }).locator('.qc-badge.research')).toHaveText('Исследование');
 
-    // матрица: маркеры ▲/▼ vs бенчмарк
+    // матрица: заливка ячейки доходности vs бенчмарк (зелёная/красная)
     const matrix = page.locator('.qc-matrix');
     await expect(matrix).toBeVisible();
-    await expect(matrix.locator('.qc-bm.up').first()).toBeVisible(); // обыграл БМ
-    await expect(matrix.locator('.qc-bm.dn').first()).toBeVisible(); // проиграл БМ
+    await expect(matrix.locator('td.qc-beat').first()).toBeVisible(); // обыграл БМ
+    await expect(matrix.locator('td.qc-lag').first()).toBeVisible();  // проиграл БМ
 
-    // стат-блок
+    // стат-блок (включая CAGR)
     await expect(matrix.getByText('Ср. / год')).toBeVisible();
+    await expect(matrix.getByText('CAGR', { exact: true })).toBeVisible();
     await expect(matrix.getByText('σ (разброс)')).toBeVisible();
     await expect(matrix.getByText('Лучший / худший')).toBeVisible();
     await expect(matrix.getByText('Лет лучше БМ')).toBeVisible();
