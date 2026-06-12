@@ -107,6 +107,46 @@ def bars(data, title=None):
     return _kit('<div class="rkit-bars">' + t + body + '</div>')
 `;
 
+// Пайплайн рендера result → блоки, ОБЩИЙ для финального вывода и для emit() (поэтапный вывод).
+// Определяется в prelude, чтобы emit() мог рисовать блоки прямо по ходу скрипта.
+// emit(x): СРАЗУ отдаёт блок в UI (мост __emit__), не дожидаясь конца скрипта.
+const RENDER_PRELUDE = `
+import html as __h2
+def _is_kit(v):
+    return isinstance(v, dict) and v.get('__kit__') is True and isinstance(v.get('html'), str)
+def _one(v):
+    if _is_kit(v): return ('block', v['html'])
+    if isinstance(v, pd.Series): return ('table', v.to_frame().to_html())
+    if isinstance(v, pd.DataFrame): return ('table', v.to_html(index=not isinstance(v.index, pd.RangeIndex)))
+    if hasattr(v, 'to_html'):
+        try: return ('table', v.to_html())
+        except Exception: pass
+    return ('block', '<pre class="rlog">' + __h2.escape(str(v)) + '</pre>')
+def _tables(r):
+    if r is None: return []
+    if _is_kit(r): return [('', 'block', r['html'])]
+    if isinstance(r, dict):
+        out = []
+        for k, v in r.items():
+            kind, h = _one(v); out.append((str(k), kind, h))
+        return out
+    if isinstance(r, (list, tuple)):
+        out = []
+        for v in r:
+            kind, h = _one(v); out.append(('', kind, h))
+        return out
+    kind, h = _one(r)
+    return [('Результат' if kind == 'table' else '', kind, h)]
+def _render_blocks(r):
+    return __json.dumps([{'title': __h2.escape(t), 'kind': k, 'html': h} for (t, k, h) in _tables(r)])
+def emit(x):
+    __e = globals().get('__emit__')
+    if __e is not None:
+        try: __e(_render_blocks(x))
+        except Exception: pass
+    return None
+`;
+
 // Лёгкая защита raw-HTML из кита/строк: убираем опасные теги, обработчики событий и javascript:-URL.
 // Инлайновый style (ширина баров) сохраняется. Таблицы pandas/Styler через это не проходят.
 function sanitizeKit(html: string): string {
@@ -130,6 +170,30 @@ function enhanceTable(html: string): string {
     if (/^-\d[\d.,]*$/.test(text)) return `<td class="rneg">${inner}</td>`;
     return full;
   });
+}
+
+type RenderBlock = { title: string; kind: string; html: string };
+
+// Отрисовка блоков (общая для emit() и финального result): таблицы → enhanceTable + обёртка,
+// компоненты кита/строки → sanitizeKit. Один и тот же вид независимо от способа вывода.
+function emitBlocks(blocks: RenderBlock[], onEvent: (e: PyEvent) => void): void {
+  if (!Array.isArray(blocks)) return;
+  for (const t of blocks) {
+    if (!t || typeof t.html !== 'string') continue;
+    if (t.kind === 'table') {
+      const html = enhanceTable(t.html);
+      const cap = t.title ? `<div class="rcap">${t.title}</div>` : '';
+      onEvent({ type: 'block', html: `<div class="rblk">${cap}<div class="rtblwrap">${html}</div></div>` });
+    } else {
+      const safe = sanitizeKit(t.html);
+      onEvent({
+        type: 'block',
+        html: t.title
+          ? `<div class="rblk"><div class="rcap">${t.title}</div><div class="rkitbody">${safe}</div></div>`
+          : safe,
+      });
+    }
+  }
 }
 
 // Прогоны сериализуются: один общий интерпретатор → без гонок за глобалами и stdout-хендлерами.
@@ -193,6 +257,14 @@ async function execOnce(
           }
         : null,
     );
+    // Мост поэтапного вывода: emit(x) из скрипта → блок СРАЗУ уходит в UI (стримится).
+    py.globals.set('__emit__', (jsonStr: string) => {
+      try {
+        emitBlocks(JSON.parse(jsonStr) as RenderBlock[], onEvent);
+      } catch {
+        /* плохой блок — пропускаем */
+      }
+    });
 
     const prelude =
       `import json as __json\nimport pandas as pd\nimport numpy as np\n` +
@@ -213,6 +285,7 @@ async function execOnce(
       `    return await __b(__r)\n` +
       MANY_PRELUDE +
       KIT_PRELUDE +
+      RENDER_PRELUDE +
       (wantsPlot ? `import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\nplt.close('all')\n` : '');
 
     try {
@@ -237,55 +310,11 @@ async function execOnce(
       return;
     }
 
-    // Итог из переменной result: DataFrame/Styler, словарь/список (этапы), либо компоненты
-    // UX-кита (kind='block'). Каждый элемент рисуется отдельным блоком.
+    // Финальный результат из переменной result (то, что модель не вывела через emit).
+    // Тот же пайплайн (_render_blocks), что и у emit — единый вид. result=None → ничего.
     try {
-      const tablesJson = await py.runPythonAsync(
-        `import json as _json, html as _html\nimport pandas as _pd\n` +
-          `def _is_kit(v):\n` +
-          `    return isinstance(v, dict) and v.get('__kit__') is True and isinstance(v.get('html'), str)\n` +
-          `def _one(v):\n` +
-          `    if _is_kit(v): return ('block', v['html'])\n` +
-          `    if isinstance(v, _pd.Series): return ('table', v.to_frame().to_html())\n` +
-          `    if isinstance(v, _pd.DataFrame): return ('table', v.to_html(index=not isinstance(v.index, _pd.RangeIndex)))\n` +
-          `    if hasattr(v, 'to_html'):\n` +
-          `        try: return ('table', v.to_html())\n` +
-          `        except Exception: pass\n` +
-          `    return ('block', '<pre class="rlog">' + _html.escape(str(v)) + '</pre>')\n` +
-          `def _tables(r):\n` +
-          `    if r is None: return []\n` +
-          `    if _is_kit(r): return [('', 'block', r['html'])]\n` +
-          `    if isinstance(r, dict):\n` +
-          `        out = []\n` +
-          `        for k, v in r.items():\n` +
-          `            kind, h = _one(v); out.append((str(k), kind, h))\n` +
-          `        return out\n` +
-          `    if isinstance(r, (list, tuple)):\n` +
-          `        out = []\n` +
-          `        for v in r:\n` +
-          `            kind, h = _one(v); out.append(('', kind, h))\n` +
-          `        return out\n` +
-          `    kind, h = _one(r)\n` +
-          `    return [('Результат' if kind == 'table' else '', kind, h)]\n` +
-          `_json.dumps([{'title': _html.escape(t), 'kind': k, 'html': h} for (t, k, h) in _tables(result)])\n`,
-      );
-      const tables = JSON.parse(String(tablesJson || '[]')) as { title: string; kind: string; html: string }[];
-      for (const t of tables) {
-        if (t.kind === 'table') {
-          // Markdown для длинных ячеек + красный цвет отрицательных чисел.
-          const html = enhanceTable(t.html);
-          const cap = t.title ? `<div class="rcap">${t.title}</div>` : '';
-          onEvent({ type: 'block', html: `<div class="rblk">${cap}<div class="rtblwrap">${html}</div></div>` });
-        } else {
-          const safe = sanitizeKit(t.html);
-          onEvent({
-            type: 'block',
-            html: t.title
-              ? `<div class="rblk"><div class="rcap">${t.title}</div><div class="rkitbody">${safe}</div></div>`
-              : safe,
-          });
-        }
-      }
+      const blocksJson = await py.runPythonAsync('_render_blocks(result)');
+      emitBlocks(JSON.parse(String(blocksJson || '[]')) as RenderBlock[], onEvent);
     } catch {
       /* result не задан / ошибка рендера — не критично */
     }
