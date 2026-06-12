@@ -91,21 +91,21 @@ export type PortfolioResponse = {
   error?: string;
 };
 
-// Точка месячного ряда капитала: ym = «YYYY-MM», t — unix-сек (конец месяца), v — капитал.
-export type MonthPoint = { ym: string; t: number; v: number };
+// Точка дневного ряда капитала: d = «YYYY-MM-DD», v — капитал на конец дня.
+export type DayPoint = { d: string; v: number };
 
-// Месячный ряд капитала одной стратегии — для объединённого портфеля (Phase 2).
+// Дневной ряд капитала одной стратегии — для объединённого портфеля (реальные просадки).
 export type AlgoSeries = {
   id: number;
   name: string;
   status: QcAlgoStatus;
   error: string | null;
-  monthly: MonthPoint[];
+  daily: DayPoint[];
 };
 
-// Ответ /api/quantconnect/series — месячные ряды стратегий + бенчмарк.
+// Ответ /api/quantconnect/series — дневные ряды стратегий + бенчмарк.
 export type SeriesResponse = {
   algos: AlgoSeries[];
-  benchmark: { name: string; monthly: MonthPoint[] } | null;
+  benchmark: { name: string; daily: DayPoint[] } | null;
   error?: string;
 };

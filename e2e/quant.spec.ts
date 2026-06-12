@@ -37,23 +37,25 @@ const PORTFOLIO = {
   },
 };
 
-// синтетический месячный ряд капитала
-function monthly(start: number, growth: number, n: number, startYear = 2022) {
-  const pts: { ym: string; t: number; v: number }[] = [];
+// синтетический дневной ряд капитала (шаг 3 дня)
+function daily(start: number, growth: number, n: number, startYear = 2022) {
+  const pts: { d: string; v: number }[] = [];
   let v = start;
+  const base = Date.UTC(startYear, 0, 3);
   for (let i = 0; i < n; i++) {
-    const y = startYear + Math.floor(i / 12), m = (i % 12) + 1;
-    pts.push({ ym: `${y}-${String(m).padStart(2, '0')}`, t: Math.floor(Date.UTC(y, m - 1, 28) / 1000), v: Math.round(v) });
+    const dt = new Date(base + i * 3 * 86400000);
+    const d = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+    pts.push({ d, v: Math.round(v) });
     v *= 1 + growth;
   }
   return pts;
 }
 const SERIES = {
   algos: [
-    { id: 1, name: 'EMA Cross', status: 'active', error: null, monthly: monthly(100000, 0.025, 36) },
-    { id: 2, name: 'Mean Reversion RSI', status: 'research', error: null, monthly: monthly(100000, 0.012, 36) },
+    { id: 1, name: 'EMA Cross', status: 'active', error: null, daily: daily(100000, 0.004, 240) },
+    { id: 2, name: 'Mean Reversion RSI', status: 'research', error: null, daily: daily(100000, 0.002, 240) },
   ],
-  benchmark: { name: 'Бенчмарк', monthly: monthly(100000, 0.015, 36) },
+  benchmark: { name: 'SPY', daily: daily(100000, 0.003, 240) },
 };
 
 async function mockConfigured(page: Page) {

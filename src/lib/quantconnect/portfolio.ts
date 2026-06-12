@@ -5,10 +5,10 @@
 
 import { listAlgorithms } from './algorithms';
 import { qcListBacktests, qcReadSeries } from './client';
-import { computeYearly, monthlyEquity } from './metrics';
+import { computeYearly, dailySeries } from './metrics';
 import { qcCacheGet, qcCacheSet } from './cache';
 import { getSpyBenchmark } from './benchmark';
-import type { AlgoColumn, BenchmarkColumn, MonthPoint, PortfolioResponse, SeriesResponse, YearMetric } from './types';
+import type { AlgoColumn, BenchmarkColumn, DayPoint, PortfolioResponse, SeriesResponse, YearMetric } from './types';
 
 function createdMs(v: string | number | undefined): number {
   if (v == null) return 0;
@@ -34,31 +34,31 @@ type BacktestMetrics = {
   strategy: YearMetric[];
   benchmark: YearMetric[] | null;
   points: number;
-  monthlyStrategy: MonthPoint[];
-  monthlyBenchmark: MonthPoint[] | null;
+  dailyStrategy: DayPoint[];
+  dailyBenchmark: DayPoint[] | null;
 };
 
 async function metricsForBacktest(projectId: string, backtestId: string, force: boolean): Promise<BacktestMetrics> {
-  // v2: в кэш добавлены месячные ряды — старые записи (без них) не подходят.
-  const key = `bt|v2|${projectId}|${backtestId}`;
+  // v3: в кэше дневные ряды (для реальных просадок) — старые записи не подходят.
+  const key = `bt|v3|${projectId}|${backtestId}`;
   if (!force) {
     const cached = await qcCacheGet<BacktestMetrics>(key);
-    if (cached && cached.monthlyStrategy) return cached;
+    if (cached && cached.dailyStrategy) return cached;
   }
   const equity = await qcReadSeries(projectId, backtestId, 'Strategy Equity', 'Equity');
   const strategy = computeYearly(equity);
-  const monthlyStrategy = monthlyEquity(equity);
+  const dailyStrategy = dailySeries(equity);
 
   let benchmark: YearMetric[] | null = null;
-  let monthlyBenchmark: MonthPoint[] | null = null;
+  let dailyBenchmark: DayPoint[] | null = null;
   try {
     const bench = await qcReadSeries(projectId, backtestId, 'Benchmark', 'Benchmark');
-    if (bench.length) { benchmark = computeYearly(bench); monthlyBenchmark = monthlyEquity(bench); }
+    if (bench.length) { benchmark = computeYearly(bench); dailyBenchmark = dailySeries(bench); }
   } catch {
     benchmark = null;
   }
 
-  const payload: BacktestMetrics = { strategy, benchmark, points: equity.length, monthlyStrategy, monthlyBenchmark };
+  const payload: BacktestMetrics = { strategy, benchmark, points: equity.length, dailyStrategy, dailyBenchmark };
   if (strategy.length) await qcCacheSet(key, payload);
   return payload;
 }
@@ -154,17 +154,17 @@ export async function buildSeries(force = false, includeArchived = false): Promi
   );
 
   // Бенчмарк — SPY (из FMP); фолбэк на бенчмарк бектеста.
-  let benchmark: { name: string; monthly: MonthPoint[] } | null = null;
+  let benchmark: { name: string; daily: DayPoint[] } | null = null;
   const spy = await getSpyBenchmark(force).catch(() => null);
-  if (spy && spy.monthly.length) benchmark = { name: spy.name, monthly: spy.monthly };
+  if (spy && spy.daily.length) benchmark = { name: spy.name, daily: spy.daily };
 
   const outAlgos = results.map(r => {
-    if (!benchmark && r.m?.monthlyBenchmark && r.m.monthlyBenchmark.length) {
-      benchmark = { name: 'Бенчмарк (бектест)', monthly: r.m.monthlyBenchmark };
+    if (!benchmark && r.m?.dailyBenchmark && r.m.dailyBenchmark.length) {
+      benchmark = { name: 'Бенчмарк (бектест)', daily: r.m.dailyBenchmark };
     }
     return {
       id: r.a.id, name: r.a.name, status: r.a.status, error: r.error,
-      monthly: r.m?.monthlyStrategy ?? [],
+      daily: r.m?.dailyStrategy ?? [],
     };
   });
 

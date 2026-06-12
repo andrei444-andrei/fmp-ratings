@@ -2,28 +2,26 @@
 // Для каждого календарного года: доходность за год, макс. просадка за год,
 // накопительная доходность с начала бектеста.
 
-import type { MonthPoint, QcSeriesPoint, YearMetric } from './types';
+import type { DayPoint, QcSeriesPoint, YearMetric } from './types';
 
 // QC отдаёт время в секундах; на всякий случай поддержим и миллисекунды.
 function toMs(t: number): number {
   return t > 1e12 ? t : t * 1000;
 }
 
-// Даунсэмпл дневной кривой капитала до значений на конец каждого месяца.
-export function monthlyEquity(points: QcSeriesPoint[]): MonthPoint[] {
+// Нормализуем кривую капитала до значения на конец каждого дня (дедуп по дате).
+export function dailySeries(points: QcSeriesPoint[]): DayPoint[] {
   const pts = points
     .map(p => ({ t: toMs(p.t), v: p.v }))
     .filter(p => isFinite(p.v) && p.v > 0 && isFinite(p.t))
     .sort((a, b) => a.t - b.t);
-  const byMonth = new Map<string, { t: number; v: number }>();
+  const byDay = new Map<string, number>();
   for (const p of pts) {
-    const d = new Date(p.t);
-    const ym = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
-    byMonth.set(ym, p); // последняя точка месяца (идём по возрастанию) = конец месяца
+    const dt = new Date(p.t);
+    const d = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+    byDay.set(d, p.v); // последнее значение дня
   }
-  return [...byMonth.entries()]
-    .map(([ym, p]) => ({ ym, t: Math.floor(p.t / 1000), v: p.v }))
-    .sort((a, b) => a.t - b.t);
+  return [...byDay.entries()].map(([d, v]) => ({ d, v })).sort((a, b) => (a.d < b.d ? -1 : 1));
 }
 
 export function computeYearly(points: QcSeriesPoint[]): YearMetric[] {

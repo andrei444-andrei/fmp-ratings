@@ -42,7 +42,7 @@ export default function CombinedPortfolio({ includeArchived }: { includeArchived
     if (!series) return;
     setInclude(prev => {
       const n = { ...prev };
-      for (const a of series.algos) if (n[a.id] === undefined) n[a.id] = !a.error && a.monthly.length >= 2;
+      for (const a of series.algos) if (n[a.id] === undefined) n[a.id] = !a.error && a.daily.length >= 2;
       return n;
     });
     setWeights(prev => {
@@ -52,29 +52,40 @@ export default function CombinedPortfolio({ includeArchived }: { includeArchived
     });
   }, [series]);
 
-  const usable = (series?.algos || []).filter(a => !a.error && a.monthly.length >= 2);
+  const usable = (series?.algos || []).filter(a => !a.error && a.daily.length >= 2);
   const includedW = usable.filter(a => include[a.id]).reduce((s, a) => s + (weights[a.id] ?? 1), 0) || 1;
 
   const combined = useMemo(() => {
     if (!series) return null;
     const inputs = usable
       .filter(a => include[a.id])
-      .map(a => ({ id: a.id, monthly: a.monthly, weight: weights[a.id] ?? 1 }));
-    return combinePortfolio(inputs, series.benchmark?.monthly || null);
+      .map(a => ({ id: a.id, daily: a.daily, weight: weights[a.id] ?? 1 }));
+    return combinePortfolio(inputs, series.benchmark?.daily || null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [series, include, weights]);
 
+  // Метрики считаем по всей дневной кривой; для графика прореживаем до ~520 точек.
   const chart = useMemo(() => {
-    if (!combined || !combined.months.length) return null;
-    const lines: ChartLine[] = [{ label: 'Портфель', color: ACC, values: combined.equity }];
-    if (combined.benchEquity) lines.push({ label: series?.benchmark?.name || 'Бенчмарк', color: MUT, values: combined.benchEquity, dash: true });
+    if (!combined || !combined.dates.length) return null;
+    const N = combined.equity.length;
+    const stride = Math.max(1, Math.ceil(N / 520));
+    const idx: number[] = [];
+    for (let i = 0; i < N; i += stride) idx.push(i);
+    if (idx[idx.length - 1] !== N - 1) idx.push(N - 1);
+    const sample = (arr: number[] | null) => (arr ? idx.map(i => arr[i]) : null);
+    const lines: ChartLine[] = [{ label: 'Портфель', color: ACC, values: sample(combined.equity)! }];
+    const be = sample(combined.benchEquity);
+    if (be) lines.push({ label: series?.benchmark?.name || 'Бенчмарк', color: MUT, values: be, dash: true });
     const xTicks: { pos: number; text: string }[] = [];
     let last = '';
-    combined.months.forEach((ym, k) => { const y = ym.slice(0, 4); if (y !== last) { xTicks.push({ pos: k + 1, text: y }); last = y; } });
+    idx.forEach((origIdx, sIdx) => {
+      const y = combined.dates[Math.min(origIdx, combined.dates.length - 1)].slice(0, 4);
+      if (y !== last) { xTicks.push({ pos: sIdx, text: y }); last = y; }
+    });
     return { lines, xTicks };
   }, [combined, series]);
 
-  if (loading && !series) return <div className="qc-panel"><div className="qc-state">Загрузка месячных рядов…</div></div>;
+  if (loading && !series) return <div className="qc-panel"><div className="qc-state">Загрузка дневных рядов…</div></div>;
 
   const selectedCount = usable.filter(a => include[a.id]).length;
 
@@ -83,14 +94,14 @@ export default function CombinedPortfolio({ includeArchived }: { includeArchived
       <div className="qc-method">
         <h4>Объединённый портфель</h4>
         <ul>
-          <li>«Что будет, если запускать выбранные стратегии вместе» — помесячный ребаланс по заданным весам.</li>
-          <li>Период = пересечение месяцев, где у всех выбранных стратегий есть данные. Просадка считается по месячной кривой (грубее дневной).</li>
+          <li>«Что будет, если запускать выбранные стратегии вместе» — ребаланс к целевым весам раз в месяц.</li>
+          <li>Эквити отслеживается <b>по дням</b>, поэтому <b>просадка реальная (дневная)</b>, а не месячная. Период = пересечение торговых дней, где у всех выбранных есть данные.</li>
         </ul>
       </div>
 
       {usable.length === 0 ? (
         <div className="qc-panel"><div className="qc-state">
-          Нет стратегий с месячными данными. {error ? '' : 'Добавьте стратегии и пересчитайте на вкладке «Сравнение».'}
+          Нет стратегий с дневными данными. {error ? '' : 'Добавьте стратегии и пересчитайте на вкладке «Сравнение».'}
           {error && <div className="qc-err" style={{ marginTop: 8 }}>{error}</div>}
         </div></div>
       ) : (
@@ -105,7 +116,7 @@ export default function CombinedPortfolio({ includeArchived }: { includeArchived
             </div>
             <div className="qc-weights">
               {(series?.algos || []).map(a => {
-                const ok = !a.error && a.monthly.length >= 2;
+                const ok = !a.error && a.daily.length >= 2;
                 const w = weights[a.id] ?? 1;
                 const normPct = ok && include[a.id] ? (w / includedW) * 100 : 0;
                 return (
@@ -132,7 +143,7 @@ export default function CombinedPortfolio({ includeArchived }: { includeArchived
             </div>
           </div>
 
-          {!combined || !combined.months.length ? (
+          {!combined || !combined.dates.length ? (
             <div className="qc-panel"><div className="qc-state">
               {selectedCount === 0 ? 'Выберите хотя бы одну стратегию.' : 'Нет пересекающегося периода у выбранных стратегий.'}
             </div></div>
@@ -140,10 +151,10 @@ export default function CombinedPortfolio({ includeArchived }: { includeArchived
             <>
               {/* стат-карточки */}
               <div className="qc-cards">
-                <Card k="Период" v={`${combined.years.toFixed(1)} лет`} sub={`${combined.months[0]} … ${combined.months[combined.months.length - 1]}`} />
+                <Card k="Период" v={`${combined.years.toFixed(1)} лет`} sub={`${combined.dates[0]} … ${combined.dates[combined.dates.length - 1]}`} />
                 <Card k="CAGR" v={fmtPct(combined.cagr)} cls={cls(combined.cagr)} sub={combined.bench ? `БМ ${fmtPct(combined.bench.cagr)}` : undefined} />
                 <Card k="Итоговая доходность" v={fmtPct(combined.total)} cls={cls(combined.total)} sub={combined.bench ? `БМ ${fmtPct(combined.bench.total)}` : undefined} />
-                <Card k="Макс. просадка" v={fmtPct(combined.maxDD)} cls={cls(combined.maxDD)} sub={combined.bench ? `БМ ${fmtPct(combined.bench.maxDD)}` : undefined} />
+                <Card k="Макс. просадка (дневная)" v={fmtPct(combined.maxDD)} cls={cls(combined.maxDD)} sub={combined.bench ? `БМ ${fmtPct(combined.bench.maxDD)}` : undefined} />
                 <Card k="σ доходности / год" v={combined.stdYear != null ? '±' + (combined.stdYear * 100).toFixed(1) + '%' : '—'} />
                 {combined.bench && <Card k="CAGR vs бенчмарк" v={fmtPct((combined.cagr ?? 0) - (combined.bench.cagr ?? 0))} cls={cls((combined.cagr ?? 0) - (combined.bench.cagr ?? 0))} sub="α в год" />}
               </div>
