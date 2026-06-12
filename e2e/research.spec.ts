@@ -44,7 +44,7 @@ async function saveStudy(page: Page, text: string, title: string) {
 
 async function runOnce(page: Page) {
   await page.getByRole('button', { name: 'Исполнить' }).click();
-  await expect(page.locator('.research-output .rtblwrap table')).toBeVisible({ timeout: 90000 });
+  await expect(page.locator('.research-output table.rkit-table')).toBeVisible({ timeout: 90000 });
 }
 
 async function saveResult(page: Page) {
@@ -153,7 +153,7 @@ test.describe('Research /research', () => {
     await page.locator('textarea').first().fill('тест ask_ai');
     await page.getByRole('button', { name: 'Исполнить' }).click();
     // Заглушка моста под флагом e2e возвращает маркер [AI:…] — путь ask_ai → результат рабочий.
-    await expect(page.locator('.research-output .rtblwrap')).toContainText('[AI:default:web]', { timeout: 90000 });
+    await expect(page.locator('.research-output table.rkit-table')).toContainText('[AI:default:web]', { timeout: 90000 });
   });
 
   test('emit: поэтапный вывод блоков по ходу скрипта', async ({ page }) => {
@@ -169,7 +169,7 @@ test.describe('Research /research', () => {
     await page.locator('textarea').first().fill('тест emit');
     await page.getByRole('button', { name: 'Исполнить' }).click();
     await expect(page.locator('.research-output .rkit-kpi')).toContainText('Этап 1', { timeout: 90000 });
-    await expect(page.locator('.research-output .rtblwrap table')).toBeVisible({ timeout: 30000 });
+    await expect(page.locator('.research-output table.rkit-table')).toBeVisible({ timeout: 30000 });
     await expect(page.locator('.research-output .rkit-callout')).toContainText('Готово', { timeout: 30000 });
     // result=None → финальный рендер ничего не дублирует: ровно один kpi и один callout.
     await expect(page.locator('.research-output .rkit-kpi')).toHaveCount(1);
@@ -187,7 +187,7 @@ test.describe('Research /research', () => {
     await page.goto('/research');
     await page.locator('textarea').first().fill('тест ask_ai_many');
     await page.getByRole('button', { name: 'Исполнить' }).click();
-    const tbl = page.locator('.research-output .rtblwrap');
+    const tbl = page.locator('.research-output table.rkit-table');
     await expect(tbl).toContainText('[AI:default:web] q0', { timeout: 90000 });
     await expect(tbl).toContainText('[AI:default:web] q4');
     await expect(tbl.locator('tbody tr')).toHaveCount(5, { timeout: 30000 });
@@ -202,12 +202,12 @@ test.describe('Research /research', () => {
     await page.locator('textarea').first().fill('тест async driver');
     await page.getByRole('button', { name: 'Исполнить' }).click();
     // Результат дошёл до ask_ai (нет ошибки stack switching), а в коде нет блокирующего asyncio.run.
-    await expect(page.locator('.research-output .rtblwrap')).toContainText('[AI:', { timeout: 90000 });
+    await expect(page.locator('.research-output table.rkit-table')).toContainText('[AI:', { timeout: 90000 });
     await expect(page.locator('.research-output .rcode')).toContainText('await main()');
     await expect(page.locator('.research-output .rcode')).not.toContainText('asyncio.run(');
   });
 
-  test('отрицательные числа в таблице подсвечиваются красным (.rneg)', async ({ page }) => {
+  test('проценты: рост зелёным, падение красным (единый стиль движка)', async ({ page }) => {
     await stubExecute(
       page,
       'import pandas as pd\nresult = pd.DataFrame({"Период": ["A", "B"], "Моментум, %": [-41.42, 3.1]})',
@@ -215,10 +215,26 @@ test.describe('Research /research', () => {
     await page.goto('/research');
     await page.locator('textarea').first().fill('тест окраски чисел');
     await page.getByRole('button', { name: 'Исполнить' }).click();
-    const neg = page.locator('.research-output .rtblwrap td.rneg');
-    await expect(neg).toHaveText(/-41\.42/, { timeout: 90000 });
-    // положительное значение не помечается классом .rneg
-    await expect(page.locator('.research-output .rtblwrap td', { hasText: '3.1' })).not.toHaveClass(/rneg/);
+    // pct-колонка: движок добавил знак/% и покрасил по знаку.
+    await expect(page.locator('.research-output table.rkit-table td.rt-neg')).toContainText('-41.42%', { timeout: 90000 });
+    await expect(page.locator('.research-output table.rkit-table td.rt-pos')).toContainText('+3.10%');
+  });
+
+  test('table(heat=...) красит значения единой палитрой (heatmap-пресет)', async ({ page }) => {
+    await stubExecute(
+      page,
+      'import pandas as pd\n' +
+        "df = pd.DataFrame({'Страна': ['BR', 'JP', 'CN'], 'CAGR, %': [18.4, 2.1, -9.8]})\n" +
+        "result = table(df, heat='CAGR, %', title='Тепловая карта')",
+    );
+    await page.goto('/research');
+    await page.locator('textarea').first().fill('тест heat');
+    await page.getByRole('button', { name: 'Исполнить' }).click();
+    const tbl = page.locator('.research-output table.rkit-table');
+    await expect(tbl).toBeVisible({ timeout: 90000 });
+    // heat-колонка получила инлайн-фон единой палитры (rgba), заголовок таблицы виден.
+    await expect(tbl.locator('td[style*="rgba"]').first()).toBeVisible({ timeout: 30000 });
+    await expect(page.locator('.research-output .rt-cap')).toContainText('Тепловая карта');
   });
 
   test('длинный текст в ячейке рендерится как markdown (rich cell)', async ({ page }) => {
@@ -232,11 +248,11 @@ test.describe('Research /research', () => {
     await page.goto('/research');
     await page.locator('textarea').first().fill('тест rich-ячейки');
     await page.getByRole('button', { name: 'Исполнить' }).click();
-    const rich = page.locator('.research-output .rtblwrap td.rtd-rich');
+    const rich = page.locator('.research-output table.rkit-table td.rt-rich');
     await expect(rich).toBeVisible({ timeout: 90000 });
     await expect(rich.locator('strong')).toContainText('Глобальный кризис 2008'); // markdown отрендерен
     await expect(rich).not.toContainText('**'); // не сырой markdown
-    await expect(page.locator('.research-output .rtblwrap td.rneg')).toContainText('-41.16');
+    await expect(page.locator('.research-output table.rkit-table td.rt-neg')).toContainText('-41.16%');
   });
 
   test('UX-кит: kpi/bars/callout рендерятся вместе с таблицей', async ({ page }) => {
@@ -254,7 +270,7 @@ test.describe('Research /research', () => {
     await expect(page.locator('.research-output .rkit-kpi').first()).toBeVisible({ timeout: 90000 });
     await expect(page.locator('.research-output .rkit-bars')).toBeVisible({ timeout: 30000 });
     await expect(page.locator('.research-output .rkit-callout')).toContainText('Демо-данные', { timeout: 30000 });
-    await expect(page.locator('.research-output .rtblwrap table')).toBeVisible({ timeout: 30000 });
+    await expect(page.locator('.research-output table.rkit-table')).toBeVisible({ timeout: 30000 });
   });
 
   test('многоэтапный результат рисует несколько подписанных таблиц', async ({ page }) => {
@@ -265,6 +281,6 @@ test.describe('Research /research', () => {
     // Подписи именно у таблиц результата (.rcap), а не в подсвеченном блоке кода.
     await expect(page.locator('.research-output .rcap', { hasText: 'Этап 1 — доходность' })).toBeVisible({ timeout: 90000 });
     await expect(page.locator('.research-output .rcap', { hasText: 'Этап 2 — объём данных' })).toBeVisible({ timeout: 30000 });
-    await expect(page.locator('.research-output .rtblwrap table')).toHaveCount(2, { timeout: 30000 });
+    await expect(page.locator('.research-output table.rkit-table')).toHaveCount(2, { timeout: 30000 });
   });
 });
