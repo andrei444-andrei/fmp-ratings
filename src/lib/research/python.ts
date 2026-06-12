@@ -1,5 +1,4 @@
 import { loadPyodide } from 'pyodide';
-import { marked } from 'marked';
 
 type Pyodide = Awaited<ReturnType<typeof loadPyodide>>;
 
@@ -115,6 +114,132 @@ def bars(data, title=None):
     return _kit('<div class="rkit-bars">' + t + body + '</div>')
 `;
 
+// Канонический рендер таблиц: ДВИЖОК владеет стилем. Модель отдаёт данные + (опц.) семантику
+// колонок (formats), движок единообразно форматирует/выравнивает/красит. Палитра семантическая
+// (рост зелёный / падение красный), heat = красный→нейтральный→зелёный единой палитрой.
+// Никаких произвольных Styler-cmap — отсюда стабильный вид от прогона к прогону.
+const TABLE_PRELUDE = `
+def _heat_bg(x, m):
+    try: t = float(x) / m
+    except Exception: return ''
+    if t > 1.0: t = 1.0
+    if t < -1.0: t = -1.0
+    a = round(abs(t) * 0.5, 3)
+    if t > 0: return 'background: rgba(16,185,129,' + str(a) + ');'
+    if t < 0: return 'background: rgba(239,68,68,' + str(a) + ');'
+    return ''
+def _md_min(text):
+    t = _esc(text)
+    parts = t.split('**')
+    out = ''
+    i = 0
+    for p in parts:
+        out += ('<strong>' + p + '</strong>') if (i % 2 == 1) else p
+        i += 1
+    return out.replace('\\n', '<br>')
+def _infer_fmt(name, series):
+    import pandas as _pd
+    nm = str(name)
+    n = nm.lower()
+    is_num = _pd.api.types.is_numeric_dtype(series)
+    if is_num and ('%' in nm or 'доходн' in n or 'просадк' in n or 'момент' in n
+                   or 'cagr' in n or 'return' in n or 'волатил' in n or 'дельта' in n
+                   or 'измен' in n or 'rsi' in n):
+        return 'pct'
+    if is_num:
+        try:
+            vv = _pd.to_numeric(series, errors='coerce').dropna()
+            if len(vv) and (vv % 1 == 0).all():
+                return 'int'
+        except Exception:
+            pass
+        return 'num'
+    return 'text'
+def _fmt_cell(col, v, kind, heat_cols, heat_max):
+    import pandas as _pd
+    try:
+        if _pd.isna(v): return '<td class="rt-right rt-muted">—</td>'
+    except Exception:
+        pass
+    if kind in ('pct', 'num', 'int', 'money'):
+        try: x = float(v)
+        except Exception: return '<td class="rt-left">' + _esc(v) + '</td>'
+        if kind == 'pct': txt = ('%+.2f' % x) + '%'
+        elif kind == 'int': txt = format(int(round(x)), ',').replace(',', ' ')
+        elif kind == 'money': txt = format(x, ',.2f').replace(',', ' ')
+        else: txt = '%.2f' % x
+        cls = 'rt-right rt-num'
+        if kind == 'pct':
+            cls += ' rt-pos' if x > 0 else (' rt-neg' if x < 0 else '')
+        elif kind in ('num', 'money') and x < 0:
+            cls += ' rt-neg'
+        st = ''
+        if col in heat_cols:
+            st = ' style="' + _heat_bg(x, heat_max.get(col, 1.0)) + '"'
+        return '<td class="' + cls + '"' + st + '>' + _esc(txt) + '</td>'
+    if kind == 'ticker':
+        return '<td class="rt-left rt-tick">' + _esc(v) + '</td>'
+    s = '' if v is None else str(v)
+    if len(s.strip()) > 48:
+        return '<td class="rt-left rt-rich"><div class="rt-cell">' + _md_min(s) + '</div></td>'
+    return '<td class="rt-left">' + _esc(s) + '</td>'
+def table(df, formats=None, heat=None, title=None, sort=None, max_rows=300):
+    import pandas as _pd
+    if isinstance(df, _pd.Series):
+        df = df.to_frame()
+    if not isinstance(df, _pd.DataFrame):
+        return _kit('<pre class="rlog">' + _esc(str(df)) + '</pre>')
+    d = df
+    if sort is not None:
+        try:
+            if isinstance(sort, (list, tuple)):
+                d = d.sort_values(sort[0], ascending=(sort[1] if len(sort) > 1 else False))
+            else:
+                d = d.sort_values(sort, ascending=False)
+        except Exception:
+            pass
+    truncated = False
+    if max_rows and len(d) > max_rows:
+        d = d.head(max_rows); truncated = True
+    show_index = not isinstance(d.index, _pd.RangeIndex)
+    cols = list(d.columns)
+    fmts = dict(formats or {})
+    for c in cols:
+        if c not in fmts:
+            fmts[c] = _infer_fmt(c, d[c])
+    if heat is True:
+        heat_cols = set(c for c in cols if fmts.get(c) in ('pct', 'num', 'int', 'money'))
+    elif isinstance(heat, str):
+        heat_cols = set([heat])
+    elif heat:
+        heat_cols = set(heat)
+    else:
+        heat_cols = set()
+    heat_max = {}
+    for c in heat_cols:
+        try: heat_max[c] = float(_pd.to_numeric(d[c], errors='coerce').abs().max()) or 1.0
+        except Exception: heat_max[c] = 1.0
+    th = ''
+    if show_index:
+        th += '<th class="rt-h rt-left">' + _esc(d.index.name if d.index.name is not None else '') + '</th>'
+    for c in cols:
+        al = 'rt-left' if fmts.get(c) in ('text', 'ticker', 'date') else 'rt-right'
+        th += '<th class="rt-h ' + al + '">' + _esc(c) + '</th>'
+    trs = ''
+    for idx, rowvals in zip(list(d.index), d.itertuples(index=False, name=None)):
+        tds = ''
+        if show_index:
+            tds += '<td class="rt-left rt-idx">' + _esc(idx) + '</td>'
+        for c, v in zip(cols, rowvals):
+            tds += _fmt_cell(c, v, fmts.get(c), heat_cols, heat_max)
+        trs += '<tr>' + tds + '</tr>'
+    cap = ('<div class="rt-cap">' + _esc(title) + '</div>') if title else ''
+    note = ('<div class="rt-note">показаны первые ' + str(max_rows) + ' из ' + str(len(df)) + ' строк</div>') if truncated else ''
+    return _kit('<div class="rkit-tableblock">' + cap +
+                '<div class="rt-wrap"><table class="rkit-table"><thead><tr>' + th +
+                '</tr></thead><tbody>' + trs + '</tbody></table></div>' + note + '</div>')
+`;
+
 // Пайплайн рендера result → блоки, ОБЩИЙ для финального вывода и для emit() (поэтапный вывод).
 // Определяется в prelude, чтобы emit() мог рисовать блоки прямо по ходу скрипта.
 // emit(x): СРАЗУ отдаёт блок в UI (мост __emit__), не дожидаясь конца скрипта.
@@ -124,10 +249,11 @@ def _is_kit(v):
     return isinstance(v, dict) and v.get('__kit__') is True and isinstance(v.get('html'), str)
 def _one(v):
     if _is_kit(v): return ('block', v['html'])
-    if isinstance(v, pd.Series): return ('table', v.to_frame().to_html())
-    if isinstance(v, pd.DataFrame): return ('table', v.to_html(index=not isinstance(v.index, pd.RangeIndex)))
+    if isinstance(v, (pd.Series, pd.DataFrame)): return ('block', table(v)['html'])
+    if hasattr(v, 'data') and isinstance(getattr(v, 'data', None), pd.DataFrame):
+        return ('block', table(v.data)['html'])  # Styler → единый стиль, произвольные цвета игнорируем
     if hasattr(v, 'to_html'):
-        try: return ('table', v.to_html())
+        try: return ('block', table(pd.DataFrame(v))['html'])
         except Exception: pass
     return ('block', '<pre class="rlog">' + __h2.escape(str(v)) + '</pre>')
 def _tables(r):
@@ -164,43 +290,21 @@ function sanitizeKit(html: string): string {
     .replace(/(?:href|src)\s*=\s*("?\s*)javascript:[^\s">]*/gi, '$1#');
 }
 
-// Улучшаем ячейки простых таблиц (to_html, без Styler — у того есть атрибуты в <td …>):
-// — длинный текст (новости/описания) рендерим как markdown в «богатой» ячейке с переносом
-//   и ограничением высоты (иначе сырой **markdown** и колонка в 1 слово на строку);
-// — короткие отрицательные числа подсвечиваем красным.
-function enhanceTable(html: string): string {
-  return html.replace(/<td>([\s\S]*?)<\/td>/g, (full, inner) => {
-    const text = String(inner).trim();
-    if (text.length > 48) {
-      const rich = sanitizeKit(marked.parse(inner, { async: false, breaks: true }) as string);
-      return `<td class="rtd-rich"><div class="rcell">${rich}</div></td>`;
-    }
-    if (/^-\d[\d.,]*$/.test(text)) return `<td class="rneg">${inner}</td>`;
-    return full;
-  });
-}
-
 type RenderBlock = { title: string; kind: string; html: string };
 
-// Отрисовка блоков (общая для emit() и финального result): таблицы → enhanceTable + обёртка,
-// компоненты кита/строки → sanitizeKit. Один и тот же вид независимо от способа вывода.
+// Отрисовка блоков (общая для emit() и финального result). Любой блок — уже готовый HTML
+// (движок-рендер table()/кит); прогоняем лёгкую санитизацию, при наличии title — карточка с подписью.
 function emitBlocks(blocks: RenderBlock[], onEvent: (e: PyEvent) => void): void {
   if (!Array.isArray(blocks)) return;
   for (const t of blocks) {
     if (!t || typeof t.html !== 'string') continue;
-    if (t.kind === 'table') {
-      const html = enhanceTable(t.html);
-      const cap = t.title ? `<div class="rcap">${t.title}</div>` : '';
-      onEvent({ type: 'block', html: `<div class="rblk">${cap}<div class="rtblwrap">${html}</div></div>` });
-    } else {
-      const safe = sanitizeKit(t.html);
-      onEvent({
-        type: 'block',
-        html: t.title
-          ? `<div class="rblk"><div class="rcap">${t.title}</div><div class="rkitbody">${safe}</div></div>`
-          : safe,
-      });
-    }
+    const safe = sanitizeKit(t.html);
+    onEvent({
+      type: 'block',
+      html: t.title
+        ? `<div class="rblk"><div class="rcap">${t.title}</div><div class="rkitbody">${safe}</div></div>`
+        : safe,
+    });
   }
 }
 
@@ -293,6 +397,7 @@ async function execOnce(
       `    return await __b(__r)\n` +
       MANY_PRELUDE +
       KIT_PRELUDE +
+      TABLE_PRELUDE +
       RENDER_PRELUDE +
       (wantsPlot ? `import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\nplt.close('all')\n` : '');
 
