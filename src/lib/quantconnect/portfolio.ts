@@ -61,8 +61,10 @@ function lastCumulative(years: YearMetric[]): number | null {
   return null;
 }
 
-export async function buildPortfolio(force = false): Promise<PortfolioResponse> {
-  const algos = await listAlgorithms();
+export async function buildPortfolio(force = false, includeArchived = false): Promise<PortfolioResponse> {
+  const all = await listAlgorithms();
+  // Статус фильтрует анализ: архив по умолчанию скрыт (экономит и вызовы к QC).
+  const algos = includeArchived ? all : all.filter(a => a.status !== 'archive');
 
   const results = await Promise.all(
     algos.map(async a => {
@@ -97,6 +99,8 @@ export async function buildPortfolio(force = false): Promise<PortfolioResponse> 
       projectId: r.a.projectId,
       backtestId: r.a.backtestId,
       resolvedBacktestId: r.backtestId,
+      status: r.a.status,
+      description: r.a.description,
       error: r.error,
       years,
       totalReturn: r.m ? lastCumulative(r.m.strategy) : null,

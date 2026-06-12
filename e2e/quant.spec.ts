@@ -1,34 +1,60 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
-// Смоук раздела «Аналитика алгоритмов» (QuantConnect). В e2e кредов QC нет и сети к
-// quantconnect.com нет — проверяем graceful-состояния: страница рендерится, видно
-// уведомление «нет кредов», форма добавления заблокирована, админ-страница кредов
-// показывает статус «не заданы». Никаких внешних вызовов на маунте не происходит.
+// Смоук раздела «Аналитика алгоритмов» (QuantConnect). Живой путь к QuantConnect в e2e
+// недоступен — graceful-состояния + UI-флоу на мок-данных (управление портфелем, матрица v2).
+
+const ALGOS = [
+  { id: 1, projectId: '111', backtestId: 'abc', name: 'EMA Cross', benchmark: null, description: 'плечо 2x, контроль просадки', status: 'active', sortOrder: 0, createdAt: '' },
+  { id: 2, projectId: '222', backtestId: null, name: 'Mean Reversion', benchmark: null, description: null, status: 'research', sortOrder: 1, createdAt: '' },
+];
+
+const PORTFOLIO = {
+  years: [2022, 2023],
+  algos: [
+    {
+      id: 1, name: 'EMA Cross', projectId: '111', backtestId: 'abc', resolvedBacktestId: 'abc',
+      status: 'active', description: 'плечо 2x, контроль просадки', error: null,
+      years: {
+        2022: { year: 2022, ret: 0.30, maxDD: -0.10, cumulative: 0.30 },  // > БМ 0.10 → ▲
+        2023: { year: 2023, ret: 0.05, maxDD: -0.12, cumulative: 0.365 }, // < БМ 0.20 → ▼
+      },
+      totalReturn: 0.365, pointCount: 500,
+    },
+    {
+      id: 2, name: 'Mean Reversion', projectId: '222', backtestId: null, resolvedBacktestId: 'def',
+      status: 'research', description: null, error: null,
+      years: {
+        2022: { year: 2022, ret: 0.12, maxDD: -0.08, cumulative: 0.12 },
+        2023: { year: 2023, ret: 0.22, maxDD: -0.06, cumulative: 0.366 },
+      },
+      totalReturn: 0.366, pointCount: 500,
+    },
+  ],
+  benchmark: {
+    name: 'Бенчмарк',
+    years: { 2022: { year: 2022, ret: 0.10, maxDD: -0.20, cumulative: 0.10 }, 2023: { year: 2023, ret: 0.20, maxDD: -0.10, cumulative: 0.32 } },
+    totalReturn: 0.32,
+  },
+};
+
+async function mockConfigured(page: Page) {
+  await page.route('**/api/quantconnect/credentials**', r => r.fulfill({ json: { configured: true, userId: '123', tokenHint: '••••cafe' } }));
+  await page.route('**/api/quantconnect/algorithms**', async route => {
+    const m = route.request().method();
+    if (m === 'DELETE') return route.fulfill({ json: { algorithms: [ALGOS[1]] } });
+    if (m === 'PATCH' || m === 'POST') return route.fulfill({ json: { algorithm: ALGOS[0], algorithms: ALGOS } });
+    return route.fulfill({ json: { algorithms: ALGOS } }); // GET
+  });
+  await page.route('**/api/quantconnect/portfolio**', r => r.fulfill({ json: PORTFOLIO }));
+}
 
 test.describe('Аналитика алгоритмов /quant', () => {
-  test('страница рендерится: заголовок, методология, форма добавления', async ({ page }) => {
+  test('без кредов: уведомление и заблокированная кнопка добавления', async ({ page }) => {
     await page.goto('/quant');
     await expect(page.locator('.qc-title')).toHaveText('Аналитика алгоритмов');
-    await expect(page.getByText('Как читать матрицу')).toBeVisible();
-    await expect(page.locator('.qc-panel-h').filter({ hasText: 'Добавить алгоритм' })).toBeVisible();
-    // строки/колонки описаны в методологии
-    await expect(page.getByText(/Строки/)).toBeVisible();
-  });
-
-  test('без кредов: уведомление и заблокированная форма', async ({ page }) => {
-    await page.goto('/quant');
-    // уведомление с ссылкой в админку
     await expect(page.getByText(/Креды QuantConnect не заданы/)).toBeVisible({ timeout: 15000 });
-    await expect(page.getByRole('link', { name: /админке/ })).toHaveAttribute('href', '/admin/quantconnect');
-    // поле поиска проекта недоступно (disabled), пока нет кредов
-    await expect(page.getByPlaceholder('напр. EMA Cross')).toBeDisabled();
-  });
-
-  test('переключение режима «Вручную» показывает поля Project ID / Backtest', async ({ page }) => {
-    await page.goto('/quant');
-    await page.getByRole('button', { name: 'Вручную' }).click();
-    await expect(page.getByText('Project ID')).toBeVisible();
-    await expect(page.getByPlaceholder('123456')).toBeVisible();
+    await expect(page.locator('.qc-panel-h').filter({ hasText: 'Портфель стратегий' })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Добавить стратегию/ })).toBeDisabled();
   });
 
   test('навигация содержит ссылки на оба раздела', async ({ page }) => {
@@ -38,7 +64,6 @@ test.describe('Аналитика алгоритмов /quant', () => {
   });
 
   test('страница всегда светлая, даже при глобальной тёмной теме', async ({ page }) => {
-    // глобально включаем тёмную тему — /quant всё равно должен быть белым
     await page.addInitScript(() => { try { localStorage.setItem('theme', 'dark'); } catch {} });
     await page.goto('/quant');
     await expect(page.locator('.qc-title')).toBeVisible();
@@ -46,69 +71,75 @@ test.describe('Аналитика алгоритмов /quant', () => {
       htmlTheme: document.documentElement.dataset.theme,
       navBg: getComputedStyle(document.querySelector('.app-nav')!).backgroundColor,
     }));
-    expect(probe.htmlTheme).toBe('dark');                    // глобально — тёмная
-    expect(probe.navBg).toBe('rgba(255, 255, 255, 0.82)');   // но навбар на /quant светлый
+    expect(probe.htmlTheme).toBe('dark');
+    expect(probe.navBg).toBe('rgba(255, 255, 255, 0.82)');
   });
 
-  // Матрица на синтетических данных (живой путь к QuantConnect в e2e недоступен):
-  // мокаем API-ответы и проверяем, что матрица строится — годы-строки, группы-колонки,
-  // бенчмарк, форматирование процентов и строка «Итог».
-  test('матрица строится из данных портфеля (мок API)', async ({ page }) => {
-    const algorithms = [
-      { id: 1, projectId: '111', backtestId: 'abc', name: 'Alpha EMA', benchmark: null, sortOrder: 0, createdAt: '' },
-      { id: 2, projectId: '222', backtestId: null, name: 'Beta Mean', benchmark: null, sortOrder: 1, createdAt: '' },
-    ];
-    const portfolio = {
-      years: [2022, 2023],
-      algos: [
-        {
-          id: 1, name: 'Alpha EMA', projectId: '111', backtestId: 'abc', resolvedBacktestId: 'abc', error: null,
-          years: {
-            2022: { year: 2022, ret: 0.15, maxDD: -0.08, cumulative: 0.15 },
-            2023: { year: 2023, ret: 0.05, maxDD: -0.12, cumulative: 0.2075 },
-          },
-          totalReturn: 0.2075, pointCount: 500,
-        },
-        {
-          id: 2, name: 'Beta Mean', projectId: '222', backtestId: null, resolvedBacktestId: 'def', error: null,
-          years: {
-            2022: { year: 2022, ret: 0.20, maxDD: -0.10, cumulative: 0.20 },
-            2023: { year: 2023, ret: 0.10, maxDD: -0.06, cumulative: 0.32 },
-          },
-          totalReturn: 0.32, pointCount: 500,
-        },
-      ],
-      benchmark: {
-        name: 'Бенчмарк',
-        years: {
-          2022: { year: 2022, ret: 0.18, maxDD: -0.25, cumulative: 0.18 },
-          2023: { year: 2023, ret: 0.24, maxDD: -0.10, cumulative: 0.4632 },
-        },
-        totalReturn: 0.4632,
-      },
-    };
-    await page.route('**/api/quantconnect/credentials', r => r.fulfill({ json: { configured: true, userId: '123', tokenHint: '••••cafe' } }));
-    await page.route('**/api/quantconnect/algorithms', r => r.fulfill({ json: { algorithms } }));
-    await page.route('**/api/quantconnect/portfolio**', r => r.fulfill({ json: portfolio }));
+  test('вкладки use-кейсов: «Сравнение» активна, будущие — disabled', async ({ page }) => {
+    await page.goto('/quant');
+    await expect(page.getByRole('button', { name: 'Сравнение по годам' })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Объединённый портфель/ })).toBeDisabled();
+    await expect(page.getByRole('button', { name: /Риск \/ корреляция/ })).toBeDisabled();
+  });
 
+  test('кнопка добавления открывает модалку с режимами поиск/вручную', async ({ page }) => {
+    await mockConfigured(page);
+    await page.goto('/quant');
+    await page.getByRole('button', { name: /Добавить стратегию/ }).click();
+    await expect(page.locator('.qc-modal-h').filter({ hasText: 'Добавить стратегию' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Вручную' })).toBeVisible();
+    await page.getByRole('button', { name: 'Вручную' }).click();
+    await expect(page.getByText('Project ID')).toBeVisible();
+    await expect(page.getByPlaceholder('123456')).toBeVisible();
+    // статус и описание в форме
+    await expect(page.getByText('Описание (опц.)')).toBeVisible();
+  });
+
+  test('менеджер портфеля: бейджи статусов, описание, матрица v2', async ({ page }) => {
+    await mockConfigured(page);
     await page.goto('/quant');
 
+    // строки стратегий со статус-бейджами и описанием
+    const strat = page.locator('.qc-strat', { hasText: 'EMA Cross' });
+    await expect(strat).toBeVisible();
+    await expect(strat.locator('.qc-badge.active')).toHaveText('Активно');
+    await expect(strat.locator('.qc-strat-desc')).toContainText('плечо 2x');
+    await expect(page.locator('.qc-strat', { hasText: 'Mean Reversion' }).locator('.qc-badge.research')).toHaveText('Исследование');
+
+    // матрица: маркеры ▲/▼ vs бенчмарк
     const matrix = page.locator('.qc-matrix');
     await expect(matrix).toBeVisible();
-    // группы-колонки и бенчмарк в шапке
-    await expect(matrix.getByText('Alpha EMA')).toBeVisible();
-    await expect(matrix.getByText('Beta Mean')).toBeVisible();
-    await expect(matrix.locator('th.bench')).toHaveText('Бенчмарк');
-    // строки-годы + итог
-    await expect(matrix.getByText('2022', { exact: true })).toBeVisible();
-    await expect(matrix.getByText('2023', { exact: true })).toBeVisible();
+    await expect(matrix.locator('.qc-bm.up').first()).toBeVisible(); // обыграл БМ
+    await expect(matrix.locator('.qc-bm.dn').first()).toBeVisible(); // проиграл БМ
+
+    // стат-блок
+    await expect(matrix.getByText('Ср. / год')).toBeVisible();
+    await expect(matrix.getByText('σ (разброс)')).toBeVisible();
+    await expect(matrix.getByText('Лучший / худший')).toBeVisible();
+    await expect(matrix.getByText('Лет лучше БМ')).toBeVisible();
     await expect(matrix.getByText('Итог', { exact: true })).toBeVisible();
-    // форматирование процентов: значения присутствуют (могут повторяться в разных ячейках)
-    await expect(matrix.getByText('+15.0%').first()).toBeVisible(); // Alpha 2022 доходн.
-    await expect(matrix.getByText('+32.0%').first()).toBeVisible(); // Beta накопит./итог
-    await expect(matrix.getByText('−8.0%').first()).toBeVisible();  // Alpha 2022 просадка (U+2212)
-    // чипы портфеля
-    await expect(page.locator('.qc-chip', { hasText: 'Alpha EMA' })).toBeVisible();
+  });
+
+  test('удаление стратегии требует подтверждения', async ({ page }) => {
+    await mockConfigured(page);
+    await page.goto('/quant');
+    const strat = page.locator('.qc-strat', { hasText: 'EMA Cross' });
+    await strat.getByTitle('Удалить').click();
+    await expect(page.getByText(/Действие/)).toBeVisible();
+    await expect(page.getByText(/необратимо/)).toBeVisible();
+    await page.locator('.qc-modal-foot').getByRole('button', { name: 'Удалить' }).click();
+    await expect(page.getByText(/необратимо/)).toHaveCount(0); // модалка закрылась
+  });
+
+  test('редактирование стратегии: статус и описание', async ({ page }) => {
+    await mockConfigured(page);
+    await page.goto('/quant');
+    const strat = page.locator('.qc-strat', { hasText: 'EMA Cross' });
+    await strat.getByTitle('Редактировать').click();
+    await expect(page.locator('.qc-modal-h').filter({ hasText: 'Редактировать стратегию' })).toBeVisible();
+    await page.locator('.qc-modal select.qc-select').selectOption('archive');
+    await page.locator('.qc-modal-foot').getByRole('button', { name: 'Сохранить' }).click();
+    await expect(page.locator('.qc-modal-h').filter({ hasText: 'Редактировать стратегию' })).toHaveCount(0);
   });
 });
 
@@ -118,6 +149,6 @@ test.describe('Админка кредов QuantConnect /admin/quantconnect', ()
     await expect(page.getByRole('heading', { name: 'QuantConnect — доступ' })).toBeVisible();
     await expect(page.getByText(/Статус:/)).toBeVisible({ timeout: 15000 });
     await expect(page.getByText('не заданы')).toBeVisible();
-    await expect(page.getByPlaceholder('напр. 123456')).toBeVisible(); // User ID
+    await expect(page.getByPlaceholder('напр. 123456')).toBeVisible();
   });
 });
