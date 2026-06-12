@@ -1,9 +1,18 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import AddAlgorithm from './_components/AddAlgorithm';
+import PortfolioManager from './_components/PortfolioManager';
 import PortfolioMatrix from './_components/PortfolioMatrix';
 import type { QcAlgorithm, QcCredStatus, PortfolioResponse } from '@/lib/quantconnect/types';
+
+// Реестр use-кейсов (вкладок). Готова пока одна — остальные по дорожной карте.
+const TABS: { key: string; label: string; ready: boolean }[] = [
+  { key: 'compare', label: 'Сравнение по годам', ready: true },
+  { key: 'combined', label: 'Объединённый портфель', ready: false },
+  { key: 'summary', label: 'Сводка по стратегии', ready: false },
+  { key: 'risk', label: 'Риск / корреляция', ready: false },
+  { key: 'drawdown', label: 'Анализ просадок', ready: false },
+];
 
 export default function QuantPage() {
   const [creds, setCreds] = useState<QcCredStatus | null>(null);
@@ -11,6 +20,8 @@ export default function QuantPage() {
   const [portfolio, setPortfolio] = useState<PortfolioResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [includeArchived, setIncludeArchived] = useState(false);
+  const [tab, setTab] = useState('compare');
 
   const loadCreds = useCallback(async () => {
     try {
@@ -26,10 +37,13 @@ export default function QuantPage() {
     } catch { /* ignore */ }
   }, []);
 
-  const loadPortfolio = useCallback(async (force = false) => {
+  const loadPortfolio = useCallback(async (opts: { force?: boolean; archived?: boolean } = {}) => {
     setLoading(true); setError(null);
     try {
-      const r: PortfolioResponse = await fetch(`/api/quantconnect/portfolio${force ? '?force=1' : ''}`).then(res => res.json());
+      const qs = new URLSearchParams();
+      if (opts.force) qs.set('force', '1');
+      if (opts.archived) qs.set('archived', '1');
+      const r: PortfolioResponse = await fetch(`/api/quantconnect/portfolio?${qs}`).then(res => res.json());
       if (r.error) setError(r.error);
       setPortfolio(r);
     } catch (e: any) { setError(e.message); }
@@ -38,14 +52,15 @@ export default function QuantPage() {
 
   useEffect(() => { loadCreds(); loadAlgos(); loadPortfolio(); }, [loadCreds, loadAlgos, loadPortfolio]);
 
-  const onAdded = useCallback(async () => { await loadAlgos(); await loadPortfolio(); }, [loadAlgos, loadPortfolio]);
+  const onChanged = useCallback(async () => {
+    await loadAlgos();
+    await loadPortfolio({ archived: includeArchived });
+  }, [loadAlgos, loadPortfolio, includeArchived]);
 
-  async function removeAlgo(id: number) {
-    try {
-      await fetch(`/api/quantconnect/algorithms?id=${id}`, { method: 'DELETE' });
-      await loadAlgos();
-      await loadPortfolio();
-    } catch { /* ignore */ }
+  function toggleArchived() {
+    const next = !includeArchived;
+    setIncludeArchived(next);
+    loadPortfolio({ archived: next });
   }
 
   const configured = creds?.configured;
@@ -54,58 +69,68 @@ export default function QuantPage() {
     <main>
       <div className="qc-top">
         <div className="qc-title">Аналитика алгоритмов</div>
-        <div className="qc-sub">Годовые метрики QuantConnect-алгоритмов из бектестов: доходность, макс. просадка, накопительная — против бенчмарка.</div>
-      </div>
-
-      <div className="qc-method">
-        <h4>Как читать матрицу</h4>
-        <ul>
-          <li><b>Строки</b> — годы. <b>Колонки</b> — по каждому алгоритму три метрики, затем бенчмарк.</li>
-          <li><b>Просадка</b> — макс. внутригодовая просадка капитала; <b>Доходность</b> — изменение капитала за год; <b>Накопит.</b> — накопительная доходность с начала бектеста.</li>
-          <li>Данные берутся из кривой капитала бектеста («Strategy Equity»); бенчмарк — из серии «Benchmark» первого алгоритма.</li>
-        </ul>
+        <div className="qc-sub">Портфель стратегий QuantConnect и анализ их бектестов по годам — против бенчмарка.</div>
       </div>
 
       {creds && !configured && (
         <div className="qc-note">
           Креды QuantConnect не заданы. Введите их в{' '}
-          <a href="/admin/quantconnect">админке → QuantConnect</a>, затем добавьте алгоритмы.
+          <a href="/admin/quantconnect">админке → QuantConnect</a>, затем добавьте стратегии.
         </div>
       )}
 
-      <AddAlgorithm disabled={!configured} onAdded={onAdded} />
+      <PortfolioManager algos={algos} disabled={!configured} onChanged={onChanged} />
 
-      {algos.length > 0 && (
-        <div className="qc-panel">
-          <div className="qc-panel-h">
-            Портфель алгоритмов <span className="c">{algos.length}</span>
-            <span className="qc-spacer" />
-            <button className="qc-btn" onClick={() => loadPortfolio()} disabled={loading}>
-              {loading ? 'Загрузка…' : '↻ Обновить'}
-            </button>
-            <button className="qc-btn" onClick={() => loadPortfolio(true)} disabled={loading} title="Пересчитать, минуя кэш">
-              Пересчитать
-            </button>
+      {/* Вкладки use-кейсов */}
+      <div className="qc-tabs">
+        {TABS.map(t => (
+          <button key={t.key}
+            className={'qc-tab' + (tab === t.key ? ' on' : '') + (t.ready ? '' : ' soon')}
+            onClick={() => t.ready && setTab(t.key)}
+            disabled={!t.ready}
+            title={t.ready ? undefined : 'Скоро'}>
+            {t.label}{t.ready ? '' : ' · скоро'}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'compare' ? (
+        <>
+          <div className="qc-method">
+            <h4>Как читать матрицу</h4>
+            <ul>
+              <li><b>Строки</b> — годы; по каждой стратегии: <b>просадка</b> (макс. внутригодовая), <b>доходность</b> за год, <b>накопит.</b> с начала; затем бенчмарк.</li>
+              <li><b>▲/▼</b> у доходности — стратегия за год обыграла / проиграла бенчмарк.</li>
+              <li>Внизу: <b>средние</b> за год, <b>разброс σ</b> (насколько год от года различается), <b>лучший/худший</b> год, <b>лет лучше БМ</b> и итог.</li>
+            </ul>
           </div>
-          <div className="qc-chiplist">
-            {algos.map(a => (
-              <span key={a.id} className="qc-chip">
-                {a.name}
-                <span className="pid">#{a.projectId}{a.backtestId ? ` · bt ${a.backtestId.slice(0, 6)}` : ''}</span>
-                <button title="Убрать из портфеля" onClick={() => removeAlgo(a.id)}>×</button>
-              </span>
-            ))}
-          </div>
-        </div>
+
+          {algos.length > 0 && (
+            <div className="qc-controls-bar">
+              <span className="qc-spacer" />
+              <label className="qc-toggle" title="Включать стратегии в статусе «архив» в анализ">
+                <input type="checkbox" checked={includeArchived} onChange={toggleArchived} /> архив в анализе
+              </label>
+              <button className="qc-btn" onClick={() => loadPortfolio({ archived: includeArchived })} disabled={loading}>
+                {loading ? 'Загрузка…' : '↻ Обновить'}
+              </button>
+              <button className="qc-btn" onClick={() => loadPortfolio({ force: true, archived: includeArchived })} disabled={loading} title="Пересчитать, минуя кэш">
+                Пересчитать
+              </button>
+            </div>
+          )}
+
+          {error && <div className="qc-note qc-err">Ошибка: {error}</div>}
+
+          {loading && !portfolio ? (
+            <div className="qc-panel"><div className="qc-state">Загрузка метрик бектестов…</div></div>
+          ) : portfolio && algos.length > 0 ? (
+            <PortfolioMatrix data={portfolio} />
+          ) : null}
+        </>
+      ) : (
+        <div className="qc-panel"><div className="qc-state">Раздел в разработке — скоро.</div></div>
       )}
-
-      {error && <div className="qc-note qc-err">Ошибка: {error}</div>}
-
-      {loading && !portfolio ? (
-        <div className="qc-panel"><div className="qc-state">Загрузка метрик бектестов…</div></div>
-      ) : portfolio && algos.length > 0 ? (
-        <PortfolioMatrix data={portfolio} />
-      ) : null}
     </main>
   );
 }

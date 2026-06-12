@@ -28,13 +28,24 @@ export type QcBacktestSummary = {
   completed?: boolean;
 };
 
-// Алгоритм в портфеле (строка qc_algorithms).
+// Статус стратегии в портфеле.
+export type QcAlgoStatus = 'active' | 'research' | 'archive';
+export const QC_STATUSES: QcAlgoStatus[] = ['active', 'research', 'archive'];
+export const QC_STATUS_LABEL: Record<QcAlgoStatus, string> = {
+  active: 'Активно',
+  research: 'Исследование',
+  archive: 'Архив',
+};
+
+// Алгоритм (стратегия) в портфеле (строка qc_algorithms).
 export type QcAlgorithm = {
   id: number;
   projectId: string;
   backtestId: string | null; // null → берём последний завершённый бектест проекта
   name: string;
   benchmark: string | null;
+  description: string | null;
+  status: QcAlgoStatus;
   sortOrder: number;
   createdAt: string;
 };
@@ -57,6 +68,8 @@ export type AlgoColumn = {
   projectId: string;
   backtestId: string | null;
   resolvedBacktestId: string | null;
+  status: QcAlgoStatus;
+  description: string | null;
   error: string | null;
   years: Record<number, YearMetric>;
   totalReturn: number | null;
