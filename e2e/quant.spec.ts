@@ -66,6 +66,7 @@ async function mockConfigured(page: Page) {
   });
   await page.route('**/api/quantconnect/portfolio**', r => r.fulfill({ json: PORTFOLIO }));
   await page.route('**/api/quantconnect/series**', r => r.fulfill({ json: SERIES }));
+  await page.route('**/api/quantconnect/describe**', r => r.fulfill({ json: { description: '## Стратегия\n\nГенерированное **описание**.' } }));
 }
 
 test.describe('Аналитика алгоритмов /quant', () => {
@@ -180,13 +181,24 @@ test.describe('Аналитика алгоритмов /quant', () => {
     await expect(page.getByText(/необратимо/)).toHaveCount(0); // модалка закрылась
   });
 
-  test('редактирование стратегии: статус и описание', async ({ page }) => {
+  test('редактирование: статус, markdown-редактор, генерация из кода', async ({ page }) => {
     await mockConfigured(page);
     await page.goto('/quant');
     const strat = page.locator('.qc-strat', { hasText: 'EMA Cross' });
     await strat.getByTitle('Редактировать').click();
-    await expect(page.locator('.qc-modal-h').filter({ hasText: 'Редактировать стратегию' })).toBeVisible();
-    await page.locator('.qc-modal select.qc-select').selectOption('archive');
+    const modal = page.locator('.qc-modal');
+    await expect(modal.locator('.qc-modal-h').filter({ hasText: 'Редактировать стратегию' })).toBeVisible();
+    // панель стилей редактора
+    await expect(modal.locator('.qc-mde-bar')).toBeVisible();
+    await expect(modal.getByTitle('Жирный')).toBeVisible();
+    // генерация описания из кода QC
+    await modal.getByRole('button', { name: /Сгенерировать из кода/ }).click();
+    await expect(modal.locator('textarea.qc-mde-ta')).toHaveValue(/Генерированное/);
+    // превью рендерит markdown
+    await modal.getByRole('button', { name: 'Превью', exact: true }).click();
+    await expect(modal.locator('.qc-mde-preview .qc-md')).toContainText('Стратегия');
+    // статус + сохранить
+    await modal.locator('select.qc-select').selectOption('archive');
     await page.locator('.qc-modal-foot').getByRole('button', { name: 'Сохранить' }).click();
     await expect(page.locator('.qc-modal-h').filter({ hasText: 'Редактировать стратегию' })).toHaveCount(0);
   });

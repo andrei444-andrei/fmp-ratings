@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import MarkdownEditor from './MarkdownEditor';
 import { QC_STATUSES, QC_STATUS_LABEL, type QcAlgoStatus, type QcProject, type QcBacktestSummary } from '@/lib/quantconnect/types';
 
 // Кнопка «＋ Добавить стратегию» → модалка: поиск по проектам QuantConnect ИЛИ ввод вручную,
@@ -22,7 +23,22 @@ export default function AddAlgorithm({ disabled, onAdded }: { disabled?: boolean
   const [searching, setSearching] = useState(false);
 
   const [busy, setBusy] = useState(false);
+  const [gen, setGen] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  async function generate() {
+    if (!/^\d+$/.test(projectId.trim())) { setErr('Сначала укажите Project ID'); return; }
+    setGen(true); setErr(null);
+    try {
+      const res = await fetch('/api/quantconnect/describe', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ projectId: projectId.trim() }),
+      }).then(r => r.json());
+      if (res.error) { setErr(res.error); return; }
+      setDescription(res.description || '');
+    } catch (e: any) { setErr(e.message); }
+    finally { setGen(false); }
+  }
 
   function reset() {
     setMode('search');
@@ -164,8 +180,8 @@ export default function AddAlgorithm({ disabled, onAdded }: { disabled?: boolean
                 </div>
                 <div className="qc-field" style={{ gridColumn: '1 / -1' }}>
                   <label>Описание (опц.)</label>
-                  <textarea className="qc-input" rows={2} value={description} placeholder="что делает стратегия, плечо, инструменты…"
-                    onChange={e => setDescription(e.target.value)} />
+                  <MarkdownEditor value={description} onChange={setDescription} onGenerate={generate} generating={gen}
+                    rows={4} placeholder="что делает стратегия, плечо, инструменты… (Markdown)" />
                 </div>
               </div>
 
