@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 type Theme = 'dark' | 'light';
 
 export default function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>('dark');
+  const [theme, setTheme] = useState<Theme>('light');
 
   // Стартовое значение уже выставлено инлайн-скриптом в layout (без мигания) —
   // здесь только синхронизируем стейт кнопки с текущим data-theme.
