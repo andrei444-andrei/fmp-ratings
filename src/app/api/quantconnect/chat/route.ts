@@ -25,12 +25,15 @@ export async function POST(req: NextRequest) {
       role: 'system',
       content:
         'Ты — ассистент на странице «Аналитика алгоритмов»: помогаешь понять, что происходит со стратегиями ' +
-        'QuantConnect по данным их бектестов. Отвечай по-русски, кратко и по делу, в Markdown. Используй ТОЛЬКО ' +
-        'приведённые данные портфеля — не выдумывай числа и факты. Если данных не хватает — честно скажи. ' +
-        'Бенчмарк — SPY.\n\n=== ДАННЫЕ ПОРТФЕЛЯ ===\n' + ctx,
+        'QuantConnect по данным их бектестов. По каждой стратегии в контексте есть: описание, торгуемые ' +
+        'инструменты (из кода), статистика бектеста (Sharpe, Sortino, трейды, win-rate и др.), реальная дневная ' +
+        'макс. просадка с датами пика/дна, лучший/худший месяц, годовая доходность и просадка против SPY. ' +
+        'Отвечай по-русски, в Markdown, развёрнуто и по делу. Используй ТОЛЬКО приведённые данные — не выдумывай ' +
+        'числа и факты; если чего-то нет (например, конкретных сделок по дате) — честно скажи. Бенчмарк — SPY.' +
+        '\n\n=== ДАННЫЕ ПОРТФЕЛЯ ===\n' + ctx,
     };
 
-    const reply = await aimlChat({ messages: [system, ...incoming], max_tokens: 700, temperature: 0.3 });
+    const reply = await aimlChat({ messages: [system, ...incoming], max_tokens: 900, temperature: 0.3 });
     return NextResponse.json({ reply });
   } catch (e: any) {
     await logAppError({ route: '/api/quantconnect/chat', message: e.message, stack: e.stack });
