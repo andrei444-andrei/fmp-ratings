@@ -156,6 +156,26 @@ test.describe('Research /research', () => {
     await expect(page.locator('.research-output .rtblwrap')).toContainText('[AI:default:web]', { timeout: 90000 });
   });
 
+  test('emit: поэтапный вывод блоков по ходу скрипта', async ({ page }) => {
+    await stubExecute(
+      page,
+      'import pandas as pd\n' +
+        "emit(kpi('Этап 1', 'готов'))\n" +
+        "emit(pd.DataFrame({'A': [1, 2], 'B': [-3.5, 4.0]}))\n" +
+        "emit(callout('Готово', tone='good', title='Статус'))\n" +
+        'result = None',
+    );
+    await page.goto('/research');
+    await page.locator('textarea').first().fill('тест emit');
+    await page.getByRole('button', { name: 'Исполнить' }).click();
+    await expect(page.locator('.research-output .rkit-kpi')).toContainText('Этап 1', { timeout: 90000 });
+    await expect(page.locator('.research-output .rtblwrap table')).toBeVisible({ timeout: 30000 });
+    await expect(page.locator('.research-output .rkit-callout')).toContainText('Готово', { timeout: 30000 });
+    // result=None → финальный рендер ничего не дублирует: ровно один kpi и один callout.
+    await expect(page.locator('.research-output .rkit-kpi')).toHaveCount(1);
+    await expect(page.locator('.research-output .rkit-callout')).toHaveCount(1);
+  });
+
   test('ask_ai_many: параллельный батч возвращает ответы по порядку', async ({ page }) => {
     await stubExecute(
       page,
@@ -242,8 +262,9 @@ test.describe('Research /research', () => {
     await page.goto('/research');
     await page.locator('textarea').first().fill('многоэтапный анализ AAPL и MSFT');
     await page.getByRole('button', { name: 'Исполнить' }).click();
-    await expect(page.getByText('Этап 1 — доходность')).toBeVisible({ timeout: 90000 });
-    await expect(page.getByText('Этап 2 — объём данных')).toBeVisible({ timeout: 30000 });
+    // Подписи именно у таблиц результата (.rcap), а не в подсвеченном блоке кода.
+    await expect(page.locator('.research-output .rcap', { hasText: 'Этап 1 — доходность' })).toBeVisible({ timeout: 90000 });
+    await expect(page.locator('.research-output .rcap', { hasText: 'Этап 2 — объём данных' })).toBeVisible({ timeout: 30000 });
     await expect(page.locator('.research-output .rtblwrap table')).toHaveCount(2, { timeout: 30000 });
   });
 });
