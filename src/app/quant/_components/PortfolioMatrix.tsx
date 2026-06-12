@@ -63,6 +63,22 @@ function aggStats(yearsMap: Record<number, YearMetric>, years: number[], bench?:
   };
 }
 
+// Перерасчёт накопительной с выбранного стартового года (бектесты разной длины →
+// сравниваем на общем окне). ret/maxDD за год не меняются, накопит. пересобирается.
+function rebase(ym: Record<number, YearMetric>, visibleYears: number[]): { years: Record<number, YearMetric>; total: number | null } {
+  const out: Record<number, YearMetric> = {};
+  let acc = 1, started = false, total: number | null = null;
+  for (const y of visibleYears) {
+    const m = ym[y];
+    if (!m) continue;
+    if (m.ret != null && isFinite(m.ret)) { acc *= 1 + m.ret; started = true; }
+    const cum = started ? acc - 1 : (m.ret ?? null);
+    out[y] = { year: y, ret: m.ret, maxDD: m.maxDD, cumulative: cum };
+    total = cum;
+  }
+  return { years: out, total };
+}
+
 // Тройка ячеек одной группы за год: просадка, доходность, накопительная.
 // Ячейка доходности заливается зелёным/красным = обыграла/проиграла бенчмарк за год.
 function TripleCells({ m, bench }: { m?: YearMetric; bench?: YearMetric }) {
@@ -92,14 +108,14 @@ function StatTriple({ dd, ret, cum }: { dd?: ReactNode; ret?: ReactNode; cum?: R
   );
 }
 
-export default function PortfolioMatrix({ data }: { data: PortfolioResponse }) {
-  const { years, algos, benchmark } = data;
-  const failing = algos.filter(a => a.error);
+export default function PortfolioMatrix({ data, startYear }: { data: PortfolioResponse; startYear?: number }) {
+  const { years: allYears, algos: rawAlgos, benchmark: rawBench } = data;
+  const failing = rawAlgos.filter(a => a.error);
 
-  if (!algos.length) {
+  if (!rawAlgos.length) {
     return <div className="qc-panel"><div className="qc-state">В анализе нет стратегий — добавьте стратегию или включите архив.</div></div>;
   }
-  if (!years.length) {
+  if (!allYears.length) {
     return (
       <div className="qc-panel">
         <div className="qc-state">
@@ -112,6 +128,16 @@ export default function PortfolioMatrix({ data }: { data: PortfolioResponse }) {
         )}
       </div>
     );
+  }
+
+  // окно анализа с выбранного года + перерасчёт накопительной
+  const sy = startYear ?? allYears[0];
+  const years = allYears.filter(y => y >= sy);
+  const algos = rawAlgos.map(a => { const r = rebase(a.years, years); return { ...a, years: r.years, totalReturn: r.total }; });
+  const benchmark = rawBench ? (() => { const r = rebase(rawBench.years, years); return { ...rawBench, years: r.years, totalReturn: r.total }; })() : null;
+
+  if (!years.length) {
+    return <div className="qc-panel"><div className="qc-state">Нет данных за выбранный период.</div></div>;
   }
 
   const benchYears = benchmark?.years;
