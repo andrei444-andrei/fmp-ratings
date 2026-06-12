@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import PortfolioManager from './_components/PortfolioManager';
 import PortfolioMatrix from './_components/PortfolioMatrix';
 import CombinedPortfolio from './_components/CombinedPortfolio';
+import QuantChat from './_components/QuantChat';
 import type { QcAlgorithm, QcCredStatus, PortfolioResponse } from '@/lib/quantconnect/types';
 
 // Реестр use-кейсов (вкладок). Остальные — по дорожной карте.
@@ -146,6 +147,8 @@ export default function QuantPage() {
       ) : (
         <div className="qc-panel"><div className="qc-state">Раздел в разработке — скоро.</div></div>
       )}
+
+      <QuantChat />
     </main>
   );
 }

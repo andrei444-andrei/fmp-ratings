@@ -67,6 +67,7 @@ async function mockConfigured(page: Page) {
   await page.route('**/api/quantconnect/portfolio**', r => r.fulfill({ json: PORTFOLIO }));
   await page.route('**/api/quantconnect/series**', r => r.fulfill({ json: SERIES }));
   await page.route('**/api/quantconnect/describe**', r => r.fulfill({ json: { description: '## Стратегия\n\nГенерированное **описание**.' } }));
+  await page.route('**/api/quantconnect/chat**', r => r.fulfill({ json: { reply: 'Лучшая — **leverage with control DD**: выше CAGR и больше лет лучше SPY.' } }));
 }
 
 test.describe('Аналитика алгоритмов /quant', () => {
@@ -179,6 +180,18 @@ test.describe('Аналитика алгоритмов /quant', () => {
     await expect(page.getByText(/необратимо/)).toBeVisible();
     await page.locator('.qc-modal-foot').getByRole('button', { name: 'Удалить' }).click();
     await expect(page.getByText(/необратимо/)).toHaveCount(0); // модалка закрылась
+  });
+
+  test('AI-чат: всплывает и отвечает по данным портфеля (мок)', async ({ page }) => {
+    await mockConfigured(page);
+    await page.goto('/quant');
+    await expect(page.locator('.qc-chat-fab')).toBeVisible();
+    await page.locator('.qc-chat-fab').click();
+    await expect(page.locator('.qc-chat')).toBeVisible();
+    await page.locator('.qc-chat-input textarea').fill('какая стратегия лучшая?');
+    await page.locator('.qc-chat-input').getByRole('button').click();
+    await expect(page.locator('.qc-msg.user')).toContainText('какая стратегия лучшая');
+    await expect(page.locator('.qc-msg.assistant .qc-md')).toContainText('leverage with control DD');
   });
 
   test('редактирование: статус, markdown-редактор, генерация из кода', async ({ page }) => {
