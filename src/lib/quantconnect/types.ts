@@ -90,3 +90,22 @@ export type PortfolioResponse = {
   benchmark: BenchmarkColumn | null;
   error?: string;
 };
+
+// Точка месячного ряда капитала: ym = «YYYY-MM», t — unix-сек (конец месяца), v — капитал.
+export type MonthPoint = { ym: string; t: number; v: number };
+
+// Месячный ряд капитала одной стратегии — для объединённого портфеля (Phase 2).
+export type AlgoSeries = {
+  id: number;
+  name: string;
+  status: QcAlgoStatus;
+  error: string | null;
+  monthly: MonthPoint[];
+};
+
+// Ответ /api/quantconnect/series — месячные ряды стратегий + бенчмарк.
+export type SeriesResponse = {
+  algos: AlgoSeries[];
+  benchmark: { name: string; monthly: MonthPoint[] } | null;
+  error?: string;
+};

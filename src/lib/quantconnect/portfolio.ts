@@ -5,9 +5,9 @@
 
 import { listAlgorithms } from './algorithms';
 import { qcListBacktests, qcReadSeries } from './client';
-import { computeYearly } from './metrics';
+import { computeYearly, monthlyEquity } from './metrics';
 import { qcCacheGet, qcCacheSet } from './cache';
-import type { AlgoColumn, BenchmarkColumn, PortfolioResponse, YearMetric } from './types';
+import type { AlgoColumn, BenchmarkColumn, MonthPoint, PortfolioResponse, SeriesResponse, YearMetric } from './types';
 
 function createdMs(v: string | number | undefined): number {
   if (v == null) return 0;
@@ -29,26 +29,35 @@ async function resolveBacktestId(projectId: string, stored: string | null): Prom
   return pool[0]?.backtestId || null;
 }
 
-type BacktestMetrics = { strategy: YearMetric[]; benchmark: YearMetric[] | null; points: number };
+type BacktestMetrics = {
+  strategy: YearMetric[];
+  benchmark: YearMetric[] | null;
+  points: number;
+  monthlyStrategy: MonthPoint[];
+  monthlyBenchmark: MonthPoint[] | null;
+};
 
 async function metricsForBacktest(projectId: string, backtestId: string, force: boolean): Promise<BacktestMetrics> {
-  const key = `bt|${projectId}|${backtestId}`;
+  // v2: в кэш добавлены месячные ряды — старые записи (без них) не подходят.
+  const key = `bt|v2|${projectId}|${backtestId}`;
   if (!force) {
     const cached = await qcCacheGet<BacktestMetrics>(key);
-    if (cached) return cached;
+    if (cached && cached.monthlyStrategy) return cached;
   }
   const equity = await qcReadSeries(projectId, backtestId, 'Strategy Equity', 'Equity');
   const strategy = computeYearly(equity);
+  const monthlyStrategy = monthlyEquity(equity);
 
   let benchmark: YearMetric[] | null = null;
+  let monthlyBenchmark: MonthPoint[] | null = null;
   try {
     const bench = await qcReadSeries(projectId, backtestId, 'Benchmark', 'Benchmark');
-    if (bench.length) benchmark = computeYearly(bench);
+    if (bench.length) { benchmark = computeYearly(bench); monthlyBenchmark = monthlyEquity(bench); }
   } catch {
     benchmark = null;
   }
 
-  const payload: BacktestMetrics = { strategy, benchmark, points: equity.length };
+  const payload: BacktestMetrics = { strategy, benchmark, points: equity.length, monthlyStrategy, monthlyBenchmark };
   if (strategy.length) await qcCacheSet(key, payload);
   return payload;
 }
@@ -114,4 +123,37 @@ export async function buildPortfolio(force = false, includeArchived = false): Pr
   const years = [...yset].sort((a, b) => a - b);
 
   return { years, algos: cols, benchmark };
+}
+
+// Месячные ряды капитала стратегий (+ бенчмарк) — для объединённого портфеля.
+// Переиспользует тот же кэш бектестов, что и матрица.
+export async function buildSeries(force = false, includeArchived = false): Promise<SeriesResponse> {
+  const all = await listAlgorithms();
+  const algos = includeArchived ? all : all.filter(a => a.status !== 'archive');
+
+  const results = await Promise.all(
+    algos.map(async a => {
+      try {
+        const backtestId = await resolveBacktestId(a.projectId, a.backtestId);
+        if (!backtestId) return { a, error: 'в проекте нет бектестов', m: null as BacktestMetrics | null };
+        const m = await metricsForBacktest(a.projectId, backtestId, force);
+        return { a, error: null as string | null, m };
+      } catch (e: any) {
+        return { a, error: e?.message || String(e), m: null as BacktestMetrics | null };
+      }
+    }),
+  );
+
+  let benchmark: { name: string; monthly: MonthPoint[] } | null = null;
+  const outAlgos = results.map(r => {
+    if (!benchmark && r.m?.monthlyBenchmark && r.m.monthlyBenchmark.length) {
+      benchmark = { name: 'Бенчмарк', monthly: r.m.monthlyBenchmark };
+    }
+    return {
+      id: r.a.id, name: r.a.name, status: r.a.status, error: r.error,
+      monthly: r.m?.monthlyStrategy ?? [],
+    };
+  });
+
+  return { algos: outAlgos, benchmark };
 }

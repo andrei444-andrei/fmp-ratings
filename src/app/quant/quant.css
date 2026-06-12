@@ -226,6 +226,34 @@ body:has(.qc-root) {
 .qc-modal-body { padding: 16px; overflow-y: auto; }
 .qc-modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: .5px solid var(--qc-line); }
 
+/* объединённый портфель: веса */
+.qc-weights { display: flex; flex-direction: column; gap: 2px; }
+.qc-wrow { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: var(--qc-rad); }
+.qc-wrow:hover { background: var(--qc-surf2); }
+.qc-wrow.off { opacity: .55; }
+.qc-wrow .qc-toggle { flex: 1; min-width: 0; }
+.qc-wname { font-size: 13px; color: var(--qc-tx); font-weight: 500; }
+.qc-winput {
+  width: 66px; background: var(--app-bg2); border: .5px solid var(--qc-line2); color: var(--qc-tx);
+  font: inherit; font-size: 12.5px; padding: 5px 7px; border-radius: var(--qc-rad); text-align: right;
+}
+.qc-winput:disabled { opacity: .5; }
+.qc-wnorm { width: 46px; text-align: right; font-family: var(--qc-mono); font-size: 12px; color: var(--qc-acc); font-weight: 600; }
+
+/* стат-карточки */
+.qc-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 16px; }
+.qc-card { background: var(--qc-surf); border: .5px solid var(--qc-line); border-radius: var(--qc-rad-lg); padding: 12px 14px; }
+.qc-card-k { font-size: 10px; text-transform: uppercase; letter-spacing: .4px; color: var(--qc-tx3); }
+.qc-card-v { font-size: 20px; font-weight: 700; font-family: var(--qc-mono); margin-top: 4px; color: var(--qc-tx); }
+.qc-card-sub { font-size: 11px; color: var(--qc-tx3); margin-top: 2px; font-family: var(--qc-mono); }
+
+/* график капитала */
+.qc-chart { width: 100%; height: auto; display: block; }
+.qc-chart-lbl { font-size: 11px; fill: var(--qc-tx3); font-family: var(--qc-mono); }
+.qc-chart-xt { font-size: 10px; fill: var(--qc-tx3); }
+.qc-legend { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--qc-tx2); font-weight: 400; margin-left: 12px; }
+.qc-legend .ln { display: inline-block; width: 16px; height: 3px; border-radius: 2px; }
+
 @media (max-width: 720px) {
   .qc-form { grid-template-columns: 1fr 1fr; }
 }

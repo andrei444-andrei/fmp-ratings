@@ -37,6 +37,25 @@ const PORTFOLIO = {
   },
 };
 
+// синтетический месячный ряд капитала
+function monthly(start: number, growth: number, n: number, startYear = 2022) {
+  const pts: { ym: string; t: number; v: number }[] = [];
+  let v = start;
+  for (let i = 0; i < n; i++) {
+    const y = startYear + Math.floor(i / 12), m = (i % 12) + 1;
+    pts.push({ ym: `${y}-${String(m).padStart(2, '0')}`, t: Math.floor(Date.UTC(y, m - 1, 28) / 1000), v: Math.round(v) });
+    v *= 1 + growth;
+  }
+  return pts;
+}
+const SERIES = {
+  algos: [
+    { id: 1, name: 'EMA Cross', status: 'active', error: null, monthly: monthly(100000, 0.025, 36) },
+    { id: 2, name: 'Mean Reversion RSI', status: 'research', error: null, monthly: monthly(100000, 0.012, 36) },
+  ],
+  benchmark: { name: 'Бенчмарк', monthly: monthly(100000, 0.015, 36) },
+};
+
 async function mockConfigured(page: Page) {
   await page.route('**/api/quantconnect/credentials**', r => r.fulfill({ json: { configured: true, userId: '123', tokenHint: '••••cafe' } }));
   await page.route('**/api/quantconnect/algorithms**', async route => {
@@ -46,6 +65,7 @@ async function mockConfigured(page: Page) {
     return route.fulfill({ json: { algorithms: ALGOS } }); // GET
   });
   await page.route('**/api/quantconnect/portfolio**', r => r.fulfill({ json: PORTFOLIO }));
+  await page.route('**/api/quantconnect/series**', r => r.fulfill({ json: SERIES }));
 }
 
 test.describe('Аналитика алгоритмов /quant', () => {
@@ -75,11 +95,28 @@ test.describe('Аналитика алгоритмов /quant', () => {
     expect(probe.navBg).toBe('rgba(255, 255, 255, 0.82)');
   });
 
-  test('вкладки use-кейсов: «Сравнение» активна, будущие — disabled', async ({ page }) => {
+  test('вкладки use-кейсов: «Сравнение» и «Объединённый» активны, остальные — disabled', async ({ page }) => {
     await page.goto('/quant');
     await expect(page.getByRole('button', { name: 'Сравнение по годам' })).toBeVisible();
-    await expect(page.getByRole('button', { name: /Объединённый портфель/ })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Объединённый портфель' })).toBeEnabled();
     await expect(page.getByRole('button', { name: /Риск \/ корреляция/ })).toBeDisabled();
+  });
+
+  test('объединённый портфель: веса, карточки, график, годовая таблица', async ({ page }) => {
+    await mockConfigured(page);
+    await page.goto('/quant');
+    await page.getByRole('button', { name: 'Объединённый портфель' }).click();
+
+    await expect(page.locator('.qc-panel-h').filter({ hasText: 'Состав портфеля' })).toBeVisible();
+    // стат-карточки
+    await expect(page.locator('.qc-card-k', { hasText: 'CAGR' }).first()).toBeVisible();
+    await expect(page.locator('.qc-card-k', { hasText: 'Макс. просадка' })).toBeVisible();
+    // график капитала
+    await expect(page.locator('svg.qc-chart')).toBeVisible();
+    // годовая таблица комбинированной кривой
+    await expect(page.locator('.qc-matrix').getByText('Портфель', { exact: true })).toBeVisible();
+    // равные веса
+    await page.getByRole('button', { name: 'Равные веса' }).click();
   });
 
   test('кнопка добавления открывает модалку с режимами поиск/вручную', async ({ page }) => {
