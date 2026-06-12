@@ -58,6 +58,16 @@ export async function fmpHistoricalPriceEod(symbol: string, from?: string, to?: 
   return fmpGet(`${BASE_STABLE}/historical-price-eod/light?${params.toString()}`);
 }
 
+// Дивидендно-скорректированная цена (total return: сплиты + дивиденды) — для бенчмарка.
+// Поле adjClose учитывает реинвест дивидендов.
+export async function fmpHistoricalPriceEodDividendAdjusted(symbol: string, from?: string, to?: string) {
+  const key = getFmpKey();
+  const params = new URLSearchParams({ symbol, apikey: key });
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  return fmpGet(`${BASE_STABLE}/historical-price-eod/dividend-adjusted?${params.toString()}`);
+}
+
 // Историческая EPS Surprise: actual vs estimated по квартальным отчётам.
 // FMP /stable/earnings возвращает массив отчётов с epsActual/epsEstimated и revenue.
 export async function fmpEarnings(symbol: string) {
