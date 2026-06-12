@@ -184,6 +184,24 @@ test.describe('Research /research', () => {
     await expect(page.locator('.research-output .rtblwrap td', { hasText: '3.1' })).not.toHaveClass(/rneg/);
   });
 
+  test('длинный текст в ячейке рендерится как markdown (rich cell)', async ({ page }) => {
+    await stubExecute(
+      page,
+      'import pandas as pd\n' +
+        "txt = '**Глобальный кризис 2008**: после краха Lehman Brothers внешнее финансирование " +
+        "резко сократилось, паника на рынках и отток капитала; восстановление весной 2009 — длинный текст для проверки переноса.'\n" +
+        "result = pd.DataFrame({'Страна': ['Бразилия'], 'Мин. моментум, %': [-41.16], 'Новости (RU)': [txt]})",
+    );
+    await page.goto('/research');
+    await page.locator('textarea').first().fill('тест rich-ячейки');
+    await page.getByRole('button', { name: 'Исполнить' }).click();
+    const rich = page.locator('.research-output .rtblwrap td.rtd-rich');
+    await expect(rich).toBeVisible({ timeout: 90000 });
+    await expect(rich.locator('strong')).toContainText('Глобальный кризис 2008'); // markdown отрендерен
+    await expect(rich).not.toContainText('**'); // не сырой markdown
+    await expect(page.locator('.research-output .rtblwrap td.rneg')).toContainText('-41.16');
+  });
+
   test('UX-кит: kpi/bars/callout рендерятся вместе с таблицей', async ({ page }) => {
     await stubExecute(
       page,

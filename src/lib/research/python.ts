@@ -1,4 +1,5 @@
 import { loadPyodide } from 'pyodide';
+import { marked } from 'marked';
 
 type Pyodide = Awaited<ReturnType<typeof loadPyodide>>;
 
@@ -96,6 +97,22 @@ function sanitizeKit(html: string): string {
     .replace(/<\/?(?:script|style|iframe|object|embed|link|meta|base|form)\b[^>]*>/gi, '')
     .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
     .replace(/(?:href|src)\s*=\s*("?\s*)javascript:[^\s">]*/gi, '$1#');
+}
+
+// Улучшаем ячейки простых таблиц (to_html, без Styler — у того есть атрибуты в <td …>):
+// — длинный текст (новости/описания) рендерим как markdown в «богатой» ячейке с переносом
+//   и ограничением высоты (иначе сырой **markdown** и колонка в 1 слово на строку);
+// — короткие отрицательные числа подсвечиваем красным.
+function enhanceTable(html: string): string {
+  return html.replace(/<td>([\s\S]*?)<\/td>/g, (full, inner) => {
+    const text = String(inner).trim();
+    if (text.length > 48) {
+      const rich = sanitizeKit(marked.parse(inner, { async: false, breaks: true }) as string);
+      return `<td class="rtd-rich"><div class="rcell">${rich}</div></td>`;
+    }
+    if (/^-\d[\d.,]*$/.test(text)) return `<td class="rneg">${inner}</td>`;
+    return full;
+  });
 }
 
 // Прогоны сериализуются: один общий интерпретатор → без гонок за глобалами и stdout-хендлерами.
@@ -237,8 +254,8 @@ async function execOnce(
       const tables = JSON.parse(String(tablesJson || '[]')) as { title: string; kind: string; html: string }[];
       for (const t of tables) {
         if (t.kind === 'table') {
-          // Отрицательные числа в простых ячейках (без Styler) подсвечиваем красным.
-          const html = t.html.replace(/<td>(\s*-\d[\d.,]*\s*)<\/td>/g, '<td class="rneg">$1</td>');
+          // Markdown для длинных ячеек + красный цвет отрицательных чисел.
+          const html = enhanceTable(t.html);
           const cap = t.title ? `<div class="rcap">${t.title}</div>` : '';
           onEvent({ type: 'block', html: `<div class="rblk">${cap}<div class="rtblwrap">${html}</div></div>` });
         } else {

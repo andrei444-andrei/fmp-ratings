@@ -130,13 +130,52 @@
   padding: 9px 14px;
   border-bottom: 1px solid var(--fk-line);
   text-align: right;
+  vertical-align: top;
   font-variant-numeric: tabular-nums;
 }
-/* Длинный текст в ячейках переносим, чтобы он не растягивал таблицу. */
+/* Перенос только по словам (без разрыва посреди слова). */
 .research-output .rtblwrap td {
-  max-width: 420px;
   white-space: normal;
-  overflow-wrap: anywhere;
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+/* «Богатая» ячейка под длинный текст (новости/описания): нормальная ширина колонки,
+   markdown-разметка, ограничение высоты со скроллом — строки не разъезжаются. */
+.research-output .rtblwrap td.rtd-rich {
+  text-align: left;
+  min-width: 300px;
+  max-width: 480px;
+}
+.research-output .rtblwrap td.rtd-rich .rcell {
+  max-height: 220px;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fk-text-2);
+  text-align: left;
+  font-variant-numeric: normal;
+}
+.research-output .rtblwrap td.rtd-rich .rcell > * + * {
+  margin-top: 6px;
+}
+.research-output .rtblwrap td.rtd-rich .rcell p {
+  margin: 0;
+}
+.research-output .rtblwrap td.rtd-rich .rcell strong {
+  font-weight: 700;
+  color: var(--fk-text);
+}
+.research-output .rtblwrap td.rtd-rich .rcell ul,
+.research-output .rtblwrap td.rtd-rich .rcell ol {
+  margin: 0;
+  padding-left: 18px;
+}
+.research-output .rtblwrap td.rtd-rich .rcell li {
+  margin: 2px 0;
+}
+.research-output .rtblwrap td.rtd-rich .rcell a {
+  color: var(--fk-brand);
+  text-decoration: underline;
 }
 /* Липкая шапка — при прокрутке длинных таблиц подписи колонок видны. */
 .research-output .rtblwrap thead th {
