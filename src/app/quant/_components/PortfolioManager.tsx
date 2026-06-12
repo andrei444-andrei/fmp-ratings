@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import AddAlgorithm from './AddAlgorithm';
 import Markdown from './Markdown';
 import MarkdownEditor from './MarkdownEditor';
-import { QC_STATUSES, QC_STATUS_LABEL, type QcAlgoStatus, type QcAlgorithm } from '@/lib/quantconnect/types';
+import { QC_STATUSES, QC_STATUS_LABEL, type QcAlgoStatus, type QcAlgorithm, type QcProject, type QcBacktestSummary } from '@/lib/quantconnect/types';
 
 // Управление портфелем стратегий: добавление (кнопка), статус-бейджи, описание,
 // редактирование, удаление с подтверждением.
@@ -59,6 +59,14 @@ function EditModal({ algo, onClose, onSaved }: { algo: QcAlgorithm; onClose: () 
   const [name, setName] = useState(algo.name);
   const [status, setStatus] = useState<QcAlgoStatus>(algo.status);
   const [description, setDescription] = useState(algo.description || '');
+  // источник: проект + бектест
+  const [projectId, setProjectId] = useState(algo.projectId);
+  const [backtestId, setBacktestId] = useState(algo.backtestId || '');
+  const [backtests, setBacktests] = useState<QcBacktestSummary[]>([]);
+  const [btLoading, setBtLoading] = useState(false);
+  const [query, setQuery] = useState('');
+  const [projects, setProjects] = useState<QcProject[]>([]);
+  const [searching, setSearching] = useState(false);
   const [busy, setBusy] = useState(false);
   const [gen, setGen] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -69,12 +77,38 @@ function EditModal({ algo, onClose, onSaved }: { algo: QcAlgorithm; onClose: () 
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  async function loadBacktests(pid: string) {
+    if (!/^\d+$/.test(pid)) { setBacktests([]); return; }
+    setBtLoading(true);
+    try {
+      const res = await fetch(`/api/quantconnect/backtests?projectId=${pid}`).then(r => r.json());
+      setBacktests(res.error ? [] : (res.backtests || []));
+    } catch { setBacktests([]); }
+    finally { setBtLoading(false); }
+  }
+  useEffect(() => { loadBacktests(algo.projectId); /* eslint-disable-next-line */ }, []);
+
+  async function searchProjects() {
+    setSearching(true); setErr(null); setProjects([]);
+    try {
+      const res = await fetch(`/api/quantconnect/projects?q=${encodeURIComponent(query.trim())}`).then(r => r.json());
+      if (res.error) setErr(res.error); else setProjects(res.projects || []);
+    } catch (e: any) { setErr(e.message); }
+    finally { setSearching(false); }
+  }
+  async function pickProject(p: QcProject) {
+    setProjectId(String(p.projectId));
+    if (!name.trim() || name === algo.name) setName(p.name || name);
+    setProjects([]); setBacktestId('');
+    await loadBacktests(String(p.projectId));
+  }
+
   async function generate() {
     setGen(true); setErr(null);
     try {
       const res = await fetch('/api/quantconnect/describe', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ projectId: algo.projectId }),
+        body: JSON.stringify({ projectId }),
       }).then(r => r.json());
       if (res.error) { setErr(res.error); return; }
       setDescription(res.description || '');
@@ -87,7 +121,7 @@ function EditModal({ algo, onClose, onSaved }: { algo: QcAlgorithm; onClose: () 
     try {
       const res = await fetch('/api/quantconnect/algorithms', {
         method: 'PATCH', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ id: algo.id, name, status, description: description || null }),
+        body: JSON.stringify({ id: algo.id, name, status, description: description || null, projectId, backtestId: backtestId || null }),
       }).then(r => r.json());
       if (res.error) { setErr(res.error); return; }
       onSaved();
@@ -115,6 +149,49 @@ function EditModal({ algo, onClose, onSaved }: { algo: QcAlgorithm; onClose: () 
                 {QC_STATUSES.map(s => <option key={s} value={s}>{QC_STATUS_LABEL[s]}</option>)}
               </select>
             </div>
+
+            {/* источник: проект + бектест */}
+            <div className="qc-field" style={{ gridColumn: '1 / -1' }}>
+              <label>Источник — проект и бектест</label>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input className="qc-input" value={query} placeholder="найти другой проект по имени…"
+                  onChange={e => setQuery(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') searchProjects(); }} />
+                <button className="qc-btn" onClick={searchProjects} disabled={searching}>{searching ? '…' : '🔍'}</button>
+              </div>
+              {projects.length > 0 && (
+                <div className="qc-matches" style={{ maxHeight: 160 }}>
+                  {projects.map(p => (
+                    <button key={p.projectId} className="qc-match" onClick={() => pickProject(p)}>
+                      <span>{p.name || `Проект ${p.projectId}`}</span>
+                      <span className="meta">#{p.projectId}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="qc-field">
+              <label>Project ID</label>
+              <input className="qc-input" value={projectId}
+                onChange={e => { setProjectId(e.target.value); }}
+                onBlur={e => loadBacktests(e.target.value.trim())} />
+            </div>
+            <div className="qc-field" style={{ gridColumn: 'span 2' }}>
+              <label>Бектест {btLoading ? '· загрузка…' : ''}</label>
+              <select className="qc-select" value={backtestId} onChange={e => setBacktestId(e.target.value)}>
+                <option value="">последний завершённый</option>
+                {/* текущий бектест может отсутствовать в списке — покажем его явно */}
+                {backtestId && !backtests.some(b => b.backtestId === backtestId) && (
+                  <option value={backtestId}>{backtestId.slice(0, 10)} (текущий)</option>
+                )}
+                {backtests.map(b => (
+                  <option key={b.backtestId} value={b.backtestId}>
+                    {b.name || b.backtestId.slice(0, 8)}{b.completed ? '' : ` · ${b.status || 'не завершён'}`}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <div className="qc-field" style={{ gridColumn: '1 / -1' }}>
               <label>Описание</label>
               <MarkdownEditor value={description} onChange={setDescription} onGenerate={generate} generating={gen}

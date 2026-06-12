@@ -34,7 +34,10 @@ export async function PATCH(req: NextRequest) {
     const body = await req.json();
     const id = Number(body.id);
     if (!id) return NextResponse.json({ error: 'id обязателен' }, { status: 400 });
-    const res = await updateAlgorithm(id, { name: body.name, description: body.description, status: body.status });
+    const res = await updateAlgorithm(id, {
+      name: body.name, description: body.description, status: body.status,
+      projectId: body.projectId, backtestId: body.backtestId,
+    });
     if (res.error) return NextResponse.json({ error: res.error }, { status: 400 });
     return NextResponse.json({ algorithm: res.algorithm, algorithms: await listAlgorithms() });
   } catch (e: any) {
