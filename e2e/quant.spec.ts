@@ -75,6 +75,10 @@ async function mockConfigured(page: Page) {
   ] } }));
   await page.route('**/api/quantconnect/describe**', r => r.fulfill({ json: { description: '## Стратегия\n\nГенерированное **описание**.' } }));
   await page.route('**/api/quantconnect/chat**', r => r.fulfill({ json: { reply: 'Лучшая — **leverage with control DD**: выше CAGR и больше лет лучше SPY.' } }));
+  await page.route('**/api/quantconnect/settings**', async route => {
+    if (route.request().method() === 'PUT') return route.fulfill({ json: { ok: true } });
+    return route.fulfill({ json: { key: 'combined', value: null } });
+  });
 }
 
 test.describe('Аналитика алгоритмов /quant', () => {
@@ -162,6 +166,18 @@ test.describe('Аналитика алгоритмов /quant', () => {
     await expect(page.locator('.qc-matrix').getByText('Δ к SPY')).toBeVisible();
     // равные веса
     await page.getByRole('button', { name: 'Равные веса' }).click();
+  });
+
+  test('объединённый портфель: сохранённые веса подгружаются', async ({ page }) => {
+    await mockConfigured(page);
+    await page.route('**/api/quantconnect/settings**', async route => {
+      if (route.request().method() === 'PUT') return route.fulfill({ json: { ok: true } });
+      return route.fulfill({ json: { key: 'combined', value: { include: { '1': true, '2': false }, weights: { '1': 3, '2': 2 } } } });
+    });
+    await page.goto('/quant');
+    await page.getByRole('button', { name: 'Объединённый портфель' }).click();
+    const row = page.locator('.qc-wrow', { hasText: 'EMA Cross' });
+    await expect(row.locator('input.qc-winput')).toHaveValue('3'); // вес из сохранённого конфига
   });
 
   test('кнопка добавления открывает модалку с режимами поиск/вручную', async ({ page }) => {

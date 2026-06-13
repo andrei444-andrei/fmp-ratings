@@ -30,6 +30,8 @@ export default function CombinedPortfolio({ includeArchived }: { includeArchived
   const [error, setError] = useState<string | null>(null);
   const [include, setInclude] = useState<Record<number, boolean>>({});
   const [weights, setWeights] = useState<Record<number, number>>({});
+  const [cfg, setCfg] = useState<{ include?: Record<string, boolean>; weights?: Record<string, number> } | null>(null);
+  const [ready, setReady] = useState(false);
 
   async function load(force = false) {
     setLoading(true); setError(null);
@@ -45,20 +47,45 @@ export default function CombinedPortfolio({ includeArchived }: { includeArchived
   }
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [includeArchived]);
 
-  // дефолты include/weights для новых стратегий
+  // подгружаем сохранённый конфиг (веса/состав)
   useEffect(() => {
-    if (!series) return;
+    fetch('/api/quantconnect/settings?key=combined')
+      .then(r => r.json()).then(d => setCfg(d?.value || {})).catch(() => setCfg({}));
+  }, []);
+
+  // инициализация include/weights: для новых стратегий — из сохранённого конфига, иначе дефолт.
+  useEffect(() => {
+    if (!series || cfg == null) return;
     setInclude(prev => {
       const n = { ...prev };
-      for (const a of series.algos) if (n[a.id] === undefined) n[a.id] = !a.error && a.daily.length >= 2;
+      for (const a of series.algos) if (n[a.id] === undefined) {
+        const saved = cfg.include?.[String(a.id)];
+        n[a.id] = saved !== undefined ? !!saved : (!a.error && a.daily.length >= 2);
+      }
       return n;
     });
     setWeights(prev => {
       const n = { ...prev };
-      for (const a of series.algos) if (n[a.id] === undefined) n[a.id] = 1;
+      for (const a of series.algos) if (n[a.id] === undefined) {
+        const saved = cfg.weights?.[String(a.id)];
+        n[a.id] = saved !== undefined && isFinite(Number(saved)) ? Number(saved) : 1;
+      }
       return n;
     });
-  }, [series]);
+    setReady(true);
+  }, [series, cfg]);
+
+  // автосохранение конфига при изменении (без кнопки)
+  useEffect(() => {
+    if (!ready) return;
+    const t = setTimeout(() => {
+      fetch('/api/quantconnect/settings', {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ key: 'combined', value: { include, weights } }),
+      }).catch(() => {});
+    }, 700);
+    return () => clearTimeout(t);
+  }, [include, weights, ready]);
 
   const usable = (series?.algos || []).filter(a => !a.error && a.daily.length >= 2);
   const includedW = usable.filter(a => include[a.id]).reduce((s, a) => s + (weights[a.id] ?? 1), 0) || 1;
@@ -117,7 +144,7 @@ export default function CombinedPortfolio({ includeArchived }: { includeArchived
           {/* выбор стратегий и весов */}
           <div className="qc-panel">
             <div className="qc-panel-h">
-              Состав портфеля <span className="c">выбрано {selectedCount}</span>
+              Состав портфеля <span className="c">выбрано {selectedCount} · сохраняется автоматически</span>
               <span className="qc-spacer" />
               <button className="qc-btn" onClick={() => setWeights(prev => { const n = { ...prev }; for (const a of usable) n[a.id] = 1; return n; })}>Равные веса</button>
               <button className="qc-btn" onClick={() => load(true)} disabled={loading} title="Пересчитать, минуя кэш">Пересчитать</button>
