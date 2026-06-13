@@ -104,13 +104,20 @@ test.describe('Аналитика алгоритмов /quant', () => {
     expect(probe.navBg).toBe('rgba(255, 255, 255, 0.82)');
   });
 
-  test('вкладки use-кейсов: готовые активны, будущие — disabled', async ({ page }) => {
+  test('вкладки use-кейсов: все активны', async ({ page }) => {
     await page.goto('/quant');
-    await expect(page.getByRole('button', { name: 'Сравнение по годам' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Объединённый портфель' })).toBeEnabled();
-    await expect(page.getByRole('button', { name: 'Риск / корреляция' })).toBeEnabled();
-    await expect(page.getByRole('button', { name: 'Сводка по стратегии' })).toBeEnabled();
-    await expect(page.getByRole('button', { name: /Анализ просадок/ })).toBeDisabled();
+    for (const name of ['Сравнение по годам', 'Объединённый портфель', 'Риск / корреляция', 'Сводка по стратегии', 'Анализ просадок']) {
+      await expect(page.getByRole('button', { name })).toBeEnabled();
+    }
+  });
+
+  test('анализ просадок: underwater и таблица эпизодов', async ({ page }) => {
+    await mockConfigured(page);
+    await page.goto('/quant');
+    await page.getByRole('button', { name: 'Анализ просадок' }).click();
+    await expect(page.locator('svg.qc-chart')).toBeVisible();
+    await expect(page.locator('.qc-matrix').getByText('Глубина')).toBeVisible();
+    await expect(page.locator('.qc-matrix').getByText('Восстановление')).toBeVisible();
   });
 
   test('сводка по стратегии: метрики, кривая, помесячный heatmap', async ({ page }) => {
