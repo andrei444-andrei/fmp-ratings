@@ -9,18 +9,21 @@ import { test, expect } from '@playwright/test';
 
 type Page = import('@playwright/test').Page;
 
+// Предзагрузки нет — данные тянем коннектором get_prices внутри скрипта.
 // Один DataFrame: доходность за период по тикерам.
-const SINGLE_SCRIPT = `g = df.sort_values('date').groupby('symbol')['close']
+const SINGLE_SCRIPT = `dat = await get_prices(['AAPL', 'MSFT'])
+g = dat.sort_values('date').groupby('symbol')['close']
 ret = (g.last() / g.first() - 1) * 100
 result = ret.round(2).rename('Доходность, %').reset_index().rename(columns={'symbol': 'Тикер'})
 print('Доходность за период по тикерам:')
 print(result.to_string(index=False))`;
 
 // Многоэтапный результат: словарь именованных таблиц (рендерится отдельными блоками).
-const MULTI_SCRIPT = `g = df.sort_values('date').groupby('symbol')['close']
+const MULTI_SCRIPT = `dat = await get_prices(['AAPL', 'MSFT'])
+g = dat.sort_values('date').groupby('symbol')['close']
 ret = (g.last() / g.first() - 1) * 100
 t1 = ret.round(2).rename('Доходность, %').reset_index().rename(columns={'symbol': 'Тикер'})
-t2 = df.groupby('symbol').size().rename('Точек').reset_index().rename(columns={'symbol': 'Тикер'})
+t2 = dat.groupby('symbol').size().rename('Точек').reset_index().rename(columns={'symbol': 'Тикер'})
 print('Готово:', len(t1), 'тикеров')
 result = {'Этап 1 — доходность': t1, 'Этап 2 — объём данных': t2}`;
 
@@ -134,16 +137,6 @@ test.describe('Research /research', () => {
     await expect(page.locator('[data-testid="run-open"]').filter({ hasText: title })).toHaveCount(0);
   });
 
-  test('общий запрос «по странам» подставляет корзину страновых ETF', async ({ page }) => {
-    await stubExecute(page, SINGLE_SCRIPT);
-    await page.goto('/research');
-    await page.locator('textarea').first().fill('сравни среднюю доходность по странам за всё время');
-    await page.getByRole('button', { name: 'Исполнить' }).click();
-    const lead = page.locator('.research-output .rlead');
-    await expect(lead).toContainText('EWJ', { timeout: 30000 });
-    await expect(lead).toContainText('EWG'); // корзина, а не дефолтная пара SPY/QQQ
-  });
-
   test('ask_ai: top-level await возвращает текст в результат', async ({ page }) => {
     await stubExecute(
       page,
@@ -255,21 +248,6 @@ test.describe('Research /research', () => {
     await expect(page.locator('.research-output .rerrblk')).toHaveCount(0);
   });
 
-  test('px: широкая таблица цен (px["TICKER"]) доступна и считается', async ({ page }) => {
-    await stubExecute(
-      page,
-      "import pandas as pd\n" +
-        "syms = list(px.columns)\n" +
-        "ret = (px.iloc[-1] / px.iloc[0] - 1) * 100\n" +
-        "result = ret.round(2).rename('Доходность, %').reset_index().rename(columns={'index': 'Тикер', 'symbol': 'Тикер'})",
-    );
-    await page.goto('/research');
-    await page.locator('textarea').first().fill('доходность по px');
-    await page.getByRole('button', { name: 'Исполнить' }).click();
-    // px существует и используется → таблица отрисована, без карточки ошибки.
-    await expect(page.locator('.research-output table.rkit-table')).toBeVisible({ timeout: 90000 });
-    await expect(page.locator('.research-output .rerrblk')).toHaveCount(0);
-  });
 
   test('table() терпим к незнакомым/алиасным kwargs (hints=, caption=)', async ({ page }) => {
     await stubExecute(
