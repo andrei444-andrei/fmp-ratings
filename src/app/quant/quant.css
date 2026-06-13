@@ -247,6 +247,13 @@ body:has(.qc-root) {
 .qc-card-v { font-size: 20px; font-weight: 700; font-family: var(--qc-mono); margin-top: 4px; color: var(--qc-tx); }
 .qc-card-sub { font-size: 11px; color: var(--qc-tx3); margin-top: 2px; font-family: var(--qc-mono); }
 
+/* корреляционная матрица (хитмап) */
+.qc-corr { border-collapse: separate; border-spacing: 2px; font-size: 12px; font-family: var(--qc-mono); }
+.qc-corr th, .qc-corr td { padding: 7px 9px; text-align: center; white-space: nowrap; color: var(--qc-tx); border-radius: 5px; }
+.qc-corr thead th { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 10.5px; color: var(--qc-tx3); font-weight: 600; }
+.qc-corr td.lbl, .qc-corr th.lbl { text-align: left; font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 12px; color: var(--qc-tx); font-weight: 600; position: sticky; left: 0; background: var(--qc-surf); }
+.qc-corr td { min-width: 52px; }
+
 /* график капитала */
 .qc-chart { width: 100%; height: auto; display: block; }
 .qc-chart-lbl { font-size: 11px; fill: var(--qc-tx3); font-family: var(--qc-mono); }

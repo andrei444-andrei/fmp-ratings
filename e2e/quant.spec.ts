@@ -37,8 +37,8 @@ const PORTFOLIO = {
   },
 };
 
-// синтетический дневной ряд капитала (шаг 3 дня)
-function daily(start: number, growth: number, n: number, startYear = 2022) {
+// синтетический дневной ряд капитала (шаг 3 дня) с детерминированной волатильностью
+function daily(start: number, growth: number, n: number, amp = 0.012, phase = 0, startYear = 2022) {
   const pts: { d: string; v: number }[] = [];
   let v = start;
   const base = Date.UTC(startYear, 0, 3);
@@ -46,16 +46,17 @@ function daily(start: number, growth: number, n: number, startYear = 2022) {
     const dt = new Date(base + i * 3 * 86400000);
     const d = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
     pts.push({ d, v: Math.round(v) });
-    v *= 1 + growth;
+    v *= 1 + growth + amp * Math.sin(i * 0.5 + phase);
+    if (v < start * 0.3) v = start * 0.3;
   }
   return pts;
 }
 const SERIES = {
   algos: [
-    { id: 1, name: 'EMA Cross', status: 'active', error: null, daily: daily(100000, 0.004, 240) },
-    { id: 2, name: 'Mean Reversion RSI', status: 'research', error: null, daily: daily(100000, 0.002, 240) },
+    { id: 1, name: 'EMA Cross', status: 'active', error: null, daily: daily(100000, 0.004, 240, 0.02, 0) },
+    { id: 2, name: 'Mean Reversion RSI', status: 'research', error: null, daily: daily(100000, 0.002, 240, 0.015, 1.5) },
   ],
-  benchmark: { name: 'SPY', daily: daily(100000, 0.003, 240) },
+  benchmark: { name: 'SPY', daily: daily(100000, 0.003, 240, 0.03, 3.0) },
 };
 
 async function mockConfigured(page: Page) {
@@ -103,11 +104,25 @@ test.describe('Аналитика алгоритмов /quant', () => {
     expect(probe.navBg).toBe('rgba(255, 255, 255, 0.82)');
   });
 
-  test('вкладки use-кейсов: «Сравнение» и «Объединённый» активны, остальные — disabled', async ({ page }) => {
+  test('вкладки use-кейсов: готовые активны, будущие — disabled', async ({ page }) => {
     await page.goto('/quant');
     await expect(page.getByRole('button', { name: 'Сравнение по годам' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Объединённый портфель' })).toBeEnabled();
-    await expect(page.getByRole('button', { name: /Риск \/ корреляция/ })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Риск / корреляция' })).toBeEnabled();
+    await expect(page.getByRole('button', { name: /Сводка по стратегии/ })).toBeDisabled();
+  });
+
+  test('риск / корреляция: матрица, метрики, downside', async ({ page }) => {
+    await mockConfigured(page);
+    await page.goto('/quant');
+    await page.getByRole('button', { name: 'Риск / корреляция' }).click();
+    await expect(page.locator('.qc-corr').first()).toBeVisible();
+    await expect(page.locator('.qc-card-k', { hasText: 'ENB' })).toBeVisible();
+    await expect(page.locator('.qc-card-k', { hasText: 'Ср. корреляция' })).toBeVisible();
+    await expect(page.locator('.qc-card-k', { hasText: 'Diversification ratio' })).toBeVisible();
+    // переключение разрешения пересчитывает матрицу
+    await page.getByRole('button', { name: 'Неделя' }).click();
+    await expect(page.locator('.qc-corr').first()).toBeVisible();
   });
 
   test('объединённый портфель: веса, карточки, график, годовая таблица', async ({ page }) => {
