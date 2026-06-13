@@ -128,6 +128,7 @@ const SYS_PROMPT =
   'ВАЖНО: НЕ обращайся к df по тикеру как к колонке — `df["SPY"]` упадёт с KeyError (в df нет колонок-тикеров). ' +
   'Чтобы взять один тикер: `df[df["symbol"] == "SPY"]`. ' +
   'Для удобства УЖЕ готова ШИРОКАЯ таблица `px`: индекс — дата, колонки — тикеры, значения — close (`px["SPY"]` = ряд цен SPY; `px[["SPY","QQQ"]]`; доходности — `px.pct_change()`; корреляции — `px.pct_change().corr()`). Аналогично `vol` — широкая таблица объёмов. Используй `px` для доходностей/корреляций/любых расчётов «по тикерам в колонках». ' +
+  'ВАЖНО — ты сам решаешь, какие данные тебе нужны: если нужного тикера НЕТ в df/px (бенчмарк SPY, ещё страны, конкретные акции) — НЕ падай и НЕ пиши «нет X в данных», а ДОГРУЗИ его async-функцией `get_prices(symbols, start=None, end=None, wide=False)`: `extra = await get_prices(["SPY","QQQ"])` (длинный df) или `w = await get_prices(["SPY","EWJ"], wide=True)` (широкая таблица дата×тикер, как px). Данные тянутся с сервера (FMP/кэш), период можно сузить start/end (YYYY-MM-DD). Подбирай тикеры под задачу сам и тяни через get_prices. ' +
   'Дополнительно доступны DataFrame `fundamentals` [symbol, company, sector, industry, exchange, country, currency, market_cap, beta, price, last_dividend] (снимок на тикер — сектора/размер/бета для секторного и факторного анализа) и `dividends` [symbol, date, dividend] (история выплат — для полной доходности). Обращайся к ним при необходимости. ' +
   'Доступен matplotlib (backend Agg) — если нужен график, используй `plt`. ' +
   'Также доступны numpy (np), scipy, statsmodels, scikit-learn (sklearn) — импортируй их при необходимости (регрессии, стат-тесты, ARIMA, кластеризация, оптимизация, факторные модели). ' +
@@ -332,6 +333,23 @@ export async function POST(req: Request) {
         // Широкое окно истории (~25 лет), чтобы запросы «за N лет» имели данные;
         // скрипт сам срежет нужный период. FMP отдаёт столько, сколько есть.
         const from = new Date(Date.now() - 25 * 365 * 864e5).toISOString().slice(0, 10);
+        // Коннектор для скрипта: get_prices(...) тянет ЛЮБЫЕ тикеры (кэш/FMP, синтетика как fallback).
+        const fetchPrices = async (symbols: string[], start?: string, end?: string) => {
+          const syms = [...new Set((symbols || []).map((s) => String(s).toUpperCase().trim()).filter(Boolean))].slice(0, 100);
+          const f = start && /^\d{4}-\d{2}-\d{2}/.test(start) ? start.slice(0, 10) : from;
+          const t = end && /^\d{4}-\d{2}-\d{2}/.test(end) ? end.slice(0, 10) : to;
+          const out: { symbol: string; date: string; close: number; volume: number | null }[] = [];
+          for (let i = 0; i < syms.length; i += 6) {
+            await Promise.all(
+              syms.slice(i, i + 6).map(async (sym) => {
+                let s = await getPrices(sym, f, t);
+                if (s.length < 5) s = syntheticSeries(sym);
+                for (const r of s) out.push({ symbol: sym, date: r.date, close: r.close, volume: r.volume ?? null });
+              }),
+            );
+          }
+          return out;
+        };
         const prices: Record<string, PriceRow[]> = {};
         let anyDemo = false;
         // Тикеров может быть много (до 50) — тянем цены с ограниченной параллельностью.
@@ -388,7 +406,7 @@ export async function POST(req: Request) {
           } else {
             send(e);
           }
-        }, makeAskAi());
+        }, makeAskAi(), fetchPrices);
 
         // Пояснение к коду (допущения/нюансы): рендерим Markdown → HTML и отдаём блоком.
         try {
