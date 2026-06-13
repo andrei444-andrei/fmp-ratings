@@ -258,9 +258,26 @@ def _table_impl(df, formats=None, heat=None, title=None, sort=None, max_rows=300
     return _kit('<div class="rkit-tableblock">' + cap +
                 '<div class="rt-wrap"><table class="' + tcls + '"><thead><tr>' + th +
                 '</tr></thead><tbody>' + trs + '</tbody></table></div>' + note + '</div>')
-def table(df, formats=None, heat=None, title=None, sort=None, max_rows=300):
-    # Таблица НИКОГДА не валит рендер: при сбое отдаём понятную заметку вместо исключения.
+def table(df, formats=None, heat=None, title=None, sort=None, max_rows=300, **kwargs):
+    # Терпимы к вариативным именам аргументов от модели (hints/fmt/caption/…),
+    # неизвестные kwargs игнорируем. Таблица НИКОГДА не валит рендер.
     try:
+        if formats is None:
+            for __k in ('hints', 'fmt', 'format', 'col_formats', 'column_formats', 'types', 'schema', 'columns'):
+                if isinstance(kwargs.get(__k), dict):
+                    formats = kwargs[__k]; break
+        if heat is None:
+            for __k in ('heatmap', 'gradient', 'heat_cols', 'heat_columns'):
+                if __k in kwargs and kwargs[__k] is not None:
+                    heat = kwargs[__k]; break
+        if title is None:
+            for __k in ('caption', 'name', 'header', 'label'):
+                if isinstance(kwargs.get(__k), str):
+                    title = kwargs[__k]; break
+        if sort is None:
+            for __k in ('sort_by', 'order', 'order_by', 'sort_values'):
+                if __k in kwargs and kwargs[__k] is not None:
+                    sort = kwargs[__k]; break
         return _table_impl(df, formats=formats, heat=heat, title=title, sort=sort, max_rows=max_rows)
     except Exception as __e:
         return _kit('<div class="rkit-tableblock"><div class="rt-note">Не удалось отрисовать таблицу: '

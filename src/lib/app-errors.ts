@@ -1,8 +1,17 @@
+import { randomUUID } from 'crypto';
 import { libsqlClient } from '@/db/client';
 
 // Каноническая таблица логов (§2 конституции): один сток для всех ошибок,
 // фиксированные имена/колонки. Self-provisioning, created_at обязателен (§1).
+//
+// ВАЖНО: БД может быть общей с другим проектом, где app_errors создана с ИНОЙ схемой
+// (например id TEXT-UUID и без created_at). CREATE TABLE IF NOT EXISTS тогда no-op, а наш
+// жёсткий INSERT падал на несуществующей колонке → ошибки молча не писались. Поэтому при
+// записи подстраиваемся под ФАКТИЧЕСКИЕ колонки таблицы (интроспекция).
 let ensured = false;
+let tableColumns: Set<string> | null = null;
+let idNeedsValue = false; // true, если PK id не автоинкрементный INTEGER (нужно задавать самим)
+
 export async function ensureAppErrorsTable(): Promise<void> {
   if (ensured) return;
   await libsqlClient.execute(`CREATE TABLE IF NOT EXISTS app_errors (
@@ -18,6 +27,21 @@ export async function ensureAppErrorsTable(): Promise<void> {
     meta TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
+  try {
+    const info = await libsqlClient.execute('PRAGMA table_info(app_errors)');
+    const cols = new Set<string>();
+    let idType = '';
+    for (const r of info.rows as any[]) {
+      const name = String(r.name);
+      cols.add(name);
+      if (name === 'id') idType = String(r.type ?? '').toUpperCase();
+    }
+    tableColumns = cols;
+    // INTEGER PK автоинкрементный — id назначит сама БД; иначе (TEXT/UUID) задаём UUID.
+    idNeedsValue = cols.has('id') && idType !== 'INTEGER';
+  } catch {
+    tableColumns = null; // не удалось интроспектировать — пишем по канонической схеме
+  }
   ensured = true;
 }
 
@@ -40,25 +64,32 @@ export type AppErrorInput = {
 };
 
 // Пишет ошибку в app_errors. Сам себя не валит (§1): провал записи лога — тихий.
+// INSERT строится под фактические колонки таблицы (см. ensureAppErrorsTable), чтобы
+// запись не падала, если схема общей БД отличается (нет created_at, id — UUID и т.п.).
 export async function logAppError(e: AppErrorInput): Promise<void> {
   try {
     await ensureAppErrorsTable();
     const now = new Date().toISOString();
+    const candidate: Record<string, unknown> = {
+      id: idNeedsValue ? randomUUID() : undefined,
+      ts: now,
+      level: e.level ?? 'error',
+      source: e.source ?? 'server',
+      route: e.route ?? null,
+      message: (e.message ?? '').slice(0, 8000),
+      stack: e.stack ? e.stack.slice(0, 16000) : null,
+      build: buildId(),
+      user_agent: e.user_agent ?? null,
+      meta: e.meta != null ? JSON.stringify(e.meta).slice(0, 16000) : null,
+      created_at: now,
+    };
+    // Берём только колонки, которые реально есть в таблице (или все — если интроспекция не удалась).
+    const keys = Object.keys(candidate).filter(
+      (k) => candidate[k] !== undefined && (!tableColumns || tableColumns.has(k)),
+    );
     await libsqlClient.execute({
-      sql: `INSERT INTO app_errors (ts, level, source, route, message, stack, build, user_agent, meta, created_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?)`,
-      args: [
-        now,
-        e.level ?? 'error',
-        e.source ?? 'server',
-        e.route ?? null,
-        (e.message ?? '').slice(0, 8000),
-        e.stack ? e.stack.slice(0, 16000) : null,
-        buildId(),
-        e.user_agent ?? null,
-        e.meta != null ? JSON.stringify(e.meta).slice(0, 16000) : null,
-        now,
-      ],
+      sql: `INSERT INTO app_errors (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`,
+      args: keys.map((k) => candidate[k] as any),
     });
   } catch (err) {
     console.error('[app_errors] log write failed', err);
@@ -81,9 +112,10 @@ export type AppErrorRow = {
 export async function getRecentErrors(limit = 100): Promise<AppErrorRow[]> {
   await ensureAppErrorsTable();
   const n = Math.min(Math.max(1, Math.trunc(limit) || 100), 500);
+  // Сортируем по ts (id может быть UUID — тогда ORDER BY id не по времени).
   const r = await libsqlClient.execute({
     sql: `SELECT id, ts, level, source, route, message, stack, build, user_agent, meta
-          FROM app_errors ORDER BY id DESC LIMIT ?`,
+          FROM app_errors ORDER BY ts DESC LIMIT ?`,
     args: [n],
   });
   return r.rows.map((x: any) => ({
