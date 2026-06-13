@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import UnderwaterChart from './UnderwaterChart';
 import { computeDrawdowns, type DrawdownResult } from '@/lib/quantconnect/drawdowns';
 import type { SeriesResponse } from '@/lib/quantconnect/types';
 
@@ -79,7 +80,7 @@ export default function DrawdownAnalysis({ includeArchived }: { includeArchived:
             <>
               <div className="qc-panel">
                 <div className="qc-panel-h">Underwater (% ниже пика) <span className="c">макс. просадка {fmtPct(dd.maxDD)}</span></div>
-                <Underwater dates={dd.dates} uw={dd.underwater} />
+                <UnderwaterChart dates={dd.dates} lines={[{ label: 'Просадка', color: '#db3b44', uw: dd.underwater, fill: true }]} height={260} />
               </div>
 
               <div className="qc-tblwrap">
@@ -108,43 +109,5 @@ export default function DrawdownAnalysis({ includeArchived }: { includeArchived:
         </>
       )}
     </>
-  );
-}
-
-// Дневной underwater как заполненная область (0 сверху, просадки вниз).
-function Underwater({ dates, uw }: { dates: string[]; uw: number[] }) {
-  const W = 1000, H = 260, padL = 6, padR = 48, padT = 12, padB = 20;
-  const N = uw.length;
-  if (N < 2) return <div className="qc-state">Недостаточно данных.</div>;
-  // прореживаем для рендера
-  const stride = Math.max(1, Math.ceil(N / 800));
-  const idx: number[] = [];
-  for (let i = 0; i < N; i += stride) idx.push(i);
-  if (idx[idx.length - 1] !== N - 1) idx.push(N - 1);
-  const lo = Math.min(...uw, 0);
-  const xAt = (k: number) => padL + (W - padL - padR) * (idx.length <= 1 ? 0 : k / (idx.length - 1));
-  const yAt = (v: number) => { const t = lo < 0 ? v / lo : 0; return padT + (H - padT - padB) * t; }; // v=0→top, v=lo→bottom
-  const pts = idx.map((o, k) => `${xAt(k).toFixed(1)},${yAt(uw[o]).toFixed(1)}`);
-  const area = `M${xAt(0).toFixed(1)},${yAt(0).toFixed(1)} L${pts.join(' L')} L${xAt(idx.length - 1).toFixed(1)},${yAt(0).toFixed(1)} Z`;
-  const line = `M${pts.join(' L')}`;
-  // горизонтальные уровни
-  const levels: number[] = [];
-  for (let g = 0; g >= lo; g -= (Math.abs(lo) > 0.4 ? 0.2 : 0.1)) levels.push(g);
-  const xTicks: { pos: number; text: string }[] = [];
-  let lastY = '';
-  idx.forEach((o, k) => { const y = dates[Math.min(o, dates.length - 1)].slice(0, 4); if (y !== lastY) { xTicks.push({ pos: k, text: y }); lastY = y; } });
-
-  return (
-    <svg className="qc-chart" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img">
-      {levels.map((g, i) => (
-        <g key={i}>
-          <line x1={padL} x2={W - padR} y1={yAt(g)} y2={yAt(g)} stroke="var(--qc-line)" strokeDasharray="3 4" vectorEffect="non-scaling-stroke" />
-          <text x={W - padR + 4} y={yAt(g) + 3} className="qc-chart-lbl">{fmtPct(g, 0)}</text>
-        </g>
-      ))}
-      {xTicks.map((t, i) => <text key={i} x={xAt(t.pos)} y={H - 6} className="qc-chart-xt" textAnchor="middle">{t.text}</text>)}
-      <path d={area} fill="rgba(219,59,68,.14)" />
-      <path d={line} fill="none" stroke="var(--qc-neg)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
-    </svg>
   );
 }

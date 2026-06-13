@@ -2,8 +2,16 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import EquityChart, { type ChartLine } from './EquityChart';
+import UnderwaterChart from './UnderwaterChart';
 import { combinePortfolio } from '@/lib/quantconnect/combine';
 import { QC_STATUS_LABEL, type SeriesResponse, type YearMetric } from '@/lib/quantconnect/types';
+
+// «насколько ниже исторического пика» по дням
+function underwaterOf(eq: number[]): number[] {
+  const out: number[] = []; let peak = -Infinity;
+  for (const v of eq) { if (isFinite(v) && v > peak) peak = v; out.push(isFinite(v) && peak > 0 ? v / peak - 1 : NaN); }
+  return out;
+}
 
 function fmtPct(v: number | null | undefined, d = 1): string {
   if (v == null || !isFinite(v)) return '—';
@@ -171,6 +179,19 @@ export default function CombinedPortfolio({ includeArchived }: { includeArchived
                 </div>
               )}
 
+              {/* просадки портфеля vs бенчмарк */}
+              <div className="qc-panel">
+                <div className="qc-panel-h">Просадки (underwater) <span className="c">портфель vs {series?.benchmark?.name || 'SPY'}</span>
+                  <span className="qc-spacer" />
+                  <span className="qc-legend"><span className="ln" style={{ background: ACC }} />Портфель {fmtPct(combined.maxDD)}</span>
+                  {combined.bench && <span className="qc-legend"><span className="ln" style={{ background: MUT }} />{series?.benchmark?.name || 'SPY'} {fmtPct(combined.bench.maxDD)}</span>}
+                </div>
+                <UnderwaterChart dates={combined.dates} height={240} lines={[
+                  { label: 'Портфель', color: ACC, uw: underwaterOf(combined.equity), fill: true },
+                  ...(combined.benchEquity ? [{ label: 'SPY', color: MUT, uw: underwaterOf(combined.benchEquity), dash: true }] : []),
+                ]} />
+              </div>
+
               {/* годовая разбивка */}
               <YearTable yearly={combined.yearly} benchYearly={combined.benchYearly} />
             </>
@@ -208,6 +229,7 @@ function YearTable({ yearly, benchYearly }: { yearly: YearMetric[]; benchYearly:
             <th className="yr" rowSpan={2}>Год</th>
             <th className="grp" colSpan={3}>Портфель</th>
             {benchYearly && <th className="grp bench" colSpan={3}>Бенчмарк</th>}
+            {benchYearly && <th className="grp" rowSpan={2} title="Доходность портфеля минус доходность SPY за год">Δ к SPY</th>}
           </tr>
           <tr>
             <th className="grp">Просадка</th><th>Доходн.</th><th>Накопит.</th>
@@ -217,6 +239,7 @@ function YearTable({ yearly, benchYearly }: { yearly: YearMetric[]; benchYearly:
         <tbody>
           {years.map(y => {
             const m = cy.get(y), b = by.get(y);
+            const alpha = (m?.ret != null && b?.ret != null) ? m.ret - b.ret : null;
             return (
               <tr key={y}>
                 <td className="yr">{y}</td>
@@ -227,6 +250,7 @@ function YearTable({ yearly, benchYearly }: { yearly: YearMetric[]; benchYearly:
                   <td className={'grp ' + (b ? cls(b.maxDD) : 'qc-mut')}>{b ? fmtPct(b.maxDD) : '—'}</td>
                   <td className={b ? cls(b.ret) : 'qc-mut'}>{b ? fmtPct(b.ret) : '—'}</td>
                   <td className={b ? cls(b.cumulative) : 'qc-mut'}>{b ? fmtPct(b.cumulative) : '—'}</td>
+                  <td className={'grp ' + (alpha == null ? 'qc-mut' : alpha > 0 ? 'qc-beat' : alpha < 0 ? 'qc-lag' : 'qc-mut')}>{alpha != null ? fmtPct(alpha) : '—'}</td>
                 </>}
               </tr>
             );

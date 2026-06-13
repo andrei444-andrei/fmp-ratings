@@ -154,10 +154,12 @@ test.describe('Аналитика алгоритмов /quant', () => {
     // стат-карточки
     await expect(page.locator('.qc-card-k', { hasText: 'CAGR' }).first()).toBeVisible();
     await expect(page.locator('.qc-card-k', { hasText: 'Макс. просадка' })).toBeVisible();
-    // график капитала
-    await expect(page.locator('svg.qc-chart')).toBeVisible();
-    // годовая таблица комбинированной кривой
+    // график капитала + underwater портфеля vs бенчмарк
+    await expect(page.locator('svg.qc-chart').first()).toBeVisible();
+    await expect(page.locator('.qc-panel-h').filter({ hasText: 'Просадки (underwater)' })).toBeVisible();
+    // годовая таблица + колонка Δ к SPY
     await expect(page.locator('.qc-matrix').getByText('Портфель', { exact: true })).toBeVisible();
+    await expect(page.locator('.qc-matrix').getByText('Δ к SPY')).toBeVisible();
     // равные веса
     await page.getByRole('button', { name: 'Равные веса' }).click();
   });
