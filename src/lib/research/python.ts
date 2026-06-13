@@ -90,7 +90,7 @@ def kpi(label, value, delta=None, hint=None):
     hh = '<div class="rkit-kpi-hint">' + _esc(hint) + '</div>' if hint is not None else ''
     return _kit('<div class="rkit-kpi"><div class="rkit-kpi-label">' + _esc(label) +
                 '</div><div class="rkit-kpi-value">' + _esc(value) + '</div>' + d + hh + '</div>')
-def row(*items):
+def cards(*items):
     inner = ''
     for it in items:
         if isinstance(it, dict) and it.get('__kit__'):

@@ -297,12 +297,31 @@ test.describe('Research /research', () => {
     await expect(page.locator('.research-output table.rkit-table td.rt-neg')).toContainText('-41.16%');
   });
 
+  test('cards(): не ломается, даже если код занял имя row переменной', async ({ page }) => {
+    // Воспроизводит баг «TypeError: dict object is not callable»: модель в цикле пишет row = {...}.
+    await stubExecute(
+      page,
+      "import pandas as pd\n" +
+        "rows = []\n" +
+        "for i in range(2):\n" +
+        "    row = {'i': i}\n" +
+        "    rows.append(row)\n" +
+        "emit(cards(kpi('Строк', len(rows)), kpi('Готово', 'да')))\n" +
+        "result = pd.DataFrame(rows)",
+    );
+    await page.goto('/research');
+    await page.locator('textarea').first().fill('тест cards/row');
+    await page.getByRole('button', { name: 'Исполнить' }).click();
+    await expect(page.locator('.research-output .rkit-kpi').first()).toBeVisible({ timeout: 90000 });
+    await expect(page.locator('.research-output .rerrblk')).toHaveCount(0);
+  });
+
   test('UX-кит: kpi/bars/callout рендерятся вместе с таблицей', async ({ page }) => {
     await stubExecute(
       page,
       'import pandas as pd\n' +
         "df = pd.DataFrame({'Тикер': ['EWZ', 'EWJ'], 'Доходность, %': [12.3, -4.5]})\n" +
-        "result = [row(kpi('CAGR', '11.5%', '+2.1%'), kpi('Просадка', '-41%')), " +
+        "result = [cards(kpi('CAGR', '11.5%', '+2.1%'), kpi('Просадка', '-41%')), " +
         "bars({'EWZ': 12.3, 'EWJ': -4.5}, title='Рейтинг'), df, " +
         "callout('Демо-данные', tone='warn', title='Внимание')]",
     );
