@@ -5,6 +5,7 @@ import PortfolioManager from './_components/PortfolioManager';
 import PortfolioMatrix from './_components/PortfolioMatrix';
 import CombinedPortfolio from './_components/CombinedPortfolio';
 import RiskCorrelation from './_components/RiskCorrelation';
+import StrategySummary from './_components/StrategySummary';
 import QuantChat from './_components/QuantChat';
 import type { QcAlgorithm, QcCredStatus, PortfolioResponse } from '@/lib/quantconnect/types';
 
@@ -13,7 +14,7 @@ const TABS: { key: string; label: string; ready: boolean }[] = [
   { key: 'compare', label: 'Сравнение по годам', ready: true },
   { key: 'combined', label: 'Объединённый портфель', ready: true },
   { key: 'risk', label: 'Риск / корреляция', ready: true },
-  { key: 'summary', label: 'Сводка по стратегии', ready: false },
+  { key: 'summary', label: 'Сводка по стратегии', ready: true },
   { key: 'drawdown', label: 'Анализ просадок', ready: false },
 ];
 
@@ -147,6 +148,8 @@ export default function QuantPage() {
         <CombinedPortfolio includeArchived={includeArchived} />
       ) : tab === 'risk' ? (
         <RiskCorrelation includeArchived={includeArchived} />
+      ) : tab === 'summary' ? (
+        <StrategySummary includeArchived={includeArchived} />
       ) : (
         <div className="qc-panel"><div className="qc-state">Раздел в разработке — скоро.</div></div>
       )}
