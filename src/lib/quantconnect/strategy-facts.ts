@@ -1,10 +1,18 @@
 // «Глубокие» факты по стратегии для AI-чата: статистика бектеста (Sharpe/Sortino/
-// трейды/win-rate) и торгуемые инструменты из кода. Кэшируется по backtestId.
+// трейды/win-rate), торгуемые инструменты из кода и сделки (ордера) по годам/инструментам.
+// Кэшируется по backtestId.
 
-import { qcReadBacktest, qcReadProjectFiles, type QcFile } from './client';
+import { qcReadBacktest, qcReadProjectFiles, qcReadBacktestOrders, type QcFile } from './client';
 import { qcCacheGet, qcCacheSet } from './cache';
 
-export type StrategyFacts = { statistics: Record<string, string>; symbols: string[] };
+export type TradesYear = { total: number; symbols: Record<string, number> };
+export type StrategyFacts = {
+  statistics: Record<string, string>;
+  symbols: string[];
+  tradesByYear: Record<number, TradesYear>;
+  tradesTotal: number;
+  tradesCapped: boolean;
+};
 
 function extractSymbols(files: QcFile[]): string[] {
   const set = new Set<string>();
@@ -18,16 +26,30 @@ function extractSymbols(files: QcFile[]): string[] {
 }
 
 export async function getStrategyFacts(projectId: string, backtestId: string): Promise<StrategyFacts> {
-  const key = `facts|v1|${projectId}|${backtestId}`;
+  const key = `facts|v2|${projectId}|${backtestId}`;
   const cached = await qcCacheGet<StrategyFacts>(key);
-  if (cached) return cached;
+  if (cached && cached.tradesByYear) return cached;
 
   let statistics: Record<string, string> = {};
-  try { statistics = (await qcReadBacktest(projectId, backtestId)).statistics; } catch { /* нет доступа — пропускаем */ }
+  try { statistics = (await qcReadBacktest(projectId, backtestId)).statistics; } catch { /* нет доступа */ }
   let symbols: string[] = [];
-  try { symbols = extractSymbols(await qcReadProjectFiles(projectId)); } catch { /* нет файлов — пропускаем */ }
+  try { symbols = extractSymbols(await qcReadProjectFiles(projectId)); } catch { /* нет файлов */ }
 
-  const facts: StrategyFacts = { statistics, symbols };
-  if (Object.keys(statistics).length || symbols.length) await qcCacheSet(key, facts);
+  const tradesByYear: Record<number, TradesYear> = {};
+  let tradesTotal = 0, tradesCapped = false;
+  try {
+    const { orders, capped } = await qcReadBacktestOrders(projectId, backtestId);
+    tradesCapped = capped;
+    tradesTotal = orders.length;
+    for (const o of orders) {
+      const y = o.year ?? 0;
+      if (!tradesByYear[y]) tradesByYear[y] = { total: 0, symbols: {} };
+      tradesByYear[y].total++;
+      tradesByYear[y].symbols[o.symbol] = (tradesByYear[y].symbols[o.symbol] || 0) + 1;
+    }
+  } catch { /* нет ордеров */ }
+
+  const facts: StrategyFacts = { statistics, symbols, tradesByYear, tradesTotal, tradesCapped };
+  if (Object.keys(statistics).length || symbols.length || tradesTotal) await qcCacheSet(key, facts);
   return facts;
 }

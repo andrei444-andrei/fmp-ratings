@@ -177,3 +177,37 @@ export async function qcReadBacktest(
   };
   return { statistics: norm(bt.statistics ?? bt.Statistics), runtimeStatistics: norm(bt.runtimeStatistics ?? bt.RuntimeStatistics) };
 }
+
+export type QcOrder = { symbol: string; year: number | null };
+
+// Ордера (сделки) бектеста с пагинацией (≤100 за запрос). Капим число страниц,
+// чтобы не упереться в таймаут/лимиты — для агрегации этого достаточно.
+export async function qcReadBacktestOrders(
+  projectId: number | string,
+  backtestId: string,
+  maxPages = 25,
+): Promise<{ orders: QcOrder[]; capped: boolean }> {
+  const out: QcOrder[] = [];
+  for (let page = 0; page < maxPages; page++) {
+    const start = page * 100;
+    let data: any;
+    try {
+      data = await qcPost('/backtests/orders/read', { projectId: Number(projectId), backtestId: String(backtestId), start, end: start + 100 });
+    } catch {
+      return { orders: out, capped: false };
+    }
+    const arr = Array.isArray(data?.orders) ? data.orders : [];
+    for (const o of arr) {
+      const sym = o?.symbol?.value ?? o?.symbol?.Value ?? (typeof o?.symbol === 'string' ? o.symbol : '') ?? '';
+      const t = o?.time ?? o?.createdTime ?? o?.lastFillTime;
+      let year: number | null = null;
+      if (t != null) {
+        const ms = typeof t === 'number' ? (t > 1e12 ? t : t * 1000) : Date.parse(String(t));
+        if (isFinite(ms)) year = new Date(ms).getUTCFullYear();
+      }
+      out.push({ symbol: String(sym || '?').toUpperCase(), year });
+    }
+    if (arr.length < 100) return { orders: out, capped: false };
+  }
+  return { orders: out, capped: true };
+}
