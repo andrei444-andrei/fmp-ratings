@@ -248,6 +248,21 @@ test.describe('Research /research', () => {
     await expect(page.locator('.research-output .rerrblk')).toHaveCount(0);
   });
 
+  test('get_prices(wide=True) всегда содержит SPY-бенчмарк (px["SPY"] не падает)', async ({ page }) => {
+    // Модель часто сравнивает с SPY, не запросив его. Бенчмарк добавляется автоматически.
+    await stubExecute(
+      page,
+      "import pandas as pd\n" +
+        "wide = await get_prices(['AAPL', 'MSFT'], wide=True)\n" +
+        "rel = (wide['AAPL'] / wide['AAPL'].iloc[0]) / (wide['SPY'] / wide['SPY'].iloc[0])\n" +
+        "result = pd.DataFrame({'Метрика': ['AAPL vs SPY (есть SPY)'], 'SPY в колонках': [bool('SPY' in wide.columns)]})",
+    );
+    await page.goto('/research');
+    await page.locator('textarea').first().fill('тест SPY-бенчмарка');
+    await page.getByRole('button', { name: 'Исполнить' }).click();
+    await expect(page.locator('.research-output table.rkit-table')).toBeVisible({ timeout: 90000 });
+    await expect(page.locator('.research-output .rerrblk')).toHaveCount(0);
+  });
 
   test('table() терпим к незнакомым/алиасным kwargs (hints=, caption=)', async ({ page }) => {
     await stubExecute(

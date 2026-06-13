@@ -487,13 +487,16 @@ async function execOnce(
       `    except Exception:\n` +
       `        px = pd.DataFrame(); vol = pd.DataFrame()\n` +
       // Догрузка ЛЮБЫХ тикеров по требованию (скрипт сам решает, что ему нужно).
-      `async def get_prices(symbols, start=None, end=None, wide=False):\n` +
+      `async def get_prices(symbols, start=None, end=None, wide=False, benchmark=True):\n` +
       `    import json as __pj\n` +
       `    __f = globals().get('__get_prices__')\n` +
       `    if __f is None:\n` +
       `        raise RuntimeError('get_prices недоступна на сервере')\n` +
       `    if isinstance(symbols, str): symbols = [symbols]\n` +
-      `    __raw = await __f(__pj.dumps({'symbols': list(symbols), 'start': start, 'end': end}))\n` +
+      `    __syms = [str(s) for s in symbols]\n` +
+      // В широком виде ВСЕГДА добавляем SPY (бенчмарк) — модель часто пишет px['SPY'], не запросив его.
+      `    if wide and benchmark and 'SPY' not in [s.upper() for s in __syms]:\n        __syms = __syms + ['SPY']\n` +
+      `    __raw = await __f(__pj.dumps({'symbols': __syms, 'start': start, 'end': end}))\n` +
       `    __d = pd.DataFrame(__pj.loads(__raw))\n` +
       `    if not __d.empty:\n        __d['date'] = pd.to_datetime(__d['date'])\n` +
       `    if wide:\n` +
