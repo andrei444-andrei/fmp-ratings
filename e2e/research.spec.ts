@@ -237,6 +237,21 @@ test.describe('Research /research', () => {
     await expect(page.locator('.research-output .rt-cap')).toContainText('Тепловая карта');
   });
 
+  test('таблица устойчива к NaN/inf: не падает, плохие значения как «—»', async ({ page }) => {
+    await stubExecute(
+      page,
+      "import pandas as pd, numpy as np\n" +
+        "result = pd.DataFrame({'Тикер': ['A', 'B', 'C'], 'CAGR, %': [12.3, float('inf'), np.nan]})",
+    );
+    await page.goto('/research');
+    await page.locator('textarea').first().fill('тест устойчивости');
+    await page.getByRole('button', { name: 'Исполнить' }).click();
+    await expect(page.locator('.research-output table.rkit-table')).toBeVisible({ timeout: 90000 });
+    // inf и NaN → «—», таблица не падает и нет карточки ошибки
+    await expect(page.locator('.research-output table.rkit-table td.rt-muted')).toHaveCount(2, { timeout: 30000 });
+    await expect(page.locator('.research-output .rerrblk')).toHaveCount(0);
+  });
+
   test('длинный текст в ячейке рендерится как markdown (rich cell)', async ({ page }) => {
     await stubExecute(
       page,

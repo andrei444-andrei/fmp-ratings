@@ -575,3 +575,12 @@
   color: var(--fk-text-3);
   margin-top: 6px;
 }
+
+/* Heat-таблица: убираем зебру/ховер — иначе полупрозрачная заливка сидит на разном фоне
+   и одно значение выглядит по-разному в чётных/нечётных строках. */
+.research-output table.rkit-table.rt-heat tbody tr:nth-child(even) {
+  background: transparent;
+}
+.research-output table.rkit-table.rt-heat tbody tr:hover {
+  background: transparent;
+}

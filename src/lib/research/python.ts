@@ -124,9 +124,9 @@ def _heat_bg(x, m):
     except Exception: return ''
     if t > 1.0: t = 1.0
     if t < -1.0: t = -1.0
-    a = round(abs(t) * 0.5, 3)
-    if t > 0: return 'background: rgba(16,185,129,' + str(a) + ');'
-    if t < 0: return 'background: rgba(239,68,68,' + str(a) + ');'
+    a = round((abs(t) ** 0.7) * 0.74, 3)
+    if t > 0: return 'background-color: rgba(16,185,129,' + str(a) + ');'
+    if t < 0: return 'background-color: rgba(239,68,68,' + str(a) + ');'
     return ''
 def _md_min(text):
     t = _esc(text)
@@ -155,35 +155,44 @@ def _infer_fmt(name, series):
             pass
         return 'num'
     return 'text'
-def _fmt_cell(col, v, kind, heat_cols, heat_max):
-    import pandas as _pd
+def _fmt_cell(col, v, kind, heat_cols, vref):
+    import pandas as _pd, math as _math
     try:
-        if _pd.isna(v): return '<td class="rt-right rt-muted">—</td>'
+        try:
+            if _pd.isna(v): return '<td class="rt-right rt-muted">—</td>'
+        except Exception:
+            pass
+        is_heat = col in heat_cols
+        if kind in ('pct', 'num', 'int', 'money'):
+            try: x = float(v)
+            except Exception: return '<td class="rt-left">' + _esc(v) + '</td>'
+            if not _math.isfinite(x): return '<td class="rt-right rt-muted">—</td>'
+            if kind == 'pct': txt = ('%+.2f' % x) + '%'
+            elif kind == 'int': txt = format(int(round(x)), ',').replace(',', ' ')
+            elif kind == 'money': txt = format(x, ',.2f').replace(',', ' ')
+            else: txt = '%.2f' % x
+            cls = 'rt-right rt-num'
+            # На heat-фоне знак несёт фон, текст оставляем нейтральным (читаемость).
+            if not is_heat:
+                if kind == 'pct':
+                    cls += ' rt-pos' if x > 0 else (' rt-neg' if x < 0 else '')
+                elif kind in ('num', 'money') and x < 0:
+                    cls += ' rt-neg'
+            st = ''
+            if is_heat:
+                st = ' style="' + _heat_bg(x, vref) + '"'
+            return '<td class="' + cls + '"' + st + '>' + _esc(txt) + '</td>'
+        if kind == 'ticker':
+            return '<td class="rt-left rt-tick">' + _esc(v) + '</td>'
+        s = '' if v is None else str(v)
+        if len(s.strip()) > 48:
+            return '<td class="rt-left rt-rich"><div class="rt-cell">' + _md_min(s) + '</div></td>'
+        return '<td class="rt-left">' + _esc(s) + '</td>'
     except Exception:
-        pass
-    if kind in ('pct', 'num', 'int', 'money'):
-        try: x = float(v)
-        except Exception: return '<td class="rt-left">' + _esc(v) + '</td>'
-        if kind == 'pct': txt = ('%+.2f' % x) + '%'
-        elif kind == 'int': txt = format(int(round(x)), ',').replace(',', ' ')
-        elif kind == 'money': txt = format(x, ',.2f').replace(',', ' ')
-        else: txt = '%.2f' % x
-        cls = 'rt-right rt-num'
-        if kind == 'pct':
-            cls += ' rt-pos' if x > 0 else (' rt-neg' if x < 0 else '')
-        elif kind in ('num', 'money') and x < 0:
-            cls += ' rt-neg'
-        st = ''
-        if col in heat_cols:
-            st = ' style="' + _heat_bg(x, heat_max.get(col, 1.0)) + '"'
-        return '<td class="' + cls + '"' + st + '>' + _esc(txt) + '</td>'
-    if kind == 'ticker':
-        return '<td class="rt-left rt-tick">' + _esc(v) + '</td>'
-    s = '' if v is None else str(v)
-    if len(s.strip()) > 48:
-        return '<td class="rt-left rt-rich"><div class="rt-cell">' + _md_min(s) + '</div></td>'
-    return '<td class="rt-left">' + _esc(s) + '</td>'
-def table(df, formats=None, heat=None, title=None, sort=None, max_rows=300):
+        # Ни одна «плохая» ячейка не должна валить всю таблицу.
+        try: return '<td class="rt-left">' + _esc(v) + '</td>'
+        except Exception: return '<td class="rt-left rt-muted">—</td>'
+def _table_impl(df, formats=None, heat=None, title=None, sort=None, max_rows=300):
     import pandas as _pd
     if isinstance(df, _pd.Series):
         df = df.to_frame()
@@ -215,10 +224,20 @@ def table(df, formats=None, heat=None, title=None, sort=None, max_rows=300):
         heat_cols = set(heat)
     else:
         heat_cols = set()
-    heat_max = {}
-    for c in heat_cols:
-        try: heat_max[c] = float(_pd.to_numeric(d[c], errors='coerce').abs().max()) or 1.0
-        except Exception: heat_max[c] = 1.0
+    # Единый опорный масштаб heat по ВСЕМ heat-колонкам сразу (а не по каждой) и устойчивый
+    # к выбросам: 90-й перцентиль |значений|. Иначе один выброс гасит всю палитру в блёклый.
+    vref = 1.0
+    if heat_cols:
+        vals = []
+        for c in heat_cols:
+            try:
+                s = _pd.to_numeric(d[c], errors='coerce').dropna()
+                vals.extend([abs(float(x)) for x in s.tolist()])
+            except Exception:
+                pass
+        if vals:
+            vals.sort()
+            vref = vals[int(0.9 * (len(vals) - 1))] or vals[-1] or 1.0
     th = ''
     if show_index:
         th += '<th class="rt-h rt-left">' + _esc(d.index.name if d.index.name is not None else '') + '</th>'
@@ -231,13 +250,21 @@ def table(df, formats=None, heat=None, title=None, sort=None, max_rows=300):
         if show_index:
             tds += '<td class="rt-left rt-idx">' + _esc(idx) + '</td>'
         for c, v in zip(cols, rowvals):
-            tds += _fmt_cell(c, v, fmts.get(c), heat_cols, heat_max)
+            tds += _fmt_cell(c, v, fmts.get(c), heat_cols, vref)
         trs += '<tr>' + tds + '</tr>'
     cap = ('<div class="rt-cap">' + _esc(title) + '</div>') if title else ''
     note = ('<div class="rt-note">показаны первые ' + str(max_rows) + ' из ' + str(len(df)) + ' строк</div>') if truncated else ''
+    tcls = 'rkit-table rt-heat' if heat_cols else 'rkit-table'
     return _kit('<div class="rkit-tableblock">' + cap +
-                '<div class="rt-wrap"><table class="rkit-table"><thead><tr>' + th +
+                '<div class="rt-wrap"><table class="' + tcls + '"><thead><tr>' + th +
                 '</tr></thead><tbody>' + trs + '</tbody></table></div>' + note + '</div>')
+def table(df, formats=None, heat=None, title=None, sort=None, max_rows=300):
+    # Таблица НИКОГДА не валит рендер: при сбое отдаём понятную заметку вместо исключения.
+    try:
+        return _table_impl(df, formats=formats, heat=heat, title=title, sort=sort, max_rows=max_rows)
+    except Exception as __e:
+        return _kit('<div class="rkit-tableblock"><div class="rt-note">Не удалось отрисовать таблицу: '
+                    + _esc(str(__e)) + '</div></div>')
 `;
 
 // Пайплайн рендера result → блоки, ОБЩИЙ для финального вывода и для emit() (поэтапный вывод).
@@ -276,8 +303,12 @@ def _render_blocks(r):
 def emit(x):
     __e = globals().get('__emit__')
     if __e is not None:
-        try: __e(_render_blocks(x))
-        except Exception: pass
+        try:
+            __e(_render_blocks(x))
+        except Exception as __ex:
+            import sys as __s
+            print('[emit: не удалось отрисовать блок]', __ex, file=__s.stderr)
+            __s.stderr.flush()
     return None
 `;
 
@@ -425,11 +456,13 @@ async function execOnce(
 
     // Финальный результат из переменной result (то, что модель не вывела через emit).
     // Тот же пайплайн (_render_blocks), что и у emit — единый вид. result=None → ничего.
+    // Ошибку рендера НЕ глотаем: показываем понятную ошибку (карточка + лог в app_errors),
+    // иначе результат «молча исчезает» и в логах пусто.
     try {
       const blocksJson = await py.runPythonAsync('_render_blocks(result)');
       emitBlocks(JSON.parse(String(blocksJson || '[]')) as RenderBlock[], onEvent);
-    } catch {
-      /* result не задан / ошибка рендера — не критично */
+    } catch (e: any) {
+      onEvent({ type: 'error', message: 'Ошибка отрисовки результата: ' + (e?.message || String(e)) });
     }
 
     // Графики matplotlib → PNG
