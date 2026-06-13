@@ -6,16 +6,17 @@ import PortfolioMatrix from './_components/PortfolioMatrix';
 import CombinedPortfolio from './_components/CombinedPortfolio';
 import RiskCorrelation from './_components/RiskCorrelation';
 import StrategySummary from './_components/StrategySummary';
+import DrawdownAnalysis from './_components/DrawdownAnalysis';
 import QuantChat from './_components/QuantChat';
 import type { QcAlgorithm, QcCredStatus, PortfolioResponse } from '@/lib/quantconnect/types';
 
-// Реестр use-кейсов (вкладок). Остальные — по дорожной карте.
+// Реестр use-кейсов (вкладок).
 const TABS: { key: string; label: string; ready: boolean }[] = [
   { key: 'compare', label: 'Сравнение по годам', ready: true },
   { key: 'combined', label: 'Объединённый портфель', ready: true },
   { key: 'risk', label: 'Риск / корреляция', ready: true },
   { key: 'summary', label: 'Сводка по стратегии', ready: true },
-  { key: 'drawdown', label: 'Анализ просадок', ready: false },
+  { key: 'drawdown', label: 'Анализ просадок', ready: true },
 ];
 
 export default function QuantPage() {
@@ -150,6 +151,8 @@ export default function QuantPage() {
         <RiskCorrelation includeArchived={includeArchived} />
       ) : tab === 'summary' ? (
         <StrategySummary includeArchived={includeArchived} />
+      ) : tab === 'drawdown' ? (
+        <DrawdownAnalysis includeArchived={includeArchived} />
       ) : (
         <div className="qc-panel"><div className="qc-state">Раздел в разработке — скоро.</div></div>
       )}
