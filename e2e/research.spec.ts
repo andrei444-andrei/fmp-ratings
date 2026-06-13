@@ -237,6 +237,21 @@ test.describe('Research /research', () => {
     await expect(page.locator('.research-output .rt-cap')).toContainText('Тепловая карта');
   });
 
+  test('table() терпим к незнакомым/алиасным kwargs (hints=, caption=)', async ({ page }) => {
+    await stubExecute(
+      page,
+      "import pandas as pd\n" +
+        "df = pd.DataFrame({'Тикер': ['A', 'B'], 'CAGR, %': [12.3, -4.5]})\n" +
+        "result = table(df, hints={'Тикер': 'ticker'}, caption='Через hints')",
+    );
+    await page.goto('/research');
+    await page.locator('textarea').first().fill('тест hints');
+    await page.getByRole('button', { name: 'Исполнить' }).click();
+    await expect(page.locator('.research-output table.rkit-table')).toBeVisible({ timeout: 90000 });
+    await expect(page.locator('.research-output .rt-cap')).toContainText('Через hints'); // caption→title
+    await expect(page.locator('.research-output .rerrblk')).toHaveCount(0); // не упало
+  });
+
   test('таблица устойчива к NaN/inf: не падает, плохие значения как «—»', async ({ page }) => {
     await stubExecute(
       page,
