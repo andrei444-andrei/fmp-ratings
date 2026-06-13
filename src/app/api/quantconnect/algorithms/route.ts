@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { listAlgorithms, addAlgorithm, updateAlgorithm, removeAlgorithm } from '@/lib/quantconnect/algorithms';
 import { logAppError } from '@/lib/app-errors';
+import { friendlyWriteError } from '@/lib/db-write-guard';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -13,7 +14,7 @@ export async function GET() {
   try {
     return NextResponse.json({ algorithms: await listAlgorithms() });
   } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    return NextResponse.json({ error: friendlyWriteError(e) }, { status: 500 });
   }
 }
 
@@ -25,7 +26,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ algorithm: res.algorithm, algorithms: await listAlgorithms() });
   } catch (e: any) {
     await logAppError({ route: '/api/quantconnect/algorithms', message: e.message, stack: e.stack });
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    return NextResponse.json({ error: friendlyWriteError(e) }, { status: 500 });
   }
 }
 
@@ -42,7 +43,7 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ algorithm: res.algorithm, algorithms: await listAlgorithms() });
   } catch (e: any) {
     await logAppError({ route: '/api/quantconnect/algorithms', message: e.message, stack: e.stack });
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    return NextResponse.json({ error: friendlyWriteError(e) }, { status: 500 });
   }
 }
 
@@ -53,6 +54,6 @@ export async function DELETE(req: NextRequest) {
     await removeAlgorithm(id);
     return NextResponse.json({ algorithms: await listAlgorithms() });
   } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    return NextResponse.json({ error: friendlyWriteError(e) }, { status: 500 });
   }
 }

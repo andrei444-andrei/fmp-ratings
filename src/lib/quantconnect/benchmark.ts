@@ -6,10 +6,10 @@
 import { getPrices } from '@/lib/research/prices';
 import { fmpHistoricalPriceEodDividendAdjusted } from '@/lib/fmp';
 import { computeYearly, dailySeries } from './metrics';
-import { qcCacheGet, qcCacheSet } from './cache';
+import { qcCacheGet, qcCacheSet, qcCacheDeleteLike } from './cache';
 import type { DayPoint, QcSeriesPoint, YearMetric } from './types';
 
-export type BenchmarkData = { name: string; yearly: YearMetric[]; daily: DayPoint[] };
+export type BenchmarkData = { name: string; yearly: YearMetric[]; daily: DayPoint[]; day?: string };
 
 async function spyPoints(today: string): Promise<QcSeriesPoint[]> {
   // 1) total return (с дивидендами) — adjClose
@@ -34,16 +34,23 @@ async function spyPoints(today: string): Promise<QcSeriesPoint[]> {
 
 export async function getSpyBenchmark(force = false): Promise<BenchmarkData | null> {
   const today = new Date().toISOString().slice(0, 10);
-  const key = `bench|SPY|v3|${today}`; // v3: total return (adjClose)
+  // Стабильный ключ (без даты) — одна строка, перезаписывается; свежесть — по полю day.
+  // Раньше дата была в ключе → каждый день копилась новая большая строка (утечка записи/места).
+  const key = 'bench|SPY|v4';
   if (!force) {
     const cached = await qcCacheGet<BenchmarkData>(key);
-    if (cached && cached.daily) return cached;
+    if (cached && cached.daily && cached.day === today) return cached;
   }
   try {
     const points = await spyPoints(today);
     if (points.length < 30) return null;
-    const data: BenchmarkData = { name: 'SPY', yearly: computeYearly(points), daily: dailySeries(points) };
-    if (data.yearly.length) await qcCacheSet(key, data);
+    const data: BenchmarkData = { name: 'SPY', day: today, yearly: computeYearly(points), daily: dailySeries(points) };
+    if (data.yearly.length) {
+      await qcCacheSet(key, data);
+      // подчищаем старые date-keyed строки (раньше копились по дню)
+      await qcCacheDeleteLike('bench|SPY|v3|%');
+      await qcCacheDeleteLike('bench|SPY|2%');
+    }
     return data;
   } catch {
     return null;
