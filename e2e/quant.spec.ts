@@ -109,7 +109,20 @@ test.describe('Аналитика алгоритмов /quant', () => {
     await expect(page.getByRole('button', { name: 'Сравнение по годам' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Объединённый портфель' })).toBeEnabled();
     await expect(page.getByRole('button', { name: 'Риск / корреляция' })).toBeEnabled();
-    await expect(page.getByRole('button', { name: /Сводка по стратегии/ })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Сводка по стратегии' })).toBeEnabled();
+    await expect(page.getByRole('button', { name: /Анализ просадок/ })).toBeDisabled();
+  });
+
+  test('сводка по стратегии: метрики, кривая, помесячный heatmap', async ({ page }) => {
+    await mockConfigured(page);
+    await page.goto('/quant');
+    await page.getByRole('button', { name: 'Сводка по стратегии' }).click();
+    await expect(page.locator('.qc-card-k', { hasText: 'Sharpe' })).toBeVisible();
+    await expect(page.locator('.qc-card-k', { hasText: 'Calmar' })).toBeVisible();
+    await expect(page.locator('svg.qc-chart')).toBeVisible();
+    await expect(page.locator('.qc-heat')).toBeVisible();
+    await page.locator('.qc-controls-bar select.qc-select').selectOption({ label: 'Mean Reversion RSI' });
+    await expect(page.locator('.qc-heat')).toBeVisible();
   });
 
   test('риск / корреляция: матрица, метрики, downside', async ({ page }) => {
