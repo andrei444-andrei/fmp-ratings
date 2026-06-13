@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getCredsStatus, saveCreds, clearCreds } from '@/lib/quantconnect/creds';
 import { qcAuthenticate } from '@/lib/quantconnect/client';
 import { logAppError } from '@/lib/app-errors';
+import { friendlyWriteError } from '@/lib/db-write-guard';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -43,7 +44,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(status);
   } catch (e: any) {
     await logAppError({ route: '/api/quantconnect/credentials', message: e.message, stack: e.stack });
-    return NextResponse.json({ error: e.message }, { status: 400 });
+    return NextResponse.json({ error: friendlyWriteError(e) }, { status: 400 });
   }
 }
 

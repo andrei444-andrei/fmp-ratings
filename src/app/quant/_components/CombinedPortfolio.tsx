@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import EquityChart, { type ChartLine } from './EquityChart';
 import UnderwaterChart from './UnderwaterChart';
 import { combinePortfolio } from '@/lib/quantconnect/combine';
@@ -75,15 +75,19 @@ export default function CombinedPortfolio({ includeArchived }: { includeArchived
     setReady(true);
   }, [series, cfg]);
 
-  // автосохранение конфига при изменении (без кнопки)
+  // автосохранение конфига при изменении (без кнопки), только если реально поменялось
+  const lastSavedRef = useRef<string>('');
   useEffect(() => {
     if (!ready) return;
+    const payload = JSON.stringify({ include, weights });
+    if (payload === lastSavedRef.current) return;
     const t = setTimeout(() => {
+      lastSavedRef.current = payload;
       fetch('/api/quantconnect/settings', {
         method: 'PUT', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ key: 'combined', value: { include, weights } }),
       }).catch(() => {});
-    }, 700);
+    }, 900);
     return () => clearTimeout(t);
   }, [include, weights, ready]);
 

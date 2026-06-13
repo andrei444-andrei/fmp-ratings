@@ -29,6 +29,14 @@ export async function qcCacheGet<T = any>(key: string): Promise<T | null> {
   }
 }
 
+// Удаляет строки кэша по LIKE-шаблону (best-effort) — для чистки устаревших ключей.
+export async function qcCacheDeleteLike(pattern: string): Promise<void> {
+  try {
+    await ensureSchema();
+    await libsqlClient.execute({ sql: 'DELETE FROM qc_backtest_cache WHERE cache_key LIKE ?', args: [pattern] });
+  } catch { /* запись недоступна — не критично */ }
+}
+
 export async function qcCacheSet(key: string, payload: any): Promise<void> {
   try {
     await ensureSchema();
