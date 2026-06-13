@@ -25,6 +25,13 @@ export type ResearchData = {
 // Мост «скрипт → LLM»: хост выполняет запрос к AIMLAPI (ключ остаётся на сервере),
 // скрипт получает только текст. req — распарсенный JSON {prompt, model, system, web, …}.
 export type AskAiFn = (req: any) => Promise<string>;
+// Мост «скрипт → данные»: скрипт сам догружает любые тикеры (get_prices), хост тянет из
+// FMP/кэша и возвращает длинные строки. Так нет рассинхрона «резолвер угадал ≠ код хочет».
+export type FetchPricesFn = (
+  symbols: string[],
+  start?: string,
+  end?: string,
+) => Promise<{ symbol: string; date: string; close: number; volume: number | null }[]>;
 export type PyEvent =
   | { type: 'log'; text: string }
   | { type: 'block'; html: string }
@@ -364,8 +371,9 @@ export function runResearchPython(
   data: ResearchData,
   onEvent: (e: PyEvent) => void,
   askAi?: AskAiFn,
+  fetchPrices?: FetchPricesFn,
 ): Promise<void> {
-  const task = () => execOnce(code, data, onEvent, askAi);
+  const task = () => execOnce(code, data, onEvent, askAi, fetchPrices);
   const p = chain.then(task, task);
   chain = p.catch(() => {});
   return p;
@@ -376,6 +384,7 @@ async function execOnce(
   data: ResearchData,
   onEvent: (e: PyEvent) => void,
   askAi?: AskAiFn,
+  fetchPrices?: FetchPricesFn,
 ): Promise<void> {
   const py = await getPyodide();
   const wantsPlot = /matplotlib|pyplot|\bplt\b/.test(code);
@@ -425,6 +434,21 @@ async function execOnce(
         /* плохой блок — пропускаем */
       }
     });
+    // Мост данных: get_prices(...) из скрипта → хост тянет цены (FMP/кэш) и отдаёт JSON.
+    py.globals.set(
+      '__get_prices__',
+      fetchPrices
+        ? async (jsonStr: string) => {
+            const req = JSON.parse(jsonStr);
+            const rows = await fetchPrices(
+              Array.isArray(req?.symbols) ? req.symbols : [],
+              typeof req?.start === 'string' ? req.start : undefined,
+              typeof req?.end === 'string' ? req.end : undefined,
+            );
+            return JSON.stringify(rows);
+          }
+        : null,
+    );
 
     const prelude =
       `import json as __json\nimport pandas as pd\nimport numpy as np\n` +
@@ -440,6 +464,20 @@ async function execOnce(
       `        vol = df.pivot_table(index='date', columns='symbol', values='volume', aggfunc='last').sort_index()\n` +
       `    except Exception:\n` +
       `        px = pd.DataFrame(); vol = pd.DataFrame()\n` +
+      // Догрузка ЛЮБЫХ тикеров по требованию (скрипт сам решает, что ему нужно).
+      `async def get_prices(symbols, start=None, end=None, wide=False):\n` +
+      `    import json as __pj\n` +
+      `    __f = globals().get('__get_prices__')\n` +
+      `    if __f is None:\n` +
+      `        raise RuntimeError('get_prices недоступна на сервере')\n` +
+      `    if isinstance(symbols, str): symbols = [symbols]\n` +
+      `    __raw = await __f(__pj.dumps({'symbols': list(symbols), 'start': start, 'end': end}))\n` +
+      `    __d = pd.DataFrame(__pj.loads(__raw))\n` +
+      `    if not __d.empty:\n        __d['date'] = pd.to_datetime(__d['date'])\n` +
+      `    if wide:\n` +
+      `        if __d.empty: return pd.DataFrame()\n` +
+      `        return __d.pivot_table(index='date', columns='symbol', values='close', aggfunc='last').sort_index()\n` +
+      `    return __d\n` +
       `fundamentals = pd.DataFrame(__json.loads(__FUND_JSON__))\n` +
       `dividends = pd.DataFrame(__json.loads(__DIV_JSON__))\n` +
       `if not dividends.empty:\n    dividends['date'] = pd.to_datetime(dividends['date'])\n` +

@@ -237,6 +237,24 @@ test.describe('Research /research', () => {
     await expect(page.locator('.research-output .rt-cap')).toContainText('Тепловая карта');
   });
 
+  test('get_prices: скрипт догружает любые тикеры по требованию', async ({ page }) => {
+    await stubExecute(
+      page,
+      "import pandas as pd\n" +
+        "w = await get_prices(['SPY', 'QQQ'], wide=True)\n" +
+        "ret = (w.iloc[-1] / w.iloc[0] - 1) * 100\n" +
+        "result = ret.round(2).rename('Доходность, %').reset_index().rename(columns={'symbol': 'Тикер', 'index': 'Тикер'})",
+    );
+    await page.goto('/research');
+    await page.locator('textarea').first().fill('тест get_prices');
+    await page.getByRole('button', { name: 'Исполнить' }).click();
+    // get_prices догрузила SPY/QQQ (синтетика в e2e) → таблица отрисована, нет ошибки.
+    const tbl = page.locator('.research-output table.rkit-table');
+    await expect(tbl).toBeVisible({ timeout: 90000 });
+    await expect(tbl).toContainText('SPY');
+    await expect(page.locator('.research-output .rerrblk')).toHaveCount(0);
+  });
+
   test('px: широкая таблица цен (px["TICKER"]) доступна и считается', async ({ page }) => {
     await stubExecute(
       page,
