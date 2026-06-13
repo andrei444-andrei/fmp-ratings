@@ -123,8 +123,11 @@ async function resolveTickers(prompt: string): Promise<string[]> {
 
 const SYS_PROMPT =
   'Ты пишешь Python-скрипт для анализа трендов цен акций. В окружении УЖЕ доступны: ' +
-  '`pandas as pd`, `numpy`, и готовый DataFrame `df` с колонками `symbol` (тикер), `date` (datetime), ' +
-  '`close` (цена закрытия) и `volume` (объём) по нескольким тикерам. ' +
+  '`pandas as pd`, `numpy`, и готовый DataFrame `df` в ДЛИННОМ формате с колонками `symbol` (тикер), `date` (datetime), ' +
+  '`close` (цена закрытия) и `volume` (объём) — по НЕСКОЛЬКИМ тикерам сразу (тикеры лежат в КОЛОНКЕ symbol). ' +
+  'ВАЖНО: НЕ обращайся к df по тикеру как к колонке — `df["SPY"]` упадёт с KeyError (в df нет колонок-тикеров). ' +
+  'Чтобы взять один тикер: `df[df["symbol"] == "SPY"]`. ' +
+  'Для удобства УЖЕ готова ШИРОКАЯ таблица `px`: индекс — дата, колонки — тикеры, значения — close (`px["SPY"]` = ряд цен SPY; `px[["SPY","QQQ"]]`; доходности — `px.pct_change()`; корреляции — `px.pct_change().corr()`). Аналогично `vol` — широкая таблица объёмов. Используй `px` для доходностей/корреляций/любых расчётов «по тикерам в колонках». ' +
   'Дополнительно доступны DataFrame `fundamentals` [symbol, company, sector, industry, exchange, country, currency, market_cap, beta, price, last_dividend] (снимок на тикер — сектора/размер/бета для секторного и факторного анализа) и `dividends` [symbol, date, dividend] (история выплат — для полной доходности). Обращайся к ним при необходимости. ' +
   'Доступен matplotlib (backend Agg) — если нужен график, используй `plt`. ' +
   'Также доступны numpy (np), scipy, statsmodels, scikit-learn (sklearn) — импортируй их при необходимости (регрессии, стат-тесты, ARIMA, кластеризация, оптимизация, факторные модели). ' +
