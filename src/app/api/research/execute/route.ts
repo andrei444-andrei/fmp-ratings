@@ -1,7 +1,7 @@
 import { getPrices } from '@/lib/research/prices';
 import { syntheticSeries } from '@/lib/research/metrics';
 import { aimlChatMeta, aimlChatWithCitations, getAimlSonarModel } from '@/lib/aimlapi';
-import { runResearchPython, type PriceRow, type AskAiFn } from '@/lib/research/python';
+import { runResearchPython, type AskAiFn } from '@/lib/research/python';
 import { getFundamentals } from '@/lib/research/fundamentals';
 import { getDividends } from '@/lib/research/dividends';
 import { logAppError } from '@/lib/app-errors';
@@ -10,14 +10,6 @@ import { marked } from 'marked';
 export const dynamic = 'force-dynamic';
 // Скрипт может делать запросы к LLM (ask_ai) пачками — даём запас по времени.
 export const maxDuration = 300;
-
-const STOP = new Set(['AI', 'AND', 'THE', 'FOR', 'VS', 'USD', 'ETF', 'SP', 'API', 'CEO', 'USA', 'GDP', 'PE', 'EPS']);
-
-function extractTickers(prompt: string): string[] {
-  // Латинские тикеры, в т.ч. с цифрами и биржевым суффиксом (.L, .DE, .HK).
-  const m = prompt.toUpperCase().match(/\b[A-Z][A-Z0-9]{0,5}(?:\.[A-Z]{1,4})?\b/g) ?? [];
-  return [...new Set(m)].filter((t) => !STOP.has(t) && /[A-Z]/.test(t)).slice(0, 50);
-}
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
@@ -62,74 +54,21 @@ const ETF_COUNTRY: Record<string, string> = {
   EPOL: 'Польша', TUR: 'Турция', THD: 'Таиланд',
 };
 
-// Корзина страновых ETF (по одному на страну) — подставляется на общий запрос «по странам».
-const COUNTRY_ETF_BASKET = [
-  'SPY', 'EWJ', 'EWG', 'EWU', 'EWQ', 'EWL', 'EWI', 'EWP', 'EWC', 'EWA',
-  'FXI', 'EWH', 'EWT', 'EWY', 'INDA', 'EWZ', 'EWW', 'EZA', 'EPOL', 'TUR',
-];
-
-// Запрос «в целом про страны» (без явного списка тикеров/стран).
-const COUNTRY_THEME_RE = /стран|countr|географ|geograph/i;
-
-const TICKER_SYS =
-  'Подбери тикеры (символы, котируемые на FMP) под запрос пользователя и верни СТРОГО JSON ' +
-  'вида {"tickers": ["EWJ", "EWZ"]}. Верни СТОЛЬКО тикеров, сколько уместно под запрос: ' +
-  'если пользователь просит конкретное число N (или «не меньше N») — верни примерно N (до 50). ' +
-  'Используй реальные ликвидные символы. ' +
-  'Доступны НЕ только США. Для стран бери ликвидные страновые ETF (листинг в США): ' +
-  'США SPY/QQQ, Япония EWJ, Германия EWG, Великобритания EWU, Франция EWQ, Швейцария EWL, ' +
-  'Италия EWI, Испания EWP, Канада EWC, Австралия EWA, Китай FXI или MCHI, Гонконг EWH, ' +
-  'Тайвань EWT, Корея EWY, Индия INDA, Бразилия EWZ, Мексика EWW, ЮАР EZA, Тайланд THD, ' +
-  'Турция TUR, Польша EPOL, развивающиеся рынки EEM/VWO, Европа VGK, весь мир ACWI. ' +
-  'Если пользователь назвал конкретные тикеры — используй их. ' +
-  'ВАЖНО: если речь про страны/регионы В ЦЕЛОМ («доходность по странам», «какие страны…», «which countries») ' +
-  'и конкретные страны/тикеры НЕ названы — верни ШИРОКУЮ корзину из 15–20 РАЗНЫХ страновых ETF из списка выше (а не один-два). ' +
-  'Возвращай ТОЛЬКО JSON.';
-
-// Подбор тикеров под запрос: сперва AI (понимает страны/международные ETF), иначе regex.
-async function resolveTickers(prompt: string): Promise<string[]> {
-  const countryTheme = COUNTRY_THEME_RE.test(prompt);
-  if (process.env.AIMLAPI_KEY) {
-    try {
-      const { content } = await aimlChatMeta({
-        temperature: 0,
-        max_tokens: 500,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: TICKER_SYS },
-          { role: 'user', content: prompt },
-        ],
-      });
-      const obj = JSON.parse(content);
-      const arr = Array.isArray(obj?.tickers) ? obj.tickers : [];
-      const tickers = arr
-        .map((t: any) => String(t).toUpperCase().trim())
-        .filter((t: string) => /^[A-Z][A-Z0-9.\-]{0,11}$/.test(t));
-      if (tickers.length) {
-        // Общий запрос «по странам», а модель скатилась к дефолту US — расширяем до корзины.
-        const onlyUsDefault = tickers.every((t: string) => t === 'SPY' || t === 'QQQ');
-        if (countryTheme && onlyUsDefault) return [...COUNTRY_ETF_BASKET];
-        return [...new Set<string>(tickers)].slice(0, 50);
-      }
-    } catch {
-      /* падаем на regex */
-    }
-  }
-  const found = extractTickers(prompt);
-  if (found.length) return found;
-  // Нет явных тикеров: общий запрос про страны → корзина страновых ETF, иначе базовый дефолт.
-  return countryTheme ? [...COUNTRY_ETF_BASKET] : ['SPY', 'QQQ'];
-}
-
 const SYS_PROMPT =
-  'Ты пишешь Python-скрипт для анализа трендов цен акций. В окружении УЖЕ доступны: ' +
-  '`pandas as pd`, `numpy`, и готовый DataFrame `df` в ДЛИННОМ формате с колонками `symbol` (тикер), `date` (datetime), ' +
-  '`close` (цена закрытия) и `volume` (объём) — по НЕСКОЛЬКИМ тикерам сразу (тикеры лежат в КОЛОНКЕ symbol). ' +
-  'ВАЖНО: НЕ обращайся к df по тикеру как к колонке — `df["SPY"]` упадёт с KeyError (в df нет колонок-тикеров). ' +
-  'Чтобы взять один тикер: `df[df["symbol"] == "SPY"]`. ' +
-  'Для удобства УЖЕ готова ШИРОКАЯ таблица `px`: индекс — дата, колонки — тикеры, значения — close (`px["SPY"]` = ряд цен SPY; `px[["SPY","QQQ"]]`; доходности — `px.pct_change()`; корреляции — `px.pct_change().corr()`). Аналогично `vol` — широкая таблица объёмов. Используй `px` для доходностей/корреляций/любых расчётов «по тикерам в колонках». ' +
-  'ВАЖНО — ты сам решаешь, какие данные тебе нужны: если нужного тикера НЕТ в df/px (бенчмарк SPY, ещё страны, конкретные акции) — НЕ падай и НЕ пиши «нет X в данных», а ДОГРУЗИ его async-функцией `get_prices(symbols, start=None, end=None, wide=False)`: `extra = await get_prices(["SPY","QQQ"])` (длинный df) или `w = await get_prices(["SPY","EWJ"], wide=True)` (широкая таблица дата×тикер, как px). Данные тянутся с сервера (FMP/кэш), период можно сузить start/end (YYYY-MM-DD). Подбирай тикеры под задачу сам и тяни через get_prices. ' +
-  'Дополнительно доступны DataFrame `fundamentals` [symbol, company, sector, industry, exchange, country, currency, market_cap, beta, price, last_dividend] (снимок на тикер — сектора/размер/бета для секторного и факторного анализа) и `dividends` [symbol, date, dividend] (история выплат — для полной доходности). Обращайся к ним при необходимости. ' +
+  'Ты пишешь Python-скрипт для анализа трендов цен акций. В окружении доступны `pandas as pd`, `numpy`. ' +
+  'ДАННЫЕ НЕ ПРЕДЗАГРУЖЕНЫ — ты сам решаешь, какие тикеры нужны под задачу, и тянешь их сам. ' +
+  'Главный коннектор — async `get_prices(symbols, start=None, end=None, wide=False)`: ' +
+  '`df = await get_prices(["AAPL","MSFT"])` — ДЛИННЫЙ DataFrame [symbol, date(datetime), close, volume]; ' +
+  '`px = await get_prices(["SPY","EWJ"], wide=True)` — ШИРОКАЯ таблица: индекс=дата, колонки=тикеры, значения=close ' +
+  '(px["SPY"], px[["SPY","QQQ"]], доходности px.pct_change(), корреляции px.pct_change().corr()). ' +
+  'Период можно сузить start/end (YYYY-MM-DD); данные кэшируются. ' +
+  'НИКОГДА не пиши «нет X в данных» и не падай из-за отсутствия тикера — просто догрузи его через get_prices. ' +
+  'Подбор тикеров — на тебе: если названы конкретные — бери их; для стран бери ликвидные страновые ETF (US-листинг): ' +
+  'США SPY/QQQ, Япония EWJ, Германия EWG, Великобритания EWU, Франция EWQ, Швейцария EWL, Италия EWI, Испания EWP, ' +
+  'Канада EWC, Австралия EWA, Китай FXI/MCHI, Гонконг EWH, Тайвань EWT, Корея EWY, Индия INDA, Бразилия EWZ, ' +
+  'Мексика EWW, ЮАР EZA, Польша EPOL, Турция TUR, Таиланд THD, EM EEM/VWO, Европа VGK, мир ACWI. ' +
+  'Для секторного/факторного анализа: `fundamentals = await get_fundamentals(["AAPL",...])` → DataFrame [symbol, company, sector, industry, exchange, country, currency, market_cap, beta, price, last_dividend] (для страновых ETF country уже приведён к реальной стране). ' +
+  'Для полной доходности: `dividends = await get_dividends([...])` → [symbol, date, dividend]. ' +
   'Доступен matplotlib (backend Agg) — если нужен график, используй `plt`. ' +
   'Также доступны numpy (np), scipy, statsmodels, scikit-learn (sklearn) — импортируй их при необходимости (регрессии, стат-тесты, ARIMA, кластеризация, оптимизация, факторные модели). ' +
   'Доступна async-функция `ask_ai(prompt, model=None, system=None, web=False)` — запрос к LLM прямо из скрипта (ключи живут на сервере, тебе их знать не нужно): вызывай `await ask_ai(...)`. ' +
@@ -272,11 +211,8 @@ export async function POST(req: Request) {
         }
       };
       let code = '';
-      let tickers: string[] = [];
       try {
-        send({ type: 'status', text: 'Подбираю инструменты…' });
-        tickers = await resolveTickers(prompt);
-        send({ type: 'block', html: `<p class="rlead">Тикеры в анализе: <b>${tickers.map(escapeHtml).join(', ')}</b></p>` });
+        send({ type: 'status', text: 'Готовлю движок…' });
 
         // E2E-харнесс может передать готовый Python напрямую — ТОЛЬКО при флаге E2E_ALLOW_CODE.
         // В проде флаг не выставлен → поле code из запроса игнорируется. Дефолтного скрипта в
@@ -300,7 +236,7 @@ export async function POST(req: Request) {
               max_tokens: 6000,
               messages: [
                 { role: 'system', content: SYS_PROMPT },
-                { role: 'user', content: `Доступные тикеры: ${tickers.join(', ')}. Запрос: «${prompt}». Напиши скрипт.` },
+                { role: 'user', content: `Запрос: «${prompt}». Сам реши, какие тикеры нужны, и догрузи данные через get_prices/get_fundamentals/get_dividends. Напиши скрипт.` },
               ],
             });
             if (finishReason === 'length') {
@@ -317,7 +253,7 @@ export async function POST(req: Request) {
             ? `Модель ${codeModel}: ${codegenError}. Повторите запрос или смените «Модель кода».`
             : 'Генерация кода недоступна — не настроен ключ AIMLAPI.';
           send({ type: 'block', html: errorCard('Не удалось сгенерировать скрипт', reason) });
-          logAppError({ route: '/api/research/execute', message: 'codegen failed', stack: codegenError || reason, user_agent: ua, meta: { model: codeModel, prompt, tickers } }).catch(() => {});
+          logAppError({ route: '/api/research/execute', message: 'codegen failed', stack: codegenError || reason, user_agent: ua, meta: { model: codeModel, prompt } }).catch(() => {});
           send({ type: 'done' });
           return;
         }
@@ -327,13 +263,10 @@ export async function POST(req: Request) {
         // Пояснение «как реализовано / допущения» готовим параллельно с исполнением.
         const explainPromise = generateExplanation(prompt, code);
 
-        // 2) Подготовить цены (кэш/FMP; синтетика как fallback)
-        send({ type: 'status', text: 'Готовлю данные по ценам…' });
+        // 2) Коннекторы данных (предзагрузки нет — скрипт сам тянет get_prices/get_fundamentals/get_dividends).
         const to = new Date().toISOString().slice(0, 10);
-        // Широкое окно истории (~25 лет), чтобы запросы «за N лет» имели данные;
-        // скрипт сам срежет нужный период. FMP отдаёт столько, сколько есть.
+        // Широкое окно истории (~25 лет) по умолчанию; скрипт сам срежет нужный период.
         const from = new Date(Date.now() - 25 * 365 * 864e5).toISOString().slice(0, 10);
-        // Коннектор для скрипта: get_prices(...) тянет ЛЮБЫЕ тикеры (кэш/FMP, синтетика как fallback).
         const fetchPrices = async (symbols: string[], start?: string, end?: string) => {
           const syms = [...new Set((symbols || []).map((s) => String(s).toUpperCase().trim()).filter(Boolean))].slice(0, 100);
           const f = start && /^\d{4}-\d{2}-\d{2}/.test(start) ? start.slice(0, 10) : from;
@@ -350,46 +283,22 @@ export async function POST(req: Request) {
           }
           return out;
         };
-        const prices: Record<string, PriceRow[]> = {};
-        let anyDemo = false;
-        // Тикеров может быть много (до 50) — тянем цены с ограниченной параллельностью.
-        const CONC = 6;
-        for (let i = 0; i < tickers.length; i += CONC) {
-          await Promise.all(
-            tickers.slice(i, i + CONC).map(async (sym) => {
-              let s = await getPrices(sym, from, to);
-              if (s.length < 5) {
-                s = syntheticSeries(sym);
-                anyDemo = true;
-              }
-              prices[sym] = s;
-            }),
-          );
-        }
-        if (anyDemo) send({ type: 'block', html: `<p class="rmuted">Часть данных синтетическая (demo): нет FMP-ключа или истории по тикеру.</p>` });
-
-        // 2b) Доп. датасеты тянем только если скрипт к ним обращается.
-        let fundamentals: Record<string, unknown>[] = [];
-        let dividends: Record<string, unknown>[] = [];
-        const useFund = /\bfundamentals\b/.test(code);
-        const useDiv = /\bdividends\b/.test(code);
-        if (useFund || useDiv) {
-          send({ type: 'status', text: 'Подгружаю фундаментал/дивиденды…' });
-          [fundamentals, dividends] = await Promise.all([
-            useFund ? getFundamentals(tickers) : Promise.resolve([]),
-            useDiv ? getDividends(tickers) : Promise.resolve([]),
-          ]);
-          // Для известных страновых ETF подменяем country на реальную страну
-          // (FMP отдаёт домициль US) — чтобы разрезы «по странам» не схлопывались.
-          for (const f of fundamentals) {
+        const norm = (symbols: string[]) =>
+          [...new Set((symbols || []).map((s) => String(s).toUpperCase().trim()).filter(Boolean))].slice(0, 100);
+        const fetchFundamentals = async (symbols: string[]) => {
+          const rows = (await getFundamentals(norm(symbols))) as Record<string, unknown>[];
+          // Для известных страновых ETF country приводим к реальной стране (FMP отдаёт домициль US).
+          for (const f of rows) {
             const c = ETF_COUNTRY[String((f as any).symbol).toUpperCase()];
             if (c) (f as any).country = c;
           }
-        }
+          return rows;
+        };
+        const fetchDividends = async (symbols: string[]) => (await getDividends(norm(symbols))) as Record<string, unknown>[];
 
-        // 3) Исполнить Python (стрим stdout + таблица result + графики; ask_ai → LLM по требованию)
+        // 3) Исполнить Python (стрим stdout + таблица result + графики; данные/LLM — по требованию)
         send({ type: 'status', text: 'Исполняю Python…' });
-        await runResearchPython(code, { prices, fundamentals, dividends }, (e) => {
+        await runResearchPython(code, { prices: {} }, (e) => {
           if (e.type === 'error') {
             // Понятная карточка ошибки (ключевая строка + хвост трейсбэка) + лог полного трейсбэка.
             const lines = e.message.split('\n').filter(Boolean);
@@ -401,12 +310,12 @@ export async function POST(req: Request) {
               message: 'Python execution error',
               stack: e.message,
               user_agent: ua,
-              meta: { model: codeModel, prompt, tickers, code },
+              meta: { model: codeModel, prompt, code },
             }).catch(() => {});
           } else {
             send(e);
           }
-        }, makeAskAi(), fetchPrices);
+        }, makeAskAi(), { prices: fetchPrices, fundamentals: fetchFundamentals, dividends: fetchDividends });
 
         // Пояснение к коду (допущения/нюансы): рендерим Markdown → HTML и отдаём блоком.
         try {
@@ -429,7 +338,7 @@ export async function POST(req: Request) {
           message: msg,
           stack: e?.stack,
           user_agent: ua,
-          meta: { model: codeModel, prompt, tickers, code },
+          meta: { model: codeModel, prompt, code },
         }).catch(() => {});
       } finally {
         closed = true;

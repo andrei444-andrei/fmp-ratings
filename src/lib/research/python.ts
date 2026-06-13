@@ -2,14 +2,14 @@ import { loadPyodide } from 'pyodide';
 
 type Pyodide = Awaited<ReturnType<typeof loadPyodide>>;
 
-// Единый интерпретатор на процесс (ленивый). jsglobals:{} закрывает доступ
-// Python к глобалам Node (process.env, require) — секреты коду недоступны.
-// Сеть/ФС хоста в WASM тоже недоступны. packageCacheDir — /tmp (writable на Vercel).
+// Единый интерпретатор на процесс (ленивый).
+// ВНИМАНИЕ: по требованию владельца изоляция снята — у Python-кода есть доступ к globalThis
+// Node (process.env, сеть, ФС). Код пишет AI по промту → это осознанный риск (ключи доступны
+// коду). packageCacheDir — /tmp (writable на Vercel).
 let pyPromise: Promise<Pyodide> | null = null;
 function getPyodide(): Promise<Pyodide> {
   if (!pyPromise) {
     pyPromise = loadPyodide({
-      jsglobals: {} as unknown as object,
       packageCacheDir: '/tmp/pyodide-cache',
     });
   }
@@ -32,6 +32,13 @@ export type FetchPricesFn = (
   start?: string,
   end?: string,
 ) => Promise<{ symbol: string; date: string; close: number; volume: number | null }[]>;
+// Те же мосты для фундаментала и дивидендов (предзагрузки нет — скрипт тянет сам).
+export type FetchRowsFn = (symbols: string[]) => Promise<Record<string, unknown>[]>;
+export type Connectors = {
+  prices?: FetchPricesFn;
+  fundamentals?: FetchRowsFn;
+  dividends?: FetchRowsFn;
+};
 export type PyEvent =
   | { type: 'log'; text: string }
   | { type: 'block'; html: string }
@@ -371,9 +378,9 @@ export function runResearchPython(
   data: ResearchData,
   onEvent: (e: PyEvent) => void,
   askAi?: AskAiFn,
-  fetchPrices?: FetchPricesFn,
+  connectors?: Connectors,
 ): Promise<void> {
-  const task = () => execOnce(code, data, onEvent, askAi, fetchPrices);
+  const task = () => execOnce(code, data, onEvent, askAi, connectors);
   const p = chain.then(task, task);
   chain = p.catch(() => {});
   return p;
@@ -384,7 +391,7 @@ async function execOnce(
   data: ResearchData,
   onEvent: (e: PyEvent) => void,
   askAi?: AskAiFn,
-  fetchPrices?: FetchPricesFn,
+  connectors?: Connectors,
 ): Promise<void> {
   const py = await getPyodide();
   const wantsPlot = /matplotlib|pyplot|\bplt\b/.test(code);
@@ -434,7 +441,8 @@ async function execOnce(
         /* плохой блок — пропускаем */
       }
     });
-    // Мост данных: get_prices(...) из скрипта → хост тянет цены (FMP/кэш) и отдаёт JSON.
+    // Мосты данных: get_prices/get_fundamentals/get_dividends → хост тянет (FMP/кэш) и отдаёт JSON.
+    const fetchPrices = connectors?.prices;
     py.globals.set(
       '__get_prices__',
       fetchPrices
@@ -447,6 +455,20 @@ async function execOnce(
             );
             return JSON.stringify(rows);
           }
+        : null,
+    );
+    const fetchFund = connectors?.fundamentals;
+    py.globals.set(
+      '__get_fundamentals__',
+      fetchFund
+        ? async (jsonStr: string) => JSON.stringify(await fetchFund(JSON.parse(jsonStr)?.symbols ?? []))
+        : null,
+    );
+    const fetchDiv = connectors?.dividends;
+    py.globals.set(
+      '__get_dividends__',
+      fetchDiv
+        ? async (jsonStr: string) => JSON.stringify(await fetchDiv(JSON.parse(jsonStr)?.symbols ?? []))
         : null,
     );
 
@@ -477,6 +499,20 @@ async function execOnce(
       `    if wide:\n` +
       `        if __d.empty: return pd.DataFrame()\n` +
       `        return __d.pivot_table(index='date', columns='symbol', values='close', aggfunc='last').sort_index()\n` +
+      `    return __d\n` +
+      `async def get_fundamentals(symbols):\n` +
+      `    import json as __pj\n` +
+      `    __f = globals().get('__get_fundamentals__')\n` +
+      `    if __f is None: raise RuntimeError('get_fundamentals недоступна на сервере')\n` +
+      `    if isinstance(symbols, str): symbols = [symbols]\n` +
+      `    return pd.DataFrame(__pj.loads(await __f(__pj.dumps({'symbols': list(symbols)}))))\n` +
+      `async def get_dividends(symbols):\n` +
+      `    import json as __pj\n` +
+      `    __f = globals().get('__get_dividends__')\n` +
+      `    if __f is None: raise RuntimeError('get_dividends недоступна на сервере')\n` +
+      `    if isinstance(symbols, str): symbols = [symbols]\n` +
+      `    __d = pd.DataFrame(__pj.loads(await __f(__pj.dumps({'symbols': list(symbols)}))))\n` +
+      `    if not __d.empty and 'date' in __d.columns:\n        __d['date'] = pd.to_datetime(__d['date'])\n` +
       `    return __d\n` +
       `fundamentals = pd.DataFrame(__json.loads(__FUND_JSON__))\n` +
       `dividends = pd.DataFrame(__json.loads(__DIV_JSON__))\n` +
