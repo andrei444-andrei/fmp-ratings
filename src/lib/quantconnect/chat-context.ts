@@ -77,6 +77,16 @@ export async function buildChatContext(): Promise<string> {
       for (const [k, v] of Object.entries(facts.statistics)) lines.push(`  ${k}: ${v}`);
     }
 
+    if (facts && facts.tradesTotal) {
+      lines.push(`Сделки (ордера) всего: ${facts.tradesTotal}${facts.tradesCapped ? '+ (показаны первые)' : ''}. По годам — кол-во и инструменты:`);
+      const yrs = Object.keys(facts.tradesByYear).map(Number).filter(y => y > 0).sort((a, b) => a - b);
+      for (const y of yrs) {
+        const t = facts.tradesByYear[y];
+        const top = Object.entries(t.symbols).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([s, n]) => `${s}×${n}`).join(', ');
+        lines.push(`  ${y}: ${t.total} — ${top}`);
+      }
+    }
+
     let beat = 0, comp = 0;
     lines.push('По годам (доходность / макс. просадка за год / vs SPY):');
     for (const y of pf.years) {
@@ -98,5 +108,5 @@ export async function buildChatContext(): Promise<string> {
     }
   }
 
-  return lines.join('\n').slice(0, 22000);
+  return lines.join('\n').slice(0, 28000);
 }
