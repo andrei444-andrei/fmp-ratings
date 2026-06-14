@@ -6,17 +6,15 @@ import PortfolioMatrix from './_components/PortfolioMatrix';
 import CombinedPortfolio from './_components/CombinedPortfolio';
 import RiskCorrelation from './_components/RiskCorrelation';
 import StrategySummary from './_components/StrategySummary';
-import DrawdownAnalysis from './_components/DrawdownAnalysis';
 import QuantChat from './_components/QuantChat';
 import type { QcAlgorithm, QcCredStatus, PortfolioResponse } from '@/lib/quantconnect/types';
 
-// Реестр use-кейсов (вкладок).
+// Реестр use-кейсов (вкладок). «Сводка по стратегии» теперь объединяет сравнение по
+// годам (матрица), глубокую сводку выбранной стратегии, Δ к SPY и анализ просадок.
 const TABS: { key: string; label: string; ready: boolean }[] = [
-  { key: 'compare', label: 'Сравнение по годам', ready: true },
+  { key: 'summary', label: 'Сводка по стратегии', ready: true },
   { key: 'combined', label: 'Объединённый портфель', ready: true },
   { key: 'risk', label: 'Риск / корреляция', ready: true },
-  { key: 'summary', label: 'Сводка по стратегии', ready: true },
-  { key: 'drawdown', label: 'Анализ просадок', ready: true },
 ];
 
 export default function QuantPage() {
@@ -27,7 +25,7 @@ export default function QuantPage() {
   const [error, setError] = useState<string | null>(null);
   const [includeArchived, setIncludeArchived] = useState(false);
   const [startYear, setStartYear] = useState<number | undefined>(undefined);
-  const [tab, setTab] = useState('compare');
+  const [tab, setTab] = useState('summary');
 
   const loadCreds = useCallback(async () => {
     try {
@@ -100,10 +98,10 @@ export default function QuantPage() {
         ))}
       </div>
 
-      {tab === 'compare' ? (
+      {tab === 'summary' ? (
         <>
           <div className="qc-method">
-            <h4>Как читать матрицу</h4>
+            <h4>Сравнение по годам</h4>
             <ul>
               <li><b>Строки</b> — годы; по каждой стратегии: <b>просадка</b> (макс. внутригодовая), <b>доходность</b> за год, <b>накопит.</b> с начала окна; затем бенчмарк <b>SPY</b> (total return, с дивидендами).</li>
               <li>Ячейка доходности залита <b className="qc-pos">зелёным</b> / <b className="qc-neg">красным</b> — стратегия за год <b>обыграла / проиграла SPY</b> (наведи — увидишь разницу).</li>
@@ -144,15 +142,14 @@ export default function QuantPage() {
           ) : portfolio && algos.length > 0 ? (
             <PortfolioMatrix data={portfolio} startYear={startYear} />
           ) : null}
+
+          {/* глубокая сводка по выбранной стратегии: метрики, кривая, помесячно, Δ к SPY, просадки */}
+          <StrategySummary includeArchived={includeArchived} />
         </>
       ) : tab === 'combined' ? (
         <CombinedPortfolio includeArchived={includeArchived} />
       ) : tab === 'risk' ? (
         <RiskCorrelation includeArchived={includeArchived} />
-      ) : tab === 'summary' ? (
-        <StrategySummary includeArchived={includeArchived} />
-      ) : tab === 'drawdown' ? (
-        <DrawdownAnalysis includeArchived={includeArchived} />
       ) : (
         <div className="qc-panel"><div className="qc-state">Раздел в разработке — скоро.</div></div>
       )}

@@ -16,6 +16,9 @@ export type StrategySummary = {
   dates: string[]; equity: number[]; benchEquity: number[] | null;
   monthly: Record<number, Record<number, number>>; // год -> месяц(1..12) -> доходность
   yearlyTotals: Record<number, number>;
+  // помесячные/годовые доходности бенчмарка — для таблицы Δ к SPY (превышение/занижение)
+  monthlyBench: Record<number, Record<number, number>> | null;
+  yearlyBenchTotals: Record<number, number> | null;
 };
 
 const dts = (d: string) => Date.parse(d + 'T00:00:00Z');
@@ -107,10 +110,33 @@ export function computeSummary(dailyIn: DayPoint[], benchmarkDaily: DayPoint[] |
     benchEquity = arr;
   }
 
+  // помесячные/годовые доходности бенчмарка (по его собственным концам месяцев) —
+  // нужны для таблицы Δ к SPY (помесячное превышение/занижение доходности).
+  let monthlyBench: Record<number, Record<number, number>> | null = null;
+  let yearlyBenchTotals: Record<number, number> | null = null;
+  if (benchmarkDaily && benchmarkDaily.length >= 20) {
+    const bdaily = [...benchmarkDaily].filter(p => isFinite(p.v) && p.v > 0).sort((a, b) => (a.d < b.d ? -1 : 1));
+    const bme = monthEnd(bdaily);
+    const mb: Record<number, Record<number, number>> = {};
+    for (let i = 1; i < bme.length; i++) {
+      const r = bme[i - 1].v > 0 ? bme[i].v / bme[i - 1].v - 1 : 0;
+      if (!isFinite(r)) continue;
+      (mb[bme[i].year] ??= {})[bme[i].month] = r;
+    }
+    monthlyBench = mb;
+    const yb: Record<number, number> = {};
+    for (const [y, months] of Object.entries(mb)) {
+      let acc = 1;
+      for (const m of Object.values(months)) acc *= 1 + m;
+      yb[Number(y)] = acc - 1;
+    }
+    yearlyBenchTotals = yb;
+  }
+
   return {
     obsDays: daily.length, years,
     cagr, total, maxDD: mdd < 0 ? mdd : null, maxDDPeak: mdd < 0 ? mPeak : null, maxDDTrough: mdd < 0 ? mTrough : null,
     sharpe, sortino, calmar, volAnn, posMonths, bestMonth, worstMonth, bestYear, worstYear,
-    dates, equity, benchEquity, monthly, yearlyTotals,
+    dates, equity, benchEquity, monthly, yearlyTotals, monthlyBench, yearlyBenchTotals,
   };
 }

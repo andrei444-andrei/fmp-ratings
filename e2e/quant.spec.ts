@@ -110,30 +110,33 @@ test.describe('Аналитика алгоритмов /quant', () => {
 
   test('вкладки use-кейсов: все активны', async ({ page }) => {
     await page.goto('/quant');
-    for (const name of ['Сравнение по годам', 'Объединённый портфель', 'Риск / корреляция', 'Сводка по стратегии', 'Анализ просадок']) {
+    for (const name of ['Сводка по стратегии', 'Объединённый портфель', 'Риск / корреляция']) {
       await expect(page.getByRole('button', { name })).toBeEnabled();
     }
   });
 
-  test('анализ просадок: underwater и таблица эпизодов', async ({ page }) => {
+  test('анализ просадок: underwater и таблица эпизодов (в сводке)', async ({ page }) => {
     await mockConfigured(page);
     await page.goto('/quant');
-    await page.getByRole('button', { name: 'Анализ просадок' }).click();
-    await expect(page.locator('svg.qc-chart')).toBeVisible();
+    await page.getByRole('button', { name: 'Сводка по стратегии' }).click();
+    await expect(page.locator('.qc-panel-h').filter({ hasText: 'Просадки (underwater' })).toBeVisible();
     await expect(page.locator('.qc-matrix').getByText('Глубина')).toBeVisible();
     await expect(page.locator('.qc-matrix').getByText('Восстановление')).toBeVisible();
   });
 
-  test('сводка по стратегии: метрики, кривая, помесячный heatmap', async ({ page }) => {
+  test('сводка по стратегии: метрики, кривая, помесячный heatmap, Δ к SPY', async ({ page }) => {
     await mockConfigured(page);
     await page.goto('/quant');
     await page.getByRole('button', { name: 'Сводка по стратегии' }).click();
     await expect(page.locator('.qc-card-k', { hasText: 'Sharpe' })).toBeVisible();
     await expect(page.locator('.qc-card-k', { hasText: 'Calmar' })).toBeVisible();
-    await expect(page.locator('svg.qc-chart')).toBeVisible();
-    await expect(page.locator('.qc-heat')).toBeVisible();
-    await page.locator('.qc-controls-bar select.qc-select').selectOption({ label: 'Mean Reversion RSI' });
-    await expect(page.locator('.qc-heat')).toBeVisible();
+    await expect(page.locator('svg.qc-chart').first()).toBeVisible();
+    await expect(page.locator('.qc-heat').first()).toBeVisible();
+    // таблица помесячного превышения/занижения к SPY
+    await expect(page.locator('.qc-panel-h').filter({ hasText: 'Δ к SPY' })).toBeVisible();
+    const stratSel = page.locator('.qc-controls-bar', { hasText: 'Стратегия' }).locator('select.qc-select');
+    await stratSel.selectOption({ label: 'Mean Reversion RSI' });
+    await expect(page.locator('.qc-heat').first()).toBeVisible();
   });
 
   test('риск / корреляция: матрица, метрики, downside', async ({ page }) => {
@@ -206,7 +209,7 @@ test.describe('Аналитика алгоритмов /quant', () => {
     await expect(page.locator('.qc-strat', { hasText: 'Mean Reversion' }).locator('.qc-badge.research')).toHaveText('Исследование');
 
     // матрица: бенчмарк = SPY + заливка ячейки доходности vs бенчмарк
-    const matrix = page.locator('.qc-matrix');
+    const matrix = page.locator('.qc-matrix').first();
     await expect(matrix).toBeVisible();
     await expect(matrix.locator('th.bench')).toHaveText('SPY');
     await expect(matrix.locator('td.qc-beat').first()).toBeVisible(); // обыграл БМ
@@ -224,9 +227,9 @@ test.describe('Аналитика алгоритмов /quant', () => {
   test('выбор стартового года сужает окно анализа', async ({ page }) => {
     await mockConfigured(page);
     await page.goto('/quant');
-    const matrix = page.locator('.qc-matrix');
+    const matrix = page.locator('.qc-matrix').first();
     await expect(matrix.getByText('2022', { exact: true })).toBeVisible();
-    await page.locator('.qc-controls-bar select.qc-select').selectOption('2023');
+    await page.locator('.qc-controls-bar', { hasText: 'С года' }).locator('select.qc-select').selectOption('2023');
     await expect(matrix.getByText('2022', { exact: true })).toHaveCount(0);
     await expect(matrix.getByText('2023', { exact: true })).toBeVisible();
   });
