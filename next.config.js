@@ -6,8 +6,9 @@ const nextConfig = {
   // включаем папку drizzle/ в бандл serverless-функций для /api/admin/migrate
   outputFileTracingIncludes: {
     '/api/admin/migrate': ['./drizzle/**/*'],
-    // pyodide (ядро + кэш wheel'ов) в бандл функции исполнения Python
+    // pyodide (ядро + кэш wheel'ов) в бандл функций исполнения Python
     '/api/research/execute': ['./node_modules/pyodide/**/*'],
+    '/api/signals/execute': ['./node_modules/pyodide/**/*'],
   },
 };
 module.exports = nextConfig;
