@@ -109,3 +109,26 @@ export type SeriesResponse = {
   benchmark: { name: string; daily: DayPoint[] } | null;
   error?: string;
 };
+
+// Одна сделка (ордер бектеста) — для просмотра сделок по месяцу.
+export type QcTrade = {
+  time: string;       // ISO-дата/время исполнения
+  symbol: string;
+  direction: 'buy' | 'sell' | 'hold';
+  quantity: number;   // абсолютное число
+  price: number;      // цена ордера/исполнения (0 — неизвестна)
+  value: number;      // |кол-во| × цена (0 — неизвестна)
+  type: string;       // тип ордера (Market/Limit/…)
+  status: string;     // статус (Filled/Canceled/…)
+};
+
+// Ответ /api/quantconnect/trades — сделки одной стратегии (резолвится по id).
+export type TradesResponse = {
+  id: number;
+  name: string;
+  trades: QcTrade[];
+  capped: boolean;       // упёрлись в лимит страниц (показаны не все)
+  total: number;
+  error: string | null;
+  resolvedBacktestId?: string | null;
+};

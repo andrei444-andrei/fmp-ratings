@@ -5,7 +5,7 @@ import EquityChart, { type ChartLine } from './EquityChart';
 import UnderwaterChart from './UnderwaterChart';
 import { computeSummary } from '@/lib/quantconnect/summary';
 import { computeDrawdowns } from '@/lib/quantconnect/drawdowns';
-import type { SeriesResponse } from '@/lib/quantconnect/types';
+import type { SeriesResponse, TradesResponse, QcTrade } from '@/lib/quantconnect/types';
 
 const ACC = '#6b5bf0', MUT = '#9aa0ad';
 const MONTHS = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
@@ -33,12 +33,54 @@ function days(n: number | null): string {
   const m = Math.round(n / 30.4);
   return m < 18 ? `${m} мес` : `${(n / 365.25).toFixed(1)} г`;
 }
+// ISO → «ДД.ММ» (день сделки в рамках месяца)
+function fmtDay(iso: string): string {
+  const d = new Date(iso);
+  return isFinite(d.getTime()) ? `${String(d.getUTCDate()).padStart(2, '0')}.${String(d.getUTCMonth() + 1).padStart(2, '0')}` : '—';
+}
+function fmtNum(n: number): string {
+  if (!isFinite(n)) return '—';
+  const dg = n >= 100 ? 0 : n >= 1 ? 2 : 4;
+  return n.toLocaleString('ru-RU', { maximumFractionDigits: dg });
+}
+function fmtMoney(n: number): string {
+  if (!(n > 0)) return '—';
+  return n.toLocaleString('ru-RU', { maximumFractionDigits: n >= 1000 ? 0 : 2 });
+}
+const SIDE_LABEL = { buy: 'Buy', sell: 'Sell', hold: 'Hold' } as const;
 
 export default function StrategySummary({ includeArchived }: { includeArchived: boolean }) {
   const [series, setSeries] = useState<SeriesResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sel, setSel] = useState<number | null>(null);
+
+  // сделки выбранного месяца (ленивая подгрузка по стратегии)
+  const [selMonth, setSelMonth] = useState<string | null>(null); // 'YYYY-MM'
+  const [trades, setTrades] = useState<QcTrade[] | null>(null);
+  const [tradesFor, setTradesFor] = useState<number | null>(null);
+  const [tradesCapped, setTradesCapped] = useState(false);
+  const [tradesLoading, setTradesLoading] = useState(false);
+  const [tradesErr, setTradesErr] = useState<string | null>(null);
+
+  async function ensureTrades(algoId: number) {
+    if (tradesFor === algoId && trades) return;
+    setTradesLoading(true); setTradesErr(null);
+    try {
+      const r: TradesResponse = await fetch(`/api/quantconnect/trades?id=${algoId}`).then(res => res.json());
+      if (r.error) setTradesErr(r.error);
+      setTrades(r.trades || []);
+      setTradesCapped(!!r.capped);
+      setTradesFor(algoId);
+    } catch (e: any) { setTradesErr(e.message); setTrades([]); }
+    finally { setTradesLoading(false); }
+  }
+  function clickMonth(ym: string) {
+    setSelMonth(ym);
+    if (sel != null) ensureTrades(sel);
+  }
+  // смена стратегии сбрасывает выбранный месяц и подгруженные сделки
+  useEffect(() => { setSelMonth(null); setTrades(null); setTradesFor(null); setTradesErr(null); setTradesCapped(false); }, [sel]);
 
   async function load(force = false) {
     setLoading(true); setError(null);
@@ -67,6 +109,11 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
     return computeSummary(algo.daily, series.benchmark?.daily || null);
   }, [series, algo]);
   const dd = useMemo(() => (algo ? computeDrawdowns(algo.daily) : null), [algo]);
+
+  const monthTrades = useMemo(() => {
+    if (!selMonth || !trades) return [];
+    return trades.filter(t => t.time.slice(0, 7) === selMonth).sort((a, b) => (a.time < b.time ? -1 : 1));
+  }, [selMonth, trades]);
 
   const chart = useMemo(() => {
     if (!sum || !sum.dates.length) return null;
@@ -142,25 +189,81 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
                 </div>
               )}
 
-              {/* помесячный heatmap собственной доходности */}
+              {/* помесячный heatmap собственной доходности + панель сделок выбранного месяца */}
               <div className="qc-panel">
-                <div className="qc-panel-h">Помесячная доходность</div>
-                <div className="qc-tblwrap" style={{ border: 0 }}>
-                  <table className="qc-heat">
-                    <thead><tr><th className="lbl">Год</th>{MONTHS.map(m => <th key={m}>{m}</th>)}<th className="tot">Год</th></tr></thead>
-                    <tbody>
-                      {years.map(y => (
-                        <tr key={y}>
-                          <td className="lbl">{y}</td>
-                          {MONTHS.map((_, mi) => {
-                            const r = sum.monthly[y]?.[mi + 1];
-                            return <td key={mi} style={{ background: r != null ? heatBg(r) : 'transparent' }}>{r != null ? fmtPct(r) : ''}</td>;
-                          })}
-                          <td className={'tot ' + cls(sum.yearlyTotals[y])}>{sum.yearlyTotals[y] != null ? fmtPct(sum.yearlyTotals[y]) : ''}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="qc-panel-h">Помесячная доходность <span className="c">кликни по месяцу — сделки появятся справа</span></div>
+                <div className="qc-mrow">
+                  <div className="qc-tblwrap" style={{ border: 0 }}>
+                    <table className="qc-heat">
+                      <thead><tr><th className="lbl">Год</th>{MONTHS.map(m => <th key={m}>{m}</th>)}<th className="tot">Год</th></tr></thead>
+                      <tbody>
+                        {years.map(y => (
+                          <tr key={y}>
+                            <td className="lbl">{y}</td>
+                            {MONTHS.map((_, mi) => {
+                              const r = sum.monthly[y]?.[mi + 1];
+                              const ym = `${y}-${String(mi + 1).padStart(2, '0')}`;
+                              const has = r != null;
+                              return (
+                                <td key={mi}
+                                  className={(has ? 'clk' : '') + (selMonth === ym ? ' sel' : '')}
+                                  style={{ background: has ? heatBg(r) : 'transparent' }}
+                                  onClick={has ? () => clickMonth(ym) : undefined}
+                                  title={has ? 'Показать сделки за месяц' : undefined}>
+                                  {has ? fmtPct(r) : ''}
+                                </td>
+                              );
+                            })}
+                            <td className={'tot ' + cls(sum.yearlyTotals[y])}>{sum.yearlyTotals[y] != null ? fmtPct(sum.yearlyTotals[y]) : ''}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="qc-trades">
+                    {!selMonth ? (
+                      <div className="qc-trades-empty">Выберите месяц в таблице слева — здесь появятся сделки за него.</div>
+                    ) : (
+                      <>
+                        <div className="qc-trades-h">Сделки · {MONTHS[Number(selMonth.slice(5, 7)) - 1]} {selMonth.slice(0, 4)}</div>
+                        {tradesLoading ? (
+                          <div className="qc-trades-empty">Загрузка сделок…</div>
+                        ) : tradesErr ? (
+                          <div className="qc-trades-empty qc-err">{tradesErr}</div>
+                        ) : monthTrades.length === 0 ? (
+                          <div className="qc-trades-empty">{tradesFor === sel ? 'В этом месяце сделок не было.' : '—'}</div>
+                        ) : (
+                          <>
+                            <div className="qc-trades-sum">
+                              {monthTrades.length} сделок · <span className="qc-pos">{monthTrades.filter(t => t.direction === 'buy').length} buy</span> / <span className="qc-neg">{monthTrades.filter(t => t.direction === 'sell').length} sell</span> · {new Set(monthTrades.map(t => t.symbol)).size} инстр.
+                              {tradesCapped && <span className="qc-mut"> · показаны не все (лимит)</span>}
+                            </div>
+                            <div className="qc-trades-list">
+                              <table>
+                                <thead><tr><th>Дата</th><th>Инстр.</th><th>Сторона</th><th className="r">Кол-во</th><th className="r">Цена</th><th className="r">Объём</th></tr></thead>
+                                <tbody>
+                                  {monthTrades.map((t, i) => (
+                                    <tr key={i}>
+                                      <td>{fmtDay(t.time)}</td>
+                                      <td className="sym">{t.symbol}</td>
+                                      <td>
+                                        <span className={'qc-side ' + t.direction}>{SIDE_LABEL[t.direction]}</span>
+                                        {t.status && t.status !== 'Filled' && <span className="qc-stat">{t.status}</span>}
+                                      </td>
+                                      <td className="r">{fmtNum(t.quantity)}</td>
+                                      <td className="r">{t.price > 0 ? fmtNum(t.price) : '—'}</td>
+                                      <td className="r">{fmtMoney(t.value)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </>
+                        )}
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
 

@@ -20,7 +20,7 @@ function createdMs(v: string | number | undefined): number {
 }
 
 // Резолвим конкретный backtestId: либо сохранённый, либо последний завершённый.
-async function resolveBacktestId(projectId: string, stored: string | null): Promise<string | null> {
+export async function resolveBacktestId(projectId: string, stored: string | null): Promise<string | null> {
   if (stored) return stored;
   const list = await qcListBacktests(projectId);
   if (!list.length) return null;

@@ -59,6 +59,18 @@ const SERIES = {
   benchmark: { name: 'SPY', daily: daily(100000, 0.003, 240, 0.03, 3.0) },
 };
 
+// сделки на каждый месяц 2022–2023 (чтобы любой кликнутый месяц имел сделки)
+function genTrades() {
+  const t: any[] = [];
+  for (let y = 2022; y <= 2023; y++) for (let m = 1; m <= 12; m++) {
+    const mm = String(m).padStart(2, '0');
+    t.push({ time: `${y}-${mm}-08T14:30:00Z`, symbol: 'SPY', direction: 'buy', quantity: 12, price: 410.25, value: 4923, type: 'Market', status: 'Filled' });
+    t.push({ time: `${y}-${mm}-20T15:00:00Z`, symbol: 'AAPL', direction: 'sell', quantity: 30, price: 175.4, value: 5262, type: 'Limit', status: 'Filled' });
+  }
+  return t;
+}
+const TRADES = genTrades();
+
 async function mockConfigured(page: Page) {
   await page.route('**/api/quantconnect/credentials**', r => r.fulfill({ json: { configured: true, userId: '123', tokenHint: '••••cafe' } }));
   await page.route('**/api/quantconnect/algorithms**', async route => {
@@ -69,6 +81,7 @@ async function mockConfigured(page: Page) {
   });
   await page.route('**/api/quantconnect/portfolio**', r => r.fulfill({ json: PORTFOLIO }));
   await page.route('**/api/quantconnect/series**', r => r.fulfill({ json: SERIES }));
+  await page.route('**/api/quantconnect/trades**', r => r.fulfill({ json: { id: 1, name: 'EMA Cross', trades: TRADES, capped: false, total: TRADES.length, error: null } }));
   await page.route('**/api/quantconnect/backtests**', r => r.fulfill({ json: { backtests: [
     { backtestId: 'aaa111', name: 'run A', status: 'Completed.', completed: true },
     { backtestId: 'bbb222', name: 'run B', status: 'Completed.', completed: true },
@@ -137,6 +150,21 @@ test.describe('Аналитика алгоритмов /quant', () => {
     const stratSel = page.locator('.qc-controls-bar', { hasText: 'Стратегия' }).locator('select.qc-select');
     await stratSel.selectOption({ label: 'Mean Reversion RSI' });
     await expect(page.locator('.qc-heat').first()).toBeVisible();
+  });
+
+  test('сводка: клик по месяцу показывает сделки справа', async ({ page }) => {
+    await mockConfigured(page);
+    await page.goto('/quant');
+    await page.getByRole('button', { name: 'Сводка по стратегии' }).click();
+    // до выбора месяца — подсказка
+    await expect(page.locator('.qc-trades-empty')).toBeVisible();
+    // кликаем первую кликабельную ячейку месяца
+    await page.locator('.qc-heat td.clk').first().click();
+    // появляется панель сделок с таблицей buy/sell
+    await expect(page.locator('.qc-trades-h')).toContainText('Сделки');
+    await expect(page.locator('.qc-trades-list .qc-side.buy').first()).toBeVisible();
+    await expect(page.locator('.qc-trades-list .qc-side.sell').first()).toBeVisible();
+    await expect(page.locator('.qc-trades-list td.sym').first()).toContainText('SPY');
   });
 
   test('риск / корреляция: матрица, метрики, downside', async ({ page }) => {
