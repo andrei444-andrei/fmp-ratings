@@ -254,6 +254,29 @@ body:has(.qc-root) {
 .qc-heat td.lbl, .qc-heat th.lbl { text-align: left; font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-weight: 600; color: var(--qc-tx); position: sticky; left: 0; background: var(--qc-surf); min-width: 0; }
 .qc-heat td.tot, .qc-heat th.tot { font-weight: 700; background: var(--qc-surf2); }
 
+/* кликабельные ячейки месяца + панель сделок справа */
+/* scroll-margin — чтобы при автоскролле ячейка не уходила под липкий навбар (top:0) */
+.qc-heat td.clk { cursor: pointer; scroll-margin-top: 70px; scroll-margin-bottom: 24px; }
+.qc-heat td.clk:hover { outline: 2px solid var(--qc-acc-bd); outline-offset: -2px; }
+.qc-heat td.sel { outline: 2px solid var(--qc-acc); outline-offset: -2px; font-weight: 700; }
+.qc-mrow { display: flex; gap: 14px; align-items: flex-start; }
+.qc-mrow > .qc-tblwrap { flex: 1 1 auto; min-width: 0; }
+.qc-trades { flex: 0 0 340px; align-self: stretch; border: .5px solid var(--qc-line); border-radius: var(--qc-rad-lg); background: var(--qc-surf2); padding: 12px; max-height: 500px; overflow: auto; }
+.qc-trades-empty { color: var(--qc-tx3); font-size: 12.5px; line-height: 1.5; padding: 18px 6px; text-align: center; }
+.qc-trades-h { font-size: 12.5px; font-weight: 700; color: var(--qc-tx); margin-bottom: 6px; }
+.qc-trades-sum { font-size: 11.5px; color: var(--qc-tx2); margin-bottom: 10px; font-family: var(--qc-mono); line-height: 1.5; }
+.qc-trades-list table { width: 100%; border-collapse: collapse; font-size: 11.5px; font-family: var(--qc-mono); }
+.qc-trades-list th { text-align: left; font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 9.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--qc-tx3); font-weight: 600; padding: 0 6px 5px; position: sticky; top: 0; background: var(--qc-surf2); }
+.qc-trades-list th.r, .qc-trades-list td.r { text-align: right; }
+.qc-trades-list td { padding: 4px 6px; border-top: .5px solid var(--qc-line); color: var(--qc-tx); white-space: nowrap; }
+.qc-trades-list td.sym { font-weight: 600; }
+.qc-side { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 99px; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+.qc-side.buy { color: var(--qc-pos); background: rgba(15, 157, 99, .14); }
+.qc-side.sell { color: var(--qc-neg); background: rgba(219, 59, 68, .14); }
+.qc-side.hold { color: var(--qc-tx3); background: var(--qc-line); }
+.qc-stat { font-size: 9.5px; color: var(--qc-tx3); margin-left: 5px; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+@media (max-width: 760px) { .qc-mrow { flex-direction: column; } .qc-trades { flex-basis: auto; width: 100%; max-height: 360px; } }
+
 /* корреляционная матрица (хитмап) */
 .qc-corr { border-collapse: separate; border-spacing: 2px; font-size: 12px; font-family: var(--qc-mono); }
 .qc-corr th, .qc-corr td { padding: 7px 9px; text-align: center; white-space: nowrap; color: var(--qc-tx); border-radius: 5px; }
