@@ -8,7 +8,7 @@ const nextConfig = {
     '/api/admin/migrate': ['./drizzle/**/*'],
     // pyodide (ядро + кэш wheel'ов) в бандл функций исполнения Python
     '/api/research/execute': ['./node_modules/pyodide/**/*'],
-    '/api/signals/execute': ['./node_modules/pyodide/**/*'],
+    '/api/signals/study': ['./node_modules/pyodide/**/*'],
   },
 };
 module.exports = nextConfig;
