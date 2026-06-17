@@ -92,6 +92,14 @@ def factor_series(c, bc, fid, param, has_b, skip=0):
     if fid == 'xbench':
         if not has_b: return (c.shift(sk) / c.shift(p) - 1.0) * 100.0
         return ((c.shift(sk) / c.shift(p)) - (bc.shift(sk) / bc.shift(p))) * 100.0
+    if fid == 'xvol':
+        # превышение бенчмарка, нормированное на год. волатильность актива (учёт природы актива).
+        if has_b:
+            exc = ((c.shift(sk) / c.shift(p)) - (bc.shift(sk) / bc.shift(p))) * 100.0
+        else:
+            exc = (c.shift(sk) / c.shift(p) - 1.0) * 100.0
+        vol = c.pct_change().rolling(p).std() * math.sqrt(252) * 100.0
+        return exc / vol.replace(0, np.nan)
     if fid == 'vol':
         return c.pct_change().rolling(p).std() * math.sqrt(252) * 100.0
     if fid == 'dist_ath':

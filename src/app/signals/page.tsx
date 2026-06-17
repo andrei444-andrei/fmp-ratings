@@ -731,7 +731,7 @@ function SideToggle({ side, setSide, allowBand }: { side: Side; setSide: (s: Sid
 
 function FactorSelect({ value, onChange }: { value: FactorId; onChange: (id: FactorId) => void }) {
   return (
-    <Select value={value} onChange={(e) => onChange(e.target.value as FactorId)}>
+    <Select value={value} onChange={(e) => onChange(e.target.value as FactorId)} data-testid="factor-select">
       <optgroup label="Основные">
         {FACTORS.filter((f) => f.core).map((f) => (
           <option key={f.id} value={f.id}>{f.label}</option>
