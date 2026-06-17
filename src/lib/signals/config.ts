@@ -36,7 +36,13 @@ function normSignal(raw: any): SignalDef | null {
   const f = FACTOR_BY_ID[String(raw?.factor)];
   if (!f) return null;
   const param = f.paramOptions.includes(Number(raw?.param)) ? Number(raw.param) : f.defaultParams[0];
-  const side: Side = raw?.side === 'low' || raw?.side === 'high' ? raw.side : f.defaultSide;
+  const side: Side = raw?.side === 'low' || raw?.side === 'high' || raw?.side === 'band' ? raw.side : f.defaultSide;
+  if (side === 'band') {
+    let lo = clampNum(raw?.lo, f.defaultThresholds[0], -1e6, 1e6);
+    let hi = clampNum(raw?.hi, f.defaultThresholds[f.defaultThresholds.length - 1], -1e6, 1e6);
+    if (lo > hi) [lo, hi] = [hi, lo];
+    return { factor: f.id as FactorId, param, side, lo, hi };
+  }
   const threshold = clampNum(raw?.threshold, f.defaultThresholds[0], -1e6, 1e6);
   return { factor: f.id as FactorId, param, side, threshold };
 }
@@ -54,12 +60,14 @@ export function normalizeStudyConfig(body: any): StudyConfig {
 
   if (mode === 'factor') {
     const f = FACTOR_BY_ID[String(body?.factor)] || FACTOR_BY_ID.xbench;
-    const side: Side = body?.side === 'low' || body?.side === 'high' ? body.side : f.defaultSide;
+    // Свип всегда односторонний (high/low); диапазоны строит режим bins='range' из тех же порогов.
+    const side: Side = body?.side === 'low' ? 'low' : body?.side === 'high' ? 'high' : f.defaultSide === 'low' ? 'low' : 'high';
     const params = normNumberList(body?.params, f.defaultParams, 6).filter((p) => f.paramOptions.includes(p));
     return {
       ...base,
       factor: f.id,
       side,
+      bins: body?.bins === 'range' ? 'range' : 'cumulative',
       params: params.length ? params : f.defaultParams,
       thresholds: normNumberList(body?.thresholds, f.defaultThresholds, 14),
       fdrAlpha: clampNum(body?.fdrAlpha, 0.1, 0.01, 0.5),

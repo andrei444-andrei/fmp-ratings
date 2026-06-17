@@ -29,12 +29,22 @@ test.describe('Signals /signals', () => {
     const cells = page.getByTestId('heat-cell');
     await expect(cells.first()).toBeVisible({ timeout: 150000 });
     expect(await cells.count()).toBeGreaterThan(1);
-    // Клик по ячейке → панель деталей с кнопкой сохранения.
+    // Клик по ячейке → панель деталей: по годам + по тикерам + кнопка сохранения.
     await cells.first().click();
     const saveBtn = page.getByRole('button', { name: 'Сохранить как сигнал' });
     await expect(saveBtn).toBeVisible({ timeout: 30000 });
+    await expect(page.getByText('Изменение по годам (ср. изб. дох.)')).toBeVisible();
+    await expect(page.getByText('По тикерам', { exact: true })).toBeVisible();
     await saveBtn.click();
     await expect(page.getByText('Сигнал сохранён')).toBeVisible({ timeout: 15000 });
+  });
+
+  test('режим Фактор: диапазоны (от–до) строят непересекающиеся корзины', async ({ page }) => {
+    await setup(page);
+    await page.getByRole('button', { name: 'Диапазоны (от–до)' }).click();
+    await page.getByTestId('run-study').click();
+    await expect(page.getByTestId('heat-cell').first()).toBeVisible({ timeout: 150000 });
+    await expect(page.locator('[data-testid="signals-output"]').getByText(/диапазон/i).first()).toBeVisible();
   });
 
   test('режим Сигнал: событийный анализ рендерит статистику', async ({ page }) => {

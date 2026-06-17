@@ -3,7 +3,7 @@
 // (селекты, дефолтные сетки свипа) и для валидации конфига на сервере.
 
 export type FactorId = 'momentum' | 'xbench' | 'vol' | 'dist_ath' | 'sma_dist' | 'rsi';
-export type Side = 'high' | 'low';
+export type Side = 'high' | 'low' | 'band';
 
 export type FactorDef = {
   id: FactorId;
@@ -97,14 +97,18 @@ export const FACTOR_BY_ID: Record<string, FactorDef> = Object.fromEntries(FACTOR
 
 export type SignalDef = {
   factor: FactorId;
-  param: number;     // конкретное значение параметра фактора
-  side: Side;        // high: value >= threshold; low: value <= threshold
-  threshold: number; // порог
+  param: number;       // конкретное значение параметра фактора
+  side: Side;          // high: value >= threshold; low: value <= threshold; band: lo..hi
+  threshold?: number;  // порог для high/low
+  lo?: number;         // нижняя граница для band
+  hi?: number;         // верхняя граница для band
 };
 
 export function signalLabel(s: SignalDef): string {
   const f = FACTOR_BY_ID[s.factor];
-  const op = s.side === 'high' ? '≥' : '≤';
   const fl = f ? f.label : s.factor;
-  return `${fl} (${s.param}д) ${op} ${s.threshold}${f ? f.unit : ''}`;
+  const unit = f ? f.unit : '';
+  if (s.side === 'band') return `${fl} (${s.param}д) ∈ [${s.lo}; ${s.hi}]${unit}`;
+  const op = s.side === 'high' ? '≥' : '≤';
+  return `${fl} (${s.param}д) ${op} ${s.threshold}${unit}`;
 }
