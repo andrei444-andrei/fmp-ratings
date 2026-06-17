@@ -114,7 +114,7 @@ def factor_series(c, bc, fid, param, has_b, skip=0):
 
 def build_targets(px, bench, horizons, step):
     px = px.sort_index(); has_b = bench in px.columns; bc = px[bench] if has_b else None
-    dates = list(px.index); keep = set(dates[::max(1, step)])
+    keep = px.index[::max(1, step)]
     frames = []
     for s in [c for c in px.columns if c != bench]:
         c = px[s]
@@ -123,25 +123,27 @@ def build_targets(px, bench, horizons, step):
         for h in horizons:
             fwd = c.shift(-h) / c - 1.0
             d['t_' + str(h)] = ((fwd - (bc.shift(-h) / bc - 1.0)) * 100.0) if has_b else (fwd * 100.0)
-        d['symbol'] = s; d['date'] = px.index
+        # Сэмплируем (без перекрытия) ДО конкатенации — иначе панель из полной дневной истории
+        # на большой вселенной (сотни тикеров) исчерпывает память.
+        d = d.reindex(keep)
+        d['symbol'] = s; d['date'] = d.index
         frames.append(d)
     if not frames: return pd.DataFrame()
-    full = pd.concat(frames, ignore_index=True)
-    return full[full['date'].isin(keep)]
+    return pd.concat(frames, ignore_index=True)
 
 def build_fval(px, bench, fid, param, step, skip=0):
     px = px.sort_index(); has_b = bench in px.columns; bc = px[bench] if has_b else None
-    dates = list(px.index); keep = set(dates[::max(1, step)])
+    keep = px.index[::max(1, step)]
     frames = []
     for s in [c for c in px.columns if c != bench]:
         c = px[s]
         if c.notna().sum() < 260: continue
-        d = pd.DataFrame({'fval': factor_series(c, bc, fid, param, has_b, skip)})
-        d['symbol'] = s; d['date'] = px.index
+        fv = factor_series(c, bc, fid, param, has_b, skip).reindex(keep)
+        d = pd.DataFrame({'fval': fv})
+        d['symbol'] = s; d['date'] = d.index
         frames.append(d)
     if not frames: return pd.DataFrame()
-    full = pd.concat(frames, ignore_index=True)
-    return full[full['date'].isin(keep)]
+    return pd.concat(frames, ignore_index=True)
 
 def region_mask(series, sig):
     side = sig.get('side')

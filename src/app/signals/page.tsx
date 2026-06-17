@@ -187,6 +187,10 @@ function Signals() {
   const [horizon, setHorizon] = useState(5);
   const [yearFrom, setYearFrom] = useState('');
   const [yearTo, setYearTo] = useState('');
+  // Динамический список «Крупные акции» (S&P 500 из FMP, с fallback на статику).
+  const [megaTickers, setMegaTickers] = useState<string[] | null>(null);
+  const presetTickers = (p: { id: UniversePreset; tickers: string[] }) =>
+    p.id === 'mega' && megaTickers && megaTickers.length ? megaTickers : p.tickers;
 
   const [tab, setTab] = useState<Mode>('factor');
   const [running, setRunning] = useState(false);
@@ -229,27 +233,27 @@ function Signals() {
 
   const universe = useMemo(() => {
     const set = new Set<string>();
-    for (const p of UNIVERSE_PRESETS) if (presets.has(p.id)) for (const t of p.tickers) set.add(t);
+    for (const p of UNIVERSE_PRESETS) if (presets.has(p.id)) for (const t of presetTickers(p)) set.add(t);
     for (const t of custom.split(/[\s,;]+/)) {
       const s = t.toUpperCase().trim();
       if (/^[A-Z][A-Z0-9.\-]{0,9}$/.test(s)) set.add(s);
     }
     set.delete(benchmark.toUpperCase().trim());
     return [...set];
-  }, [presets, custom, benchmark]);
+  }, [presets, custom, benchmark, megaTickers]);
 
   // Группы для раздельных таблиц по классам активов (режим «Фактор»): каждая выбранная
   // группа + «свои тикеры» — отдельная таблица.
   const groups = useMemo(() => {
     const out: { label: string; tickers: string[] }[] = [];
-    for (const pr of UNIVERSE_PRESETS) if (presets.has(pr.id)) out.push({ label: pr.label, tickers: pr.tickers });
+    for (const pr of UNIVERSE_PRESETS) if (presets.has(pr.id)) out.push({ label: pr.label, tickers: presetTickers(pr) });
     const customSyms = custom
       .split(/[\s,;]+/)
       .map((s) => s.toUpperCase().trim())
       .filter((s) => /^[A-Z][A-Z0-9.\-]{0,9}$/.test(s));
     if (customSyms.length) out.push({ label: 'Свои тикеры', tickers: customSyms });
     return out;
-  }, [presets, custom]);
+  }, [presets, custom, megaTickers]);
 
   async function loadSaved() {
     try {
@@ -270,6 +274,14 @@ function Signals() {
   useEffect(() => {
     loadSaved();
     loadResults();
+    (async () => {
+      try {
+        const d = await (await fetch('/api/signals/universe')).json();
+        if (Array.isArray(d?.mega) && d.mega.length) setMegaTickers(d.mega);
+      } catch {
+        /* fallback на статический список в пресете */
+      }
+    })();
   }, []);
 
   async function saveCurrentResult() {
