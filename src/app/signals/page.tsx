@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { marked } from 'marked';
 import {
   Badge,
   Button,
@@ -13,58 +12,32 @@ import {
   Field,
   Input,
   Label,
-  Modal,
   Select,
   Skeleton,
+  Sparkline,
   Spinner,
   Textarea,
   ToastProvider,
   useToast,
 } from '@/components/ui';
-import {
-  DEFAULT_BASE_SIGNALS,
-  UNIVERSE_PRESETS,
-  type UniversePreset,
-} from '@/lib/signals/presets';
+import { FACTORS, FACTOR_BY_ID, signalLabel, type FactorId, type Side, type SignalDef } from '@/lib/signals/factors';
+import { UNIVERSE_PRESETS, type UniversePreset } from '@/lib/signals/presets';
+import { Heatmap, type HeatCell } from './Heatmap';
 
-type SavedRunItem = { id: number; title: string | null; created_at: string };
+type Mode = 'factor' | 'signal' | 'combine';
+type SavedSignal = { id: number; name: string; def: SignalDef };
 
-function esc(s: string): string {
-  return s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!));
+function parseList(s: string): number[] {
+  return [...new Set(s.split(/[\s,;]+/).map((x) => Number(x)).filter((x) => Number.isFinite(x)))];
 }
-function renderMd(md: string): string {
-  try {
-    return marked.parse(md || '', { async: false, breaks: true }) as string;
-  } catch {
-    return esc(md);
-  }
+function fpct(v: number | null | undefined, d = 2): string {
+  if (v == null || !Number.isFinite(v)) return '—';
+  return (v >= 0 ? '+' : '') + v.toFixed(d) + '%';
 }
-
-function TrashIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m2 0v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
+function fnum(v: number | null | undefined, d = 2): string {
+  if (v == null || !Number.isFinite(v)) return '—';
+  return v.toFixed(d);
 }
-function EditIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M4 20h4L18 10a2 2 0 0 0 0-3l-1-1a2 2 0 0 0-3 0L4 16v4z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-const HORIZONS = [
-  { v: 5, label: '1 неделя (5 дней)' },
-  { v: 10, label: '2 недели (10 дней)' },
-  { v: 21, label: '1 месяц (21 день)' },
-];
-const FDRS = [
-  { v: 0.05, label: 'FDR 0.05 (строго)' },
-  { v: 0.1, label: 'FDR 0.10 (баланс)' },
-  { v: 0.2, label: 'FDR 0.20 (мягко)' },
-];
 
 export default function SignalsPage() {
   return (
@@ -74,41 +47,86 @@ export default function SignalsPage() {
   );
 }
 
+function Tabs({ tab, setTab }: { tab: Mode; setTab: (m: Mode) => void }) {
+  const items: { id: Mode; label: string }[] = [
+    { id: 'factor', label: '1 · Фактор' },
+    { id: 'signal', label: '2 · Сигнал' },
+    { id: 'combine', label: '3 · Комбинация' },
+  ];
+  return (
+    <div className="flex gap-1 rounded-fk bg-surface-2 p-1">
+      {items.map((it) => (
+        <button
+          key={it.id}
+          type="button"
+          data-testid={`tab-${it.id}`}
+          onClick={() => setTab(it.id)}
+          className={`flex-1 rounded-fk-sm px-3 py-1.5 text-[13px] font-semibold transition-colors ${
+            tab === it.id ? 'bg-surface-elev text-ink shadow-fk-sm' : 'text-ink-3 hover:text-ink-2'
+          }`}
+        >
+          {it.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Stat({ label, value, hint, tone }: { label: string; value: string; hint?: string; tone?: 'up' | 'down' }) {
+  return (
+    <div className="rounded-fk border border-line bg-surface-elev px-3.5 py-2.5">
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-ink-3">{label}</div>
+      <div className={`mt-0.5 text-[20px] font-bold tabular-nums ${tone === 'up' ? 'text-up-strong' : tone === 'down' ? 'text-down-strong' : 'text-ink'}`}>
+        {value}
+      </div>
+      {hint && <div className="mt-0.5 text-[11px] text-ink-3">{hint}</div>}
+    </div>
+  );
+}
+
 function Signals() {
   const { toast } = useToast();
 
-  // ── Конфиг ──
+  // ── Общий конфиг ──
   const [presets, setPresets] = useState<Set<UniversePreset>>(new Set(['broad']));
   const [custom, setCustom] = useState('');
   const [benchmark, setBenchmark] = useState('SPY');
   const [horizon, setHorizon] = useState(5);
-  const [fdr, setFdr] = useState(0.1);
-  const [minTrain, setMinTrain] = useState(52);
 
-  // ── Прогон ──
+  const [tab, setTab] = useState<Mode>('factor');
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState('');
-  const [blocks, setBlocks] = useState<string[]>([]);
-  const [log, setLog] = useState('');
-  const [isFresh, setIsFresh] = useState(false);
-  const [viewDesc, setViewDesc] = useState<string | null>(null);
-  const lastConfigRef = useRef<Record<string, unknown> | null>(null);
+  const [result, setResult] = useState<any>(null);
+  const [errMsg, setErrMsg] = useState('');
 
-  // ── Сохранённые прогоны ──
-  const [savedRuns, setSavedRuns] = useState<SavedRunItem[] | null>(null);
-  const [runModal, setRunModal] = useState<
-    { mode: 'save' | 'edit'; id?: number; title: string; description: string } | null
-  >(null);
-  const [runPreview, setRunPreview] = useState(false);
-  const [savingResult, setSavingResult] = useState(false);
+  // ── Фактор ──
+  const [factorId, setFactorId] = useState<FactorId>('xbench');
+  const factorDef = FACTOR_BY_ID[factorId];
+  const [fSide, setFSide] = useState<Side>(factorDef.defaultSide);
+  const [fParams, setFParams] = useState<number[]>(factorDef.defaultParams);
+  const [fThresholds, setFThresholds] = useState<string>(factorDef.defaultThresholds.join(', '));
+  const [selCell, setSelCell] = useState<HeatCell | null>(null);
+
+  // ── Сигнал ──
+  const [sFactor, setSFactor] = useState<FactorId>('momentum');
+  const sDef = FACTOR_BY_ID[sFactor];
+  const [sParam, setSParam] = useState<number>(sDef.defaultParams[0]);
+  const [sSide, setSSide] = useState<Side>(sDef.defaultSide);
+  const [sThreshold, setSThreshold] = useState<number>(sDef.defaultThresholds[0]);
+
+  // ── Комбинация ──
+  const [saved, setSaved] = useState<SavedSignal[] | null>(null);
+  const [picked, setPicked] = useState<number[]>([]);
+  const [grid0, setGrid0] = useState('');
+  const [grid1, setGrid1] = useState('');
+  const [minN, setMinN] = useState(30);
+  const [folds, setFolds] = useState(4);
 
   const outRef = useRef<HTMLDivElement>(null);
 
   const universe = useMemo(() => {
     const set = new Set<string>();
-    for (const p of UNIVERSE_PRESETS) {
-      if (presets.has(p.id)) for (const t of p.tickers) set.add(t);
-    }
+    for (const p of UNIVERSE_PRESETS) if (presets.has(p.id)) for (const t of p.tickers) set.add(t);
     for (const t of custom.split(/[\s,;]+/)) {
       const s = t.toUpperCase().trim();
       if (/^[A-Z][A-Z0-9.\-]{0,9}$/.test(s)) set.add(s);
@@ -117,62 +135,54 @@ function Signals() {
     return [...set];
   }, [presets, custom, benchmark]);
 
-  async function loadRuns() {
+  async function loadSaved() {
     try {
-      const d = await (await fetch('/api/signals/runs')).json();
-      setSavedRuns(Array.isArray(d?.runs) ? d.runs : []);
+      const d = await (await fetch('/api/signals/saved')).json();
+      setSaved(Array.isArray(d?.signals) ? d.signals : []);
     } catch {
-      setSavedRuns([]);
+      setSaved([]);
     }
   }
   useEffect(() => {
-    loadRuns();
+    loadSaved();
   }, []);
   useEffect(() => {
-    outRef.current?.scrollTo({ top: outRef.current.scrollHeight, behavior: 'smooth' });
-  }, [blocks, log, status]);
+    outRef.current?.scrollTo({ top: 0 });
+  }, [result]);
 
-  function togglePreset(id: UniversePreset) {
-    setPresets((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  // Смена фактора в свипе → подставляем его дефолты.
+  function changeFactor(id: FactorId) {
+    setFactorId(id);
+    const f = FACTOR_BY_ID[id];
+    setFSide(f.defaultSide);
+    setFParams(f.defaultParams);
+    setFThresholds(f.defaultThresholds.join(', '));
+    setSelCell(null);
+  }
+  function changeSignalFactor(id: FactorId) {
+    setSFactor(id);
+    const f = FACTOR_BY_ID[id];
+    setSParam(f.defaultParams[0]);
+    setSSide(f.defaultSide);
+    setSThreshold(f.defaultThresholds[0]);
   }
 
-  function buildResultHtml(): string {
-    const logHtml = log ? `<pre class="rlog">${esc(log)}</pre>` : '';
-    return logHtml + blocks.join('');
-  }
-
-  async function execute() {
+  async function runStudy(payload: Record<string, unknown>) {
     if (running) return;
     if (universe.length < 4) {
-      toast({ variant: 'error', title: 'Маловата вселенная', description: 'Нужно ≥ 4 инструментов — добавьте пресет или тикеры.' });
+      toast({ variant: 'error', title: 'Маловата вселенная', description: 'Нужно ≥ 4 инструментов.' });
       return;
     }
-    const config = {
-      universe,
-      benchmark: benchmark.toUpperCase().trim() || 'SPY',
-      horizonDays: horizon,
-      stepDays: horizon,
-      fdrAlpha: fdr,
-      walkforwardMinTrain: minTrain,
-      baseSignals: DEFAULT_BASE_SIGNALS,
-    };
-    lastConfigRef.current = config;
     setRunning(true);
-    setIsFresh(true);
-    setBlocks([]);
-    setLog('');
-    setViewDesc(null);
+    setResult(null);
+    setErrMsg('');
+    setSelCell(null);
     setStatus('Отправка запроса…');
     try {
-      const res = await fetch('/api/signals/execute', {
+      const res = await fetch('/api/signals/study', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ config }),
+        body: JSON.stringify({ ...payload, universe, benchmark: benchmark.toUpperCase().trim() || 'SPY', horizon }),
       });
       if (!res.body) throw new Error('Нет потока ответа');
       const reader = res.body.getReader();
@@ -194,116 +204,79 @@ function Signals() {
             continue;
           }
           if (ev.type === 'status') setStatus(ev.text);
-          else if (ev.type === 'block') setBlocks((b) => [...b, ev.html]);
-          else if (ev.type === 'log') setLog((l) => l + ev.text);
+          else if (ev.type === 'result') setResult(ev.data);
+          else if (ev.type === 'error') setErrMsg(ev.text || 'ошибка');
           else if (ev.type === 'done') setStatus('Готово');
         }
       }
     } catch (e: any) {
+      setErrMsg(e?.message || 'ошибка');
       setStatus('Ошибка');
-      toast({ variant: 'error', title: 'Ошибка выполнения', description: e?.message });
     } finally {
       setRunning(false);
     }
   }
 
-  function openSaveResultModal() {
-    const d = new Date();
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const ts = `${pad(d.getDate())}.${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    setRunModal({ mode: 'save', title: `Модель сигналов · ${ts}`, description: '' });
-    setRunPreview(false);
-  }
-
-  async function openEditRun(id: number) {
+  async function saveSignalDef(def: SignalDef, name?: string) {
     try {
-      const d = await (await fetch(`/api/signals/runs/${id}`)).json();
-      const run = d?.run;
-      if (!run) throw new Error('Результат не найден');
-      setRunModal({ mode: 'edit', id, title: run.title || '', description: run.description || '' });
-      setRunPreview(false);
+      const r = await fetch('/api/signals/saved', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ def, name: name || signalLabel(def) }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d?.error || 'не удалось');
+      toast({ variant: 'success', title: 'Сигнал сохранён', description: d?.name });
+      loadSaved();
     } catch (e: any) {
-      toast({ variant: 'error', title: 'Не удалось открыть', description: e?.message });
+      toast({ variant: 'error', title: 'Ошибка', description: e?.message });
+    }
+  }
+  async function deleteSaved(id: number) {
+    try {
+      await fetch(`/api/signals/saved/${id}`, { method: 'DELETE' });
+      setPicked((p) => p.filter((x) => x !== id));
+      loadSaved();
+    } catch {
+      /* noop */
     }
   }
 
-  async function confirmRunModal() {
-    if (!runModal || !runModal.title.trim()) return;
-    setSavingResult(true);
-    try {
-      if (runModal.mode === 'save') {
-        const resultHtml = buildResultHtml();
-        if (!resultHtml) throw new Error('нечего сохранять');
-        const r = await fetch('/api/signals/runs', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            resultHtml,
-            title: runModal.title.trim(),
-            description: runModal.description,
-            config: lastConfigRef.current,
-          }),
-        });
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(d?.error || 'Не удалось сохранить результат');
-        toast({ variant: 'success', title: 'Результат сохранён', description: d?.title });
-      } else {
-        const r = await fetch(`/api/signals/runs/${runModal.id}`, {
-          method: 'PATCH',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ title: runModal.title.trim(), description: runModal.description }),
-        });
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(d?.error || 'Не удалось сохранить');
-        toast({ variant: 'success', title: 'Изменения сохранены' });
-      }
-      setRunModal(null);
-      loadRuns();
-    } catch (e: any) {
-      toast({ variant: 'error', title: 'Ошибка сохранения', description: e?.message });
-    } finally {
-      setSavingResult(false);
+  // ── Запуск по вкладкам ──
+  function runFactor() {
+    runStudy({ mode: 'factor', factor: factorId, side: fSide, params: fParams, thresholds: parseList(fThresholds) });
+  }
+  function runSignal() {
+    runStudy({ mode: 'signal', signal: { factor: sFactor, param: sParam, side: sSide, threshold: sThreshold } });
+  }
+  function runCombine() {
+    const sigs = (saved ?? []).filter((s) => picked.includes(s.id)).map((s) => s.def);
+    if (sigs.length < 2) {
+      toast({ variant: 'error', title: 'Нужно ≥ 2 сигнала', description: 'Сохраните сигналы во вкладке «Сигнал» и выберите минимум два.' });
+      return;
     }
+    runStudy({
+      mode: 'combine',
+      signals: sigs,
+      grid0: parseList(grid0).length ? parseList(grid0) : FACTOR_BY_ID[sigs[0].factor].defaultThresholds,
+      grid1: parseList(grid1).length ? parseList(grid1) : FACTOR_BY_ID[sigs[1].factor].defaultThresholds,
+      minN,
+      folds,
+    });
   }
 
-  async function openSavedRun(id: number) {
-    try {
-      const d = await (await fetch(`/api/signals/runs/${id}`)).json();
-      const run = d?.run;
-      if (!run) throw new Error('Результат не найден');
-      setRunning(false);
-      setIsFresh(false);
-      setLog('');
-      setBlocks(run.result_html ? [run.result_html] : []);
-      setViewDesc(run.description || null);
-      setStatus('Сохранённый результат');
-    } catch (e: any) {
-      toast({ variant: 'error', title: 'Не удалось открыть', description: e?.message });
-    }
+  function togglePicked(id: number) {
+    setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : p.length >= 3 ? p : [...p, id]));
   }
-
-  async function onDeleteRun(id: number) {
-    try {
-      const r = await fetch(`/api/signals/runs/${id}`, { method: 'DELETE' });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Ошибка');
-      toast({ variant: 'success', title: 'Результат удалён' });
-      loadRuns();
-    } catch (e: any) {
-      toast({ variant: 'error', title: 'Не удалось удалить', description: e?.message });
-    }
-  }
-
-  const hasOutput = blocks.length > 0 || log.length > 0 || running;
-  const canSaveResult = isFresh && !running && (blocks.length > 0 || log.length > 0);
 
   return (
     <>
       <header className="sticky top-0 z-30 border-b border-line bg-[rgba(255,255,255,0.82)] backdrop-blur-md">
-        <div className="mx-auto flex max-w-[1200px] items-center gap-3 px-4 py-3 sm:px-6">
+        <div className="mx-auto flex max-w-[1280px] items-center gap-3 px-4 py-3 sm:px-6">
           <span className="h-7 w-7 rounded-fk-sm bg-gradient-to-br from-brand to-[#9b8cff] shadow-[0_4px_14px_rgba(109,91,240,0.45)]" />
           <div className="leading-tight">
             <div className="text-sm font-bold text-ink">Модель сигналов</div>
-            <div className="text-[11px] text-ink-3">Факторная модель · значимость · веса · OOS</div>
+            <div className="text-[11px] text-ink-3">Фактор → Сигнал → Комбинация</div>
           </div>
           <div className="ml-auto">
             <Badge variant="brand">beta</Badge>
@@ -311,20 +284,17 @@ function Signals() {
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-[1200px] grid-cols-1 gap-4 px-4 py-6 sm:px-6 lg:grid-cols-[380px_1fr] lg:py-8">
+      <main className="mx-auto grid max-w-[1280px] grid-cols-1 gap-4 px-4 py-6 sm:px-6 lg:grid-cols-[400px_1fr] lg:py-8">
         {/* Левая колонка — конфиг */}
         <div className="flex min-w-0 flex-col gap-4">
           <Card>
             <CardHeader>
-              <CardTitle>Конфигурация</CardTitle>
-              <CardDescription>
-                База — моментум-экстремумы; вторичные факторы (SMA, волатильность, расстояние от ATH) модулируют
-                ожидаемую избыточную доходность. Значимость — с FDR-поправкой.
-              </CardDescription>
+              <CardTitle>Данные</CardTitle>
+              <CardDescription>Вселенная и бенчмарк — общие для всех режимов.</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-3">
               <Field>
-                <Label>Вселенная инструментов</Label>
+                <Label>Вселенная ({universe.length})</Label>
                 <div className="flex flex-wrap gap-2" data-testid="universe-presets">
                   {UNIVERSE_PRESETS.map((p) => {
                     const on = presets.has(p.id);
@@ -332,11 +302,15 @@ function Signals() {
                       <button
                         key={p.id}
                         type="button"
-                        onClick={() => togglePreset(p.id)}
-                        className={`rounded-fk-pill border px-3 py-1.5 text-[12px] font-medium transition-colors ${
-                          on
-                            ? 'border-brand bg-brand-50 text-brand-700'
-                            : 'border-line-strong bg-surface-elev text-ink-2 hover:bg-surface-2'
+                        onClick={() =>
+                          setPresets((prev) => {
+                            const n = new Set(prev);
+                            n.has(p.id) ? n.delete(p.id) : n.add(p.id);
+                            return n;
+                          })
+                        }
+                        className={`rounded-fk-pill border px-2.5 py-1 text-[12px] font-medium transition-colors ${
+                          on ? 'border-brand bg-brand-50 text-brand-700' : 'border-line-strong bg-surface-elev text-ink-2 hover:bg-surface-2'
                         }`}
                       >
                         {p.label}
@@ -344,124 +318,82 @@ function Signals() {
                     );
                   })}
                 </div>
-                <p className="text-xs text-ink-3">Выбрано инструментов: {universe.length}</p>
               </Field>
-
-              <Field>
-                <Label htmlFor="custom-tickers">Свои тикеры (через запятую/пробел)</Label>
-                <Textarea
-                  id="custom-tickers"
-                  value={custom}
-                  onChange={(e) => setCustom(e.target.value)}
-                  placeholder="напр.: SMH, GLD, TLT"
-                  style={{ minHeight: 64 }}
-                />
-              </Field>
-
               <div className="grid grid-cols-2 gap-3">
                 <Field>
-                  <Label htmlFor="benchmark">Бенчмарк</Label>
-                  <Input id="benchmark" value={benchmark} onChange={(e) => setBenchmark(e.target.value)} placeholder="SPY" />
+                  <Label htmlFor="bm">Бенчмарк</Label>
+                  <Input id="bm" value={benchmark} onChange={(e) => setBenchmark(e.target.value)} />
                 </Field>
                 <Field>
-                  <Label htmlFor="horizon">Горизонт таргета</Label>
-                  <Select id="horizon" value={horizon} onChange={(e) => setHorizon(Number(e.target.value))}>
-                    {HORIZONS.map((h) => (
-                      <option key={h.v} value={h.v}>
-                        {h.label}
-                      </option>
-                    ))}
+                  <Label htmlFor="hz">Горизонт (дн.)</Label>
+                  <Select id="hz" value={horizon} onChange={(e) => setHorizon(Number(e.target.value))}>
+                    <option value={5}>5 (неделя)</option>
+                    <option value={10}>10 (2 недели)</option>
+                    <option value={21}>21 (месяц)</option>
                   </Select>
                 </Field>
               </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <Field>
-                  <Label htmlFor="fdr">Значимость (FDR)</Label>
-                  <Select id="fdr" value={fdr} onChange={(e) => setFdr(Number(e.target.value))}>
-                    {FDRS.map((f) => (
-                      <option key={f.v} value={f.v}>
-                        {f.label}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-                <Field>
-                  <Label htmlFor="mintrain">Walk-forward: min train (периодов)</Label>
-                  <Input
-                    id="mintrain"
-                    type="number"
-                    value={minTrain}
-                    min={8}
-                    max={520}
-                    onChange={(e) => setMinTrain(Number(e.target.value) || 52)}
-                  />
-                </Field>
-              </div>
-
               <Field>
-                <Label>Базовые сигналы (триггеры режима)</Label>
-                <ul className="space-y-1.5">
-                  {DEFAULT_BASE_SIGNALS.map((s) => (
-                    <li key={s.name} className="flex items-center gap-2 rounded-fk border border-line bg-surface-2 px-3 py-1.5 text-[12px] text-ink-2">
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-fk-pill bg-brand" />
-                      {s.name}
-                    </li>
-                  ))}
-                </ul>
-                <p className="text-xs text-ink-3">Кодируют найденные паттерны: моментум-экстремумы, превышение бенчмарка, волатильность, близость к ATH.</p>
+                <Label htmlFor="ct">Свои тикеры</Label>
+                <Textarea id="ct" value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="SMH, GLD, TLT" style={{ minHeight: 48 }} />
               </Field>
-
-              <Button onClick={execute} loading={running} disabled={universe.length < 4} fullWidth data-testid="run-signals">
-                {running ? 'Считаю модель…' : 'Построить модель'}
-              </Button>
             </CardContent>
           </Card>
 
           <Card>
-            <CardHeader>
-              <CardTitle>Сохранённые прогоны</CardTitle>
-              <CardDescription>Снимок отчёта + конфиг. Кликните, чтобы открыть.</CardDescription>
+            <CardHeader className="pb-2">
+              <Tabs tab={tab} setTab={setTab} />
             </CardHeader>
-            <CardContent>
-              {savedRuns === null ? (
-                <div className="space-y-2">
-                  <Skeleton className="h-10 w-full" />
-                  <Skeleton className="h-10 w-full" />
-                </div>
-              ) : savedRuns.length === 0 ? (
-                <p className="text-sm text-ink-3">Пока пусто. Постройте модель и сохраните результат.</p>
-              ) : (
-                <ul className="space-y-1.5" data-testid="saved-runs">
-                  {savedRuns.map((r) => (
-                    <li key={r.id} className="flex items-stretch gap-1">
-                      <button
-                        type="button"
-                        data-testid="run-open"
-                        onClick={() => openSavedRun(r.id)}
-                        className="min-w-0 flex-1 rounded-fk-sm px-2.5 py-1.5 text-left transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
-                      >
-                        <span className="block truncate text-[13px] text-ink-2">{r.title || `Прогон #${r.id}`}</span>
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="Редактировать прогон"
-                        onClick={() => openEditRun(r.id)}
-                        className="shrink-0 rounded-fk-sm px-2 text-ink-3 transition-colors hover:bg-surface-2 hover:text-brand focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
-                      >
-                        <EditIcon />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="Удалить прогон"
-                        onClick={() => onDeleteRun(r.id)}
-                        className="shrink-0 rounded-fk-sm px-2 text-ink-3 transition-colors hover:bg-surface-2 hover:text-down focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
-                      >
-                        <TrashIcon />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+            <CardContent className="space-y-3">
+              {tab === 'factor' && (
+                <FactorForm
+                  factorId={factorId}
+                  changeFactor={changeFactor}
+                  side={fSide}
+                  setSide={setFSide}
+                  params={fParams}
+                  setParams={setFParams}
+                  thresholds={fThresholds}
+                  setThresholds={setFThresholds}
+                  onRun={runFactor}
+                  running={running}
+                />
+              )}
+              {tab === 'signal' && (
+                <SignalForm
+                  factor={sFactor}
+                  changeFactor={changeSignalFactor}
+                  param={sParam}
+                  setParam={setSParam}
+                  side={sSide}
+                  setSide={setSSide}
+                  threshold={sThreshold}
+                  setThreshold={setSThreshold}
+                  onRun={runSignal}
+                  onSave={() => saveSignalDef({ factor: sFactor, param: sParam, side: sSide, threshold: sThreshold })}
+                  running={running}
+                  saved={saved}
+                  onLoad={(d: SignalDef) => changeSignalFactorFromDef(d)}
+                  onDelete={deleteSaved}
+                />
+              )}
+              {tab === 'combine' && (
+                <CombineForm
+                  saved={saved}
+                  picked={picked}
+                  togglePicked={togglePicked}
+                  grid0={grid0}
+                  setGrid0={setGrid0}
+                  grid1={grid1}
+                  setGrid1={setGrid1}
+                  minN={minN}
+                  setMinN={setMinN}
+                  folds={folds}
+                  setFolds={setFolds}
+                  onRun={runCombine}
+                  running={running}
+                  onDelete={deleteSaved}
+                />
               )}
             </CardContent>
           </Card>
@@ -470,94 +402,446 @@ function Signals() {
         {/* Правая колонка — результат */}
         <Card className="flex min-h-[60vh] min-w-0 flex-col">
           <CardHeader className="flex flex-row items-center justify-between gap-3">
-            <CardTitle>Отчёт модели</CardTitle>
-            <div className="flex items-center gap-3">
-              {running ? (
-                <span className="inline-flex items-center gap-2 text-sm text-ink-2">
-                  <Spinner className="text-brand" />
-                  {status}
-                </span>
-              ) : status ? (
-                <Badge variant={status === 'Ошибка' ? 'down' : 'up'}>{status}</Badge>
-              ) : null}
-              {canSaveResult && (
-                <Button size="sm" variant="secondary" onClick={openSaveResultModal}>
-                  Сохранить результат
-                </Button>
-              )}
-            </div>
+            <CardTitle>Результат</CardTitle>
+            {running ? (
+              <span className="inline-flex items-center gap-2 text-sm text-ink-2">
+                <Spinner className="text-brand" />
+                {status}
+              </span>
+            ) : status ? (
+              <Badge variant={status === 'Ошибка' ? 'down' : 'up'}>{status}</Badge>
+            ) : null}
           </CardHeader>
-          <div ref={outRef} className="flex-1 overflow-auto px-5 pb-5 sm:px-6">
-            {!hasOutput ? (
+          <div ref={outRef} className="flex-1 overflow-auto px-5 pb-5 sm:px-6" data-testid="signals-output">
+            {errMsg && (
+              <div className="rounded-fk border border-down bg-surface-2 px-4 py-3 text-[13px] font-medium text-down-strong">{errMsg}</div>
+            )}
+            {!result && !errMsg && !running && (
               <div className="flex h-full min-h-[40vh] flex-col items-center justify-center text-center">
-                <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-fk-pill bg-brand-50 text-brand">
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M4 19V5m0 14h16M8 15l3-4 3 3 4-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </div>
-                <p className="text-sm font-medium text-ink">Здесь появится отчёт модели</p>
+                <p className="text-sm font-medium text-ink">Здесь появится результат</p>
                 <p className="mt-1 max-w-sm text-sm text-ink-3">
-                  Настройте вселенную и горизонт слева, затем «Построить модель» — IC факторов, базовые сигналы,
-                  модуляция, коллинеарность, веса, walk-forward OOS и live-скоринг соберутся по ходу.
+                  Режим «Фактор» — карта край × порог; клик по ячейке раскрывает затухание и даёт сохранить сигнал. «Сигнал» — событийный анализ. «Комбинация» — пересечение и автоподбор границ.
                 </p>
               </div>
-            ) : (
-              <div className="research-output" data-testid="signals-output">
-                {viewDesc && <div className="rdesc" dangerouslySetInnerHTML={{ __html: renderMd(viewDesc) }} />}
-                {log && <pre className="rlog">{log}</pre>}
-                {blocks.map((html, i) => (
-                  <div key={i} dangerouslySetInnerHTML={{ __html: html }} />
-                ))}
-                {running && blocks.length === 0 && !log && <Skeleton className="h-24 w-full" />}
-              </div>
             )}
+            {running && !result && <Skeleton className="h-40 w-full" />}
+            {result?.mode === 'factor' && <FactorResult data={result} selCell={selCell} setSelCell={setSelCell} onSave={saveSignalDef} />}
+            {result?.mode === 'signal' && <SignalResult data={result} onSave={saveSignalDef} />}
+            {result?.mode === 'combine' && <CombineResult data={result} />}
           </div>
         </Card>
       </main>
-
-      <Modal
-        open={!!runModal}
-        onClose={() => setRunModal(null)}
-        title={runModal?.mode === 'edit' ? 'Редактировать прогон' : 'Сохранить результат'}
-        description="Название и описание (какую гипотезу проверяли). Описание — Markdown."
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setRunModal(null)}>
-              Отмена
-            </Button>
-            <Button onClick={confirmRunModal} loading={savingResult} disabled={!runModal?.title.trim()}>
-              Сохранить
-            </Button>
-          </>
-        }
-      >
-        {runModal && (
-          <div className="space-y-3 pt-1">
-            <Input
-              autoFocus
-              value={runModal.title}
-              onChange={(e) => setRunModal({ ...runModal, title: e.target.value })}
-              placeholder="Название прогона"
-            />
-            <div className="flex items-center justify-between">
-              <span className="text-[12px] font-medium text-ink-2">Описание (Markdown)</span>
-              <button type="button" onClick={() => setRunPreview((v) => !v)} className="text-[12px] font-medium text-brand hover:underline">
-                {runPreview ? 'Редактировать' : 'Предпросмотр'}
-              </button>
-            </div>
-            {runPreview ? (
-              <div className="rdesc max-h-[44vh] overflow-auto rounded-fk border border-line bg-surface-2 px-3 py-2" dangerouslySetInnerHTML={{ __html: renderMd(runModal.description || '_(пусто)_') }} />
-            ) : (
-              <Textarea
-                value={runModal.description}
-                onChange={(e) => setRunModal({ ...runModal, description: e.target.value })}
-                placeholder={'## Гипотеза\nЧто проверяем…\n\n## Наблюдения\n- сильные факторы\n- что значимо по FDR'}
-                className="min-h-[160px] font-mono text-[13px]"
-              />
-            )}
-          </div>
-        )}
-      </Modal>
     </>
+  );
+
+  // Загрузка сохранённого сигнала в форму вкладки «Сигнал».
+  function changeSignalFactorFromDef(d: SignalDef) {
+    setSFactor(d.factor);
+    setSParam(d.param);
+    setSSide(d.side);
+    setSThreshold(d.threshold);
+    setTab('signal');
+  }
+}
+
+// ─────────────────────── Формы ───────────────────────
+
+function SideToggle({ side, setSide }: { side: Side; setSide: (s: Side) => void }) {
+  return (
+    <div className="flex gap-1 rounded-fk bg-surface-2 p-1">
+      {(['high', 'low'] as Side[]).map((s) => (
+        <button
+          key={s}
+          type="button"
+          onClick={() => setSide(s)}
+          className={`flex-1 rounded-fk-sm px-2 py-1 text-[12px] font-semibold transition-colors ${
+            side === s ? 'bg-surface-elev text-ink shadow-fk-sm' : 'text-ink-3'
+          }`}
+        >
+          {s === 'high' ? 'значение ≥ порог' : 'значение ≤ порог'}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function FactorSelect({ value, onChange }: { value: FactorId; onChange: (id: FactorId) => void }) {
+  return (
+    <Select value={value} onChange={(e) => onChange(e.target.value as FactorId)}>
+      <optgroup label="Основные">
+        {FACTORS.filter((f) => f.core).map((f) => (
+          <option key={f.id} value={f.id}>{f.label}</option>
+        ))}
+      </optgroup>
+      <optgroup label="Опциональные">
+        {FACTORS.filter((f) => !f.core).map((f) => (
+          <option key={f.id} value={f.id}>{f.label}</option>
+        ))}
+      </optgroup>
+    </Select>
+  );
+}
+
+function FactorForm(p: any) {
+  const f = FACTOR_BY_ID[p.factorId];
+  return (
+    <>
+      <Field>
+        <Label>Фактор</Label>
+        <FactorSelect value={p.factorId} onChange={p.changeFactor} />
+        <p className="text-[11px] text-ink-3">{f.hint}</p>
+      </Field>
+      <Field>
+        <Label>Сторона сигнала</Label>
+        <SideToggle side={p.side} setSide={p.setSide} />
+      </Field>
+      <Field>
+        <Label>{f.paramLabel} — ось строк</Label>
+        <div className="flex flex-wrap gap-1.5">
+          {f.paramOptions.map((o: number) => {
+            const on = p.params.includes(o);
+            return (
+              <button
+                key={o}
+                type="button"
+                onClick={() => p.setParams(on ? p.params.filter((x: number) => x !== o) : [...p.params, o].sort((a: number, b: number) => a - b))}
+                className={`rounded-fk-sm border px-2.5 py-1 text-[12px] tabular-nums transition-colors ${
+                  on ? 'border-brand bg-brand-50 text-brand-700' : 'border-line-strong text-ink-2 hover:bg-surface-2'
+                }`}
+              >
+                {o}
+              </button>
+            );
+          })}
+        </div>
+      </Field>
+      <Field>
+        <Label htmlFor="thr">Пороги — ось столбцов ({f.unit || '—'})</Label>
+        <Input id="thr" value={p.thresholds} onChange={(e: any) => p.setThresholds(e.target.value)} placeholder="через запятую" />
+      </Field>
+      <Button onClick={p.onRun} loading={p.running} fullWidth data-testid="run-study">
+        Построить карту
+      </Button>
+    </>
+  );
+}
+
+function SignalForm(p: any) {
+  const f = FACTOR_BY_ID[p.factor];
+  return (
+    <>
+      <Field>
+        <Label>Фактор</Label>
+        <FactorSelect value={p.factor} onChange={p.changeFactor} />
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field>
+          <Label>{f.paramLabel}</Label>
+          <Select value={p.param} onChange={(e: any) => p.setParam(Number(e.target.value))}>
+            {f.paramOptions.map((o: number) => (
+              <option key={o} value={o}>{o}</option>
+            ))}
+          </Select>
+        </Field>
+        <Field>
+          <Label htmlFor="sthr">Порог ({f.unit || '—'})</Label>
+          <Input id="sthr" type="number" value={p.threshold} onChange={(e: any) => p.setThreshold(Number(e.target.value))} />
+        </Field>
+      </div>
+      <Field>
+        <Label>Сторона</Label>
+        <SideToggle side={p.side} setSide={p.setSide} />
+      </Field>
+      <div className="flex gap-2">
+        <Button onClick={p.onRun} loading={p.running} fullWidth data-testid="run-study">
+          Проверить сигнал
+        </Button>
+        <Button variant="secondary" onClick={p.onSave}>Сохранить</Button>
+      </div>
+      <SavedList saved={p.saved} onLoad={p.onLoad} onDelete={p.onDelete} />
+    </>
+  );
+}
+
+function CombineForm(p: any) {
+  return (
+    <>
+      <Field>
+        <Label>Сигналы (выберите 2–3)</Label>
+        {p.saved === null ? (
+          <Skeleton className="h-16 w-full" />
+        ) : p.saved.length === 0 ? (
+          <p className="text-[12px] text-ink-3">Нет сохранённых сигналов. Создайте их во вкладке «Сигнал».</p>
+        ) : (
+          <ul className="space-y-1" data-testid="combine-signals">
+            {p.saved.map((s: SavedSignal) => (
+              <li key={s.id} className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => p.togglePicked(s.id)}
+                  className={`min-w-0 flex-1 truncate rounded-fk-sm border px-2.5 py-1.5 text-left text-[12px] transition-colors ${
+                    p.picked.includes(s.id) ? 'border-brand bg-brand-50 text-brand-700' : 'border-line-strong text-ink-2 hover:bg-surface-2'
+                  }`}
+                >
+                  {s.name}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field>
+          <Label htmlFor="g0">Сетка порога #1</Label>
+          <Input id="g0" value={p.grid0} onChange={(e: any) => p.setGrid0(e.target.value)} placeholder="auto" />
+        </Field>
+        <Field>
+          <Label htmlFor="g1">Сетка порога #2</Label>
+          <Input id="g1" value={p.grid1} onChange={(e: any) => p.setGrid1(e.target.value)} placeholder="auto" />
+        </Field>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field>
+          <Label htmlFor="mn">Мин. N в ячейке</Label>
+          <Input id="mn" type="number" value={p.minN} onChange={(e: any) => p.setMinN(Number(e.target.value) || 30)} />
+        </Field>
+        <Field>
+          <Label htmlFor="fo">Фолдов (walk-forward)</Label>
+          <Input id="fo" type="number" value={p.folds} onChange={(e: any) => p.setFolds(Number(e.target.value) || 4)} />
+        </Field>
+      </div>
+      <Button onClick={p.onRun} loading={p.running} fullWidth data-testid="run-study" disabled={p.picked.length < 2}>
+        Исследовать комбинацию
+      </Button>
+      <SavedList saved={p.saved} onDelete={p.onDelete} />
+    </>
+  );
+}
+
+function SavedList({ saved, onLoad, onDelete }: { saved: SavedSignal[] | null; onLoad?: (d: SignalDef) => void; onDelete: (id: number) => void }) {
+  if (!saved || saved.length === 0) return null;
+  return (
+    <Field>
+      <Label>Сохранённые сигналы</Label>
+      <ul className="space-y-1" data-testid="saved-signals">
+        {saved.map((s) => (
+          <li key={s.id} className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => onLoad?.(s.def)}
+              disabled={!onLoad}
+              className="min-w-0 flex-1 truncate rounded-fk-sm px-2 py-1 text-left text-[12px] text-ink-2 transition-colors enabled:hover:bg-surface-2 disabled:cursor-default"
+            >
+              {s.name}
+            </button>
+            <button type="button" aria-label="Удалить сигнал" onClick={() => onDelete(s.id)} className="shrink-0 rounded-fk-sm px-1.5 text-ink-3 hover:text-down">
+              ×
+            </button>
+          </li>
+        ))}
+      </ul>
+    </Field>
+  );
+}
+
+// ─────────────────────── Результаты ───────────────────────
+
+function MetaBar({ meta }: { meta: any }) {
+  if (!meta) return null;
+  return (
+    <p className="text-[11px] text-ink-3">
+      {meta.symbols} инструментов · {meta.periods} периодов · {meta.obs} наблюдений · окно {meta.first} — {meta.last} · бенчмарк {meta.benchmark}
+      {!meta.has_bench && ' (не загрузился — доходность абсолютная)'}
+    </p>
+  );
+}
+
+function FactorResult({ data, selCell, setSelCell, onSave }: { data: any; selCell: HeatCell | null; setSelCell: (c: HeatCell) => void; onSave: (d: SignalDef, name?: string) => void }) {
+  const f = FACTOR_BY_ID[data.factor];
+  const cells: HeatCell[] = data.grid.map((g: any) => ({ row: g.param, col: g.thr, value: g.mean, n: g.n, sig: g.sig }));
+  const sel = selCell ? data.grid.find((g: any) => g.param === selCell.row && g.thr === selCell.col) : null;
+  const hz: number[] = data.hz || [];
+  return (
+    <div className="space-y-4">
+      <MetaBar meta={data.meta} />
+      <div className="flex flex-wrap items-center gap-3">
+        <Stat label="Базовая дох. (среднее)" value={fpct(data.baseline)} hint="безусловная, на горизонте" />
+        <Badge variant="neutral">{f.label} · {data.side === 'high' ? '≥ порог' : '≤ порог'} · гор. {data.horizon}д</Badge>
+      </div>
+      <div>
+        <div className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-ink-3">Карта: ср. изб. доходность (%) по {f.paramLabel.toLowerCase()} × порог</div>
+        <Heatmap
+          cells={cells}
+          rows={data.params}
+          cols={data.thresholds}
+          rowLabel="Период"
+          colLabel="Порог"
+          selected={selCell ? { row: selCell.row, col: selCell.col } : null}
+          onSelect={setSelCell}
+          fmt={(v) => (v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2))}
+        />
+        <p className="mt-1 text-[11px] text-ink-3">Точка в углу ячейки = значимо после FDR-поправки. Клик по ячейке — детали ниже.</p>
+      </div>
+      {sel && (
+        <Card>
+          <CardHeader>
+            <CardTitle>
+              Ячейка: {f.label} ({sel.param}д) {data.side === 'high' ? '≥' : '≤'} {sel.thr}{f.unit}
+            </CardTitle>
+            <CardDescription>Затухание по горизонтам и статистика этой области.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap gap-3">
+              <Stat label="Ср. изб. дох." value={fpct(sel.mean)} tone={sel.mean >= 0 ? 'up' : 'down'} />
+              <Stat label="t-стат" value={fnum(sel.t)} />
+              <Stat label="Доля плюс" value={fnum(sel.hit, 1) + '%'} />
+              <Stat label="Наблюдений" value={String(sel.n)} hint={`${sel.periods} периодов`} />
+            </div>
+            {hz.length > 1 && sel.decay && (
+              <div>
+                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-ink-3">Затухание: ср. изб. дох. по горизонтам (дн.)</div>
+                <Sparkline data={hz.map((h) => sel.decay[String(h)] ?? 0)} width={260} height={48} />
+                <div className="mt-0.5 flex justify-between text-[10px] text-ink-3">
+                  {hz.map((h) => (
+                    <span key={h}>{h}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+            <Button size="sm" variant="secondary" onClick={() => onSave({ factor: data.factor, param: sel.param, side: data.side, threshold: sel.thr })}>
+              Сохранить как сигнал
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function SignalResult({ data, onSave }: { data: any; onSave: (d: SignalDef, name?: string) => void }) {
+  const f = FACTOR_BY_ID[data.signal.factor];
+  const st = data.stat;
+  const hz: number[] = data.hz || [];
+  return (
+    <div className="space-y-4">
+      <MetaBar meta={data.meta} />
+      <div className="flex items-center gap-2">
+        <Badge variant="brand">{signalLabel(data.signal)}</Badge>
+        <Button size="sm" variant="secondary" onClick={() => onSave(data.signal)}>Сохранить</Button>
+      </div>
+      {st ? (
+        <div className="flex flex-wrap gap-3">
+          <Stat label="Ср. изб. дох." value={fpct(st.mean)} tone={st.mean >= 0 ? 'up' : 'down'} />
+          <Stat label="t-стат (period)" value={fnum(st.t)} />
+          <Stat label="Преимущ. к среднему" value={fpct(st.edge)} tone={st.edge >= 0 ? 'up' : 'down'} />
+          <Stat label="Доля плюс" value={fnum(st.hit, 1) + '%'} />
+          <Stat label="Наблюдений" value={String(st.n)} hint={`${st.periods} периодов · база ${fpct(data.baseline)}`} />
+        </div>
+      ) : (
+        <p className="text-[13px] text-ink-3">Слишком мало событий для надёжной статистики — ослабьте порог.</p>
+      )}
+      {hz.length > 1 && data.decay && (
+        <div>
+          <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-ink-3">Затухание по горизонтам (сигнал vs база)</div>
+          <Sparkline data={data.decay.map((d: any) => d.mean ?? 0)} width={280} height={50} />
+          <div className="mt-0.5 flex justify-between text-[10px] text-ink-3">
+            {data.decay.map((d: any) => (
+              <span key={d.h}>{d.h}</span>
+            ))}
+          </div>
+        </div>
+      )}
+      {Array.isArray(data.yearly) && data.yearly.length > 0 && (
+        <div>
+          <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-ink-3">Устойчивость по годам</div>
+          <div className="space-y-1">
+            {data.yearly.map((y: any) => (
+              <div key={y.year} className="flex items-center gap-2 text-[12px]">
+                <span className="w-10 shrink-0 tabular-nums text-ink-2">{y.year}</span>
+                <div className="relative h-3 flex-1 rounded-fk-pill bg-surface-2">
+                  <div
+                    className={`absolute top-0 h-3 rounded-fk-pill ${y.mean >= 0 ? 'bg-up' : 'bg-down'}`}
+                    style={{ left: '50%', width: `${Math.min(50, Math.abs(y.mean) * 6)}%`, transform: y.mean < 0 ? 'translateX(-100%)' : 'none' }}
+                  />
+                </div>
+                <span className={`w-16 shrink-0 text-right tabular-nums ${y.mean >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{fpct(y.mean)}</span>
+                <span className="w-12 shrink-0 text-right text-[10px] text-ink-3">n={y.n}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CombineResult({ data }: { data: any }) {
+  const sigs: SignalDef[] = data.signals;
+  const at = data.autotune;
+  const cells: HeatCell[] = (data.grid || []).map((g: any) => ({ row: g.t0, col: g.t1, value: g.mean, n: g.n }));
+  return (
+    <div className="space-y-4">
+      <MetaBar meta={data.meta} />
+      <div className="flex flex-wrap gap-2">
+        {sigs.map((s, i) => (
+          <Badge key={i} variant="neutral">#{i} {signalLabel(s)}</Badge>
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-3">
+        {data.intersection ? (
+          <>
+            <Stat label="Пересечение (все)" value={fpct(data.intersection.mean)} tone={data.intersection.mean >= 0 ? 'up' : 'down'} hint={`t=${fnum(data.intersection.t)} · n=${data.intersection.n}`} />
+          </>
+        ) : (
+          <Stat label="Пересечение" value="мало N" />
+        )}
+        {data.alone?.map((a: any) => (
+          <Stat key={a.i} label={`Сигнал #${a.i} один`} value={fpct(a.mean)} hint={`t=${fnum(a.t)} · n=${a.n}`} />
+        ))}
+      </div>
+      {Array.isArray(data.coactivation) && data.coactivation.length > 0 && (
+        <div className="text-[12px] text-ink-2">
+          <span className="font-semibold text-ink-3">Со-активность: </span>
+          {data.coactivation.map((c: any, i: number) => (
+            <span key={i} className="mr-3">
+              #{c.i}∩#{c.j}: {fnum(c.both_pct, 1)}% времени, corr {fnum(c.corr)}
+            </span>
+          ))}
+        </div>
+      )}
+      {cells.length > 0 && (
+        <div>
+          <div className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-ink-3">Карта пересечения: порог #0 × порог #1 → ср. изб. дох.</div>
+          <Heatmap cells={cells} rows={data.grid0} cols={data.grid1} rowLabel="Порог #0" colLabel="Порог #1" fmt={(v) => (v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2))} />
+        </div>
+      )}
+      {at ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Автоподбор границ (walk-forward)</CardTitle>
+            <CardDescription>Пороги ищем на train, метрику показываем OOS. Расхождение IS ≫ OOS = переподгонка.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap gap-3">
+              <Stat label="Средний IS" value={fpct(at.is_mean)} tone="up" />
+              <Stat label="Средний OOS" value={fpct(at.oos_mean)} tone={(at.oos_mean ?? 0) >= 0 ? 'up' : 'down'} hint={`мин. N=${at.min_n}`} />
+            </div>
+            <div className="space-y-1">
+              {at.folds.map((fd: any) => (
+                <div key={fd.fold} className="flex items-center gap-2 text-[12px] tabular-nums">
+                  <span className="w-12 text-ink-3">fold {fd.fold}</span>
+                  <span className="w-28 text-ink-2">пороги {fd.t0} / {fd.t1}</span>
+                  <span className="w-20 text-right text-ink-3">IS {fpct(fd.is_mean)}</span>
+                  <span className={`w-24 text-right ${(fd.oos_mean ?? 0) >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>OOS {fpct(fd.oos_mean)}</span>
+                  <span className="w-16 text-right text-[10px] text-ink-3">n={fd.oos_n}</span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <p className="text-[13px] text-ink-3">Автоподбор пропущен: коротковата история периодов для walk-forward.</p>
+      )}
+    </div>
   );
 }

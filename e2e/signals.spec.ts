@@ -1,62 +1,72 @@
 import { test, expect } from '@playwright/test';
 
-// Смоук «Модель сигналов» (/signals): детерминированный Python-движок факторной модели
-// исполняется ПО-НАСТОЯЩЕМУ на синтетических ценах (без ключей FMP/AIMLAPI). Проверяем,
-// что отчёт собирается (сводка, таблицы, веса, live-скоринг) без карточек ошибок, и что
-// прогон сохраняется/открывается/удаляется.
+// Смоук «Модель сигналов» (/signals): 3 режима исследования на детерминированном Python-движке,
+// исполняемом ПО-НАСТОЯЩЕМУ на синтетических ценах (без ключей). Проверяем интерактив:
+// свип фактора → карта + drill-down + сохранение сигнала; событийный анализ сигнала;
+// комбинация двух сигналов с walk-forward автоподбором.
 
 type Page = import('@playwright/test').Page;
 
-// Сужаем вселенную до 6 синтетических тикеров — чтобы прогон уложился в таймаут.
-async function buildSmallModel(page: Page) {
+// Узкая вселенная (быстрый прогон на синтетике).
+async function setup(page: Page) {
   await page.goto('/signals');
-  // Выключаем широкий пресет (он включён по умолчанию) → останется только наш кастом.
-  await page.getByRole('button', { name: 'Широкая' }).click();
-  await page.getByPlaceholder(/SMH/).fill('AAA, BBB, CCC, DDD, EEE, FFF');
-  await page.getByTestId('run-signals').click();
+  await page.getByRole('button', { name: 'Широкая' }).click(); // выключаем дефолтный широкий пресет
+  await page.getByPlaceholder('SMH, GLD, TLT').fill('AAA, BBB, CCC, DDD, EEE, FFF');
 }
 
 test.describe('Signals /signals', () => {
-  test('страница и пустое состояние рендерятся', async ({ page }) => {
+  test('пустое состояние и вкладки рендерятся', async ({ page }) => {
     await page.goto('/signals');
-    await expect(page.getByRole('heading', { name: 'Конфигурация' })).toBeVisible();
-    await expect(page.getByText('Здесь появится отчёт модели')).toBeVisible();
-    await expect(page.getByTestId('run-signals')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Данные' })).toBeVisible();
+    await expect(page.getByTestId('tab-factor')).toBeVisible();
+    await expect(page.getByText('Здесь появится результат')).toBeVisible();
   });
 
-  test('строит факторную модель и рендерит отчёт без ошибок', async ({ page }) => {
-    await buildSmallModel(page);
-    // Сводка (kpi-карточки) и хотя бы одна таблица движка появляются по ходу исполнения.
-    await expect(page.locator('.research-output .rkit-kpi').first()).toBeVisible({ timeout: 150000 });
-    await expect(page.locator('.research-output table.rkit-table').first()).toBeVisible({ timeout: 60000 });
-    // Ключевые секции отчёта.
-    await expect(page.locator('.research-output .rt-cap', { hasText: 'Одиночные факторы' })).toBeVisible({ timeout: 60000 });
-    await expect(page.locator('.research-output .rt-cap', { hasText: 'Live-скоринг' })).toBeVisible({ timeout: 60000 });
-    // Ни одной карточки ошибки.
-    await expect(page.locator('.research-output .rerrblk')).toHaveCount(0);
+  test('режим Фактор: карта строится, клик по ячейке раскрывает детали, сигнал сохраняется', async ({ page }) => {
+    await setup(page);
+    await page.getByTestId('run-study').click();
+    // Карта (тепловые ячейки) появляется.
+    const cells = page.getByTestId('heat-cell');
+    await expect(cells.first()).toBeVisible({ timeout: 150000 });
+    expect(await cells.count()).toBeGreaterThan(1);
+    // Клик по ячейке → панель деталей с кнопкой сохранения.
+    await cells.first().click();
+    const saveBtn = page.getByRole('button', { name: 'Сохранить как сигнал' });
+    await expect(saveBtn).toBeVisible({ timeout: 30000 });
+    await saveBtn.click();
+    await expect(page.getByText('Сигнал сохранён')).toBeVisible({ timeout: 15000 });
   });
 
-  test('сохранение → открытие → удаление прогона', async ({ page }) => {
-    await buildSmallModel(page);
-    await expect(page.locator('.research-output table.rkit-table').first()).toBeVisible({ timeout: 150000 });
+  test('режим Сигнал: событийный анализ рендерит статистику', async ({ page }) => {
+    await setup(page);
+    await page.getByTestId('tab-signal').click();
+    await page.getByTestId('run-study').click();
+    // Появляется блок статистики (метки Stat-карточек) или сообщение о малой выборке.
+    await expect(
+      page.locator('[data-testid="signals-output"]').getByText(/Ср\. изб\. дох\.|Слишком мало событий/),
+    ).toBeVisible({ timeout: 150000 });
+  });
 
-    await page.getByRole('button', { name: 'Сохранить результат' }).click();
-    const title = 'e2e сигналы ' + Date.now();
-    await page.getByPlaceholder('Название прогона').fill(title);
+  test('режим Комбинация: автоподбор по двум сигналам (IS vs OOS)', async ({ page }) => {
+    await setup(page);
+    // Создаём два различных сигнала во вкладке «Сигнал».
+    await page.getByTestId('tab-signal').click();
     await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
-    await expect(page.getByText('Результат сохранён')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('Сигнал сохранён')).toBeVisible({ timeout: 15000 });
+    // Меняем порог и сохраняем второй (другое определение).
+    await page.locator('#sthr').fill('-10');
+    await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
+    await expect(page.getByText('Сигнал сохранён')).toBeVisible({ timeout: 15000 });
 
-    // Прогон появился в списке — открываем его.
-    const item = page.getByTestId('saved-runs').locator('[data-testid="run-open"]').filter({ hasText: title });
-    await expect(item).toBeVisible();
-    await item.click();
-    await expect(page.getByText('Сохранённый результат')).toBeVisible();
-    await expect(page.locator('.research-output table.rkit-table').first()).toBeVisible();
-
-    // Удаляем.
-    const li = page.getByTestId('saved-runs').locator('li').filter({ hasText: title });
-    await li.getByRole('button', { name: 'Удалить прогон' }).click();
-    await expect(page.getByText('Результат удалён')).toBeVisible({ timeout: 15000 });
-    await expect(page.getByTestId('saved-runs').locator('[data-testid="run-open"]').filter({ hasText: title })).toHaveCount(0);
+    // Переходим в комбинацию, выбираем оба сигнала.
+    await page.getByTestId('tab-combine').click();
+    const picks = page.getByTestId('combine-signals').locator('button');
+    await picks.nth(0).click();
+    await picks.nth(1).click();
+    await page.getByTestId('run-study').click();
+    // Результат: пересечение + автоподбор (или явное «коротко для walk-forward»).
+    await expect(
+      page.locator('[data-testid="signals-output"]').getByText(/Пересечение|Автоподбор/).first(),
+    ).toBeVisible({ timeout: 150000 });
   });
 });
