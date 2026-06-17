@@ -53,6 +53,85 @@ function resultTitle(r: any): string {
   return `Результат · ${ts}`;
 }
 
+// erfc-аппроксимация (Abramowitz–Stegun 7.1.26) → двусторонний p-value по t (нормальное приближение).
+function erfc(x: number): number {
+  const z = Math.abs(x);
+  const t = 1 / (1 + 0.3275911 * z);
+  const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-z * z);
+  const erf = x >= 0 ? y : -y;
+  return 1 - erf;
+}
+function pval(t: number): number {
+  if (!Number.isFinite(t)) return 1;
+  return Math.min(1, Math.max(0, erfc(Math.abs(t) / Math.SQRT2)));
+}
+
+// Точный пересчёт метрик ячейки для произвольного окна лет из по-годовой агрегации.
+function aggCell(years: any[], from: number, to: number, mainH: number) {
+  if (!Array.isArray(years) || !years.length) return null;
+  const sel = years.filter((y) => y.y >= from && y.y <= to);
+  if (!sel.length) return null;
+  let n = 0, pos = 0, Q = 0;
+  const perH: Record<string, [number, number]> = {};
+  for (const y of sel) {
+    n += y.n || 0; pos += y.pos || 0; Q += y.Q || 0;
+    const d = y.d || {};
+    for (const h in d) {
+      const a = d[h] || [0, 0];
+      if (!perH[h]) perH[h] = [0, 0];
+      perH[h][0] += a[0] || 0; perH[h][1] += a[1] || 0;
+    }
+  }
+  const mh = String(mainH);
+  const [P, S] = perH[mh] || [0, 0];
+  if (P < 5 || n < 10) return null;
+  const mean = S / P;
+  let t = 0;
+  if (P > 1) {
+    const v = (Q - (S * S) / P) / (P - 1);
+    const se = v > 0 ? Math.sqrt(v / P) : 0;
+    t = se > 0 ? mean / se : 0;
+  }
+  const decay = Object.keys(perH)
+    .map((h) => ({ h: Number(h), mean: perH[h][0] > 0 ? perH[h][1] / perH[h][0] : null }))
+    .sort((a, b) => a.h - b.h);
+  const yearly = sel.map((y) => {
+    const a = (y.d || {})[mh] || [0, 0];
+    return { year: y.y, mean: a[0] > 0 ? a[1] / a[0] : null, n: y.n };
+  });
+  return { mean, t, hit: n > 0 ? (pos / n) * 100 : 0, n, periods: P, decay, yearly };
+}
+
+function bhSig(items: { key: string; p: number }[], alpha: number): Set<string> {
+  const arr = items.filter((x) => Number.isFinite(x.p)).sort((a, b) => a.p - b.p);
+  const m = arr.length;
+  let thr = 0;
+  arr.forEach((x, i) => {
+    if (x.p <= (alpha * (i + 1)) / m) thr = i + 1;
+  });
+  const s = new Set<string>();
+  arr.forEach((x, i) => {
+    if (i < thr) s.add(x.key);
+  });
+  return s;
+}
+
+function YearRange({ min, max, from, to, setFrom, setTo }: { min: number; max: number; from: number; to: number; setFrom: (n: number) => void; setTo: (n: number) => void }) {
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return null;
+  return (
+    <div className="rounded-fk border border-line bg-surface-2 px-3 py-2">
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-x-2">
+        <span className="text-[12px] font-semibold text-ink">Окно лет: {from}–{to}</span>
+        <span className="text-[11px] text-ink-3">двигайте — метрики пересчитываются без повторного прогона</span>
+      </div>
+      <div className="space-y-1">
+        <input type="range" min={min} max={max} value={from} data-testid="win-from" onChange={(e) => setFrom(Math.min(Number(e.target.value), to))} className="w-full accent-brand" aria-label="Год от" />
+        <input type="range" min={min} max={max} value={to} data-testid="win-to" onChange={(e) => setTo(Math.max(Number(e.target.value), from))} className="w-full accent-brand" aria-label="Год до" />
+      </div>
+    </div>
+  );
+}
+
 export default function SignalsPage() {
   return (
     <ToastProvider>
@@ -1007,6 +1086,16 @@ function FactorResult({ data, onSave }: { data: any; onSave: (d: SignalDef, name
   const isRange = data.bins === 'range';
   const groups: any[] = data.groups && data.groups.length ? data.groups : [{ label: null, baseline: data.baseline, grid: data.grid }];
   const multi = groups.length > 1;
+  const minY = Number((data.meta?.first || '').slice(0, 4)) || 2000;
+  const maxY = Number((data.meta?.last || '').slice(0, 4)) || CUR_YEAR;
+  const hasYears = groups.some((g) => (g.grid || []).some((c: any) => Array.isArray(c.years)));
+  const [winFrom, setWinFrom] = useState(minY);
+  const [winTo, setWinTo] = useState(maxY);
+  useEffect(() => {
+    setWinFrom(minY);
+    setWinTo(maxY);
+  }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
+  const full = winFrom <= minY && winTo >= maxY;
   return (
     <div className="space-y-5">
       <MetaBar meta={data.meta} />
@@ -1014,21 +1103,53 @@ function FactorResult({ data, onSave }: { data: any; onSave: (d: SignalDef, name
         {f.label} · {isRange ? 'диапазоны' : data.side === 'high' ? '≥ порог' : '≤ порог'} · гор. {data.horizon}д
         {data.skip ? ` · gap ${data.skip}д` : ''}
       </Badge>
+      {hasYears && <YearRange min={minY} max={maxY} from={winFrom} to={winTo} setFrom={setWinFrom} setTo={setWinTo} />}
       {multi && (
         <p className="text-[12px] text-ink-3">Разные классы активов — отдельными таблицами: сравните, отличается ли поведение фактора.</p>
       )}
       {groups.map((g: any, i: number) => (
-        <FactorGroup key={i} data={data} group={g} f={f} isRange={isRange} multi={multi} onSave={onSave} />
+        <FactorGroup key={i} data={data} group={g} f={f} isRange={isRange} multi={multi} onSave={onSave} winFrom={winFrom} winTo={winTo} fullWindow={full} />
       ))}
     </div>
   );
 }
 
-function FactorGroup({ data, group, f, isRange, multi, onSave }: { data: any; group: any; f: any; isRange: boolean; multi: boolean; onSave: (d: SignalDef, name?: string) => void }) {
+function FactorGroup({ data, group, f, isRange, multi, onSave, winFrom, winTo, fullWindow }: { data: any; group: any; f: any; isRange: boolean; multi: boolean; onSave: (d: SignalDef, name?: string) => void; winFrom: number; winTo: number; fullWindow: boolean }) {
   const [sel, setSel] = useState<HeatCell | null>(null);
-  const cells: HeatCell[] = (group.grid || []).map((g: any) => ({ row: g.param, col: g.col, value: g.mean, n: g.n, sig: g.sig }));
-  const cell = sel ? (group.grid || []).find((g: any) => g.param === sel.row && g.col === sel.col) : null;
-  const hz: number[] = data.hz || [];
+  const mainH: number = data.horizon;
+  const alpha: number = data.fdrAlpha || 0.1;
+  const grid: any[] = group.grid || [];
+  const useWin = grid.some((g: any) => Array.isArray(g.years));
+
+  // Пересчёт каждой ячейки под выбранное окно лет (из по-годовой агрегации).
+  const recomputed = useMemo(
+    () => grid.map((g: any) => ({ g, agg: useWin && g.years ? aggCell(g.years, winFrom, winTo, mainH) : null })),
+    [grid, useWin, winFrom, winTo, mainH],
+  );
+  const sigSet = useMemo(() => {
+    if (!useWin) return null;
+    return bhSig(recomputed.filter((r) => r.agg).map((r) => ({ key: `${r.g.param}:${r.g.col}`, p: pval(r.agg!.t) })), alpha);
+  }, [recomputed, useWin, alpha]);
+
+  const cells: HeatCell[] = recomputed.map(({ g, agg }) => ({
+    row: g.param,
+    col: g.col,
+    value: agg ? agg.mean : useWin ? null : g.mean,
+    n: agg ? agg.n : useWin ? 0 : g.n,
+    sig: useWin ? !!(sigSet && sigSet.has(`${g.param}:${g.col}`)) : g.sig,
+  }));
+
+  const selRec = sel ? recomputed.find((r) => r.g.param === sel.row && r.g.col === sel.col) : null;
+  const cell = selRec?.g;
+  const agg = selRec?.agg;
+  // Базовая доходность группы — за полное окно (по-годовой базы для неё не храним).
+  const head = agg || (cell ? { mean: cell.mean, t: cell.t, hit: cell.hit, n: cell.n, periods: cell.periods, decay: null, yearly: cell.yearly } : null);
+  const decayPoints = agg
+    ? agg.decay
+    : cell?.decay
+      ? (data.hz || []).map((h: number) => ({ h, mean: cell.decay[String(h)] ?? null }))
+      : [];
+
   return (
     <div className={multi ? 'space-y-3 rounded-fk border border-line bg-surface-elev p-3' : 'space-y-3'}>
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -1057,20 +1178,23 @@ function FactorGroup({ data, group, f, isRange, multi, onSave }: { data: any; gr
           <CardHeader>
             <CardTitle>
               {group.label ? group.label + ' · ' : ''}{f.label} ({cell.param}д) {regionLabel(f, cell.region)}
+              {!fullWindow && <span className="text-[12px] font-normal text-ink-3"> · {winFrom}–{winTo}</span>}
             </CardTitle>
-            <CardDescription>Затухание, изменение по годам и разбивка по тикерам для этой области.</CardDescription>
+            <CardDescription>Метрики и профиль по горизонтам — за выбранное окно лет; разбивка по тикерам — за весь период прогона.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex flex-wrap gap-3">
-              <Stat label="Ср. изб. дох." value={fpct(cell.mean)} tone={(cell.mean ?? 0) >= 0 ? 'up' : 'down'} />
-              <Stat label="t-стат" value={fnum(cell.t)} />
-              <Stat label="Доля плюс" value={fnum(cell.hit, 1) + '%'} />
-              <Stat label="Наблюдений" value={String(cell.n)} hint={`${cell.periods} периодов`} />
-            </div>
-            {cell.decay && Object.keys(cell.decay).length > 0 && (
-              <DecayBlock points={hz.map((h: number) => ({ h, mean: cell.decay[String(h)] ?? null }))} mainH={data.horizon} />
+            {head && head.mean != null ? (
+              <div className="flex flex-wrap gap-3">
+                <Stat label="Ср. изб. дох." value={fpct(head.mean)} tone={(head.mean ?? 0) >= 0 ? 'up' : 'down'} />
+                <Stat label="t-стат" value={fnum(head.t)} />
+                <Stat label="Доля плюс" value={fnum(head.hit, 1) + '%'} />
+                <Stat label="Наблюдений" value={String(head.n)} hint={`${head.periods} периодов`} />
+              </div>
+            ) : (
+              <p className="text-[13px] text-ink-3">В выбранном окне лет слишком мало наблюдений — расширьте окно.</p>
             )}
-            <YearlyBars yearly={cell.yearly} />
+            {decayPoints.length > 0 && <DecayBlock points={decayPoints} mainH={mainH} />}
+            <YearlyBars yearly={head?.yearly ?? cell.yearly} />
             <TickerTable tickers={cell.tickers} kw={cell.kw} />
             <Button size="sm" variant="secondary" onClick={() => onSave({ factor: data.factor, param: cell.param, ...cell.region, skip: data.skip || 0 })}>
               Сохранить как сигнал
