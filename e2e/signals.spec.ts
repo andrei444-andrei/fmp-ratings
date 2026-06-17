@@ -63,6 +63,14 @@ test.describe('Signals /signals', () => {
     await expect(page.getByText('Сигнал сохранён')).toBeVisible({ timeout: 15000 });
   });
 
+  test('фактор «превышение ÷ волатильность» (xvol) строит карту', async ({ page }) => {
+    await setup(page);
+    await page.getByTestId('factor-select').selectOption('xvol');
+    await page.getByTestId('run-study').click();
+    await expect(page.getByTestId('heat-cell').first()).toBeVisible({ timeout: 150000 });
+    await expect(page.locator('[data-testid="signals-output"]').getByText(/волатильность/i).first()).toBeVisible();
+  });
+
   test('режим Фактор: диапазоны (от–до) строят непересекающиеся корзины', async ({ page }) => {
     await setup(page);
     await page.getByRole('button', { name: 'Диапазоны (от–до)' }).click();

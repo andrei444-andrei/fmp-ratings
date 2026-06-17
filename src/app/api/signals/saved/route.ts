@@ -1,5 +1,5 @@
 import { listSignals, saveSignal } from '@/lib/signals/store';
-import { FACTOR_BY_ID, signalLabel, type SignalDef } from '@/lib/signals/factors';
+import { FACTOR_BY_ID, signalLabel, supportsSkip, type SignalDef } from '@/lib/signals/factors';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,7 +18,7 @@ export async function POST(req: Request) {
   if (!f) return Response.json({ error: 'неизвестный фактор' }, { status: 400 });
   const param = f.paramOptions.includes(Number(raw?.param)) ? Number(raw.param) : f.defaultParams[0];
   const side = raw?.side === 'low' || raw?.side === 'high' || raw?.side === 'band' ? raw.side : f.defaultSide;
-  const skip = (f.id === 'momentum' || f.id === 'xbench') && Number.isFinite(Number(raw?.skip))
+  const skip = supportsSkip(f.id) && Number.isFinite(Number(raw?.skip))
     ? Math.max(0, Math.min(param - 1, Math.round(Number(raw.skip))))
     : 0;
   let def: SignalDef;

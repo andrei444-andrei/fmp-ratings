@@ -1,7 +1,7 @@
 // Нормализация/валидация конфига исследования (недоверенный ввод с клиента → безопасный объект
 // для Python). Три режима: factor (свип), signal (событийный анализ), combine (комбинация).
 
-import { FACTOR_BY_ID, type FactorId, type Side, type SignalDef } from './factors';
+import { FACTOR_BY_ID, supportsSkip, type FactorId, type Side, type SignalDef } from './factors';
 
 const TICKER = /^[A-Z][A-Z0-9.\-]{0,9}$/;
 
@@ -49,7 +49,7 @@ function normSignal(raw: any): SignalDef | null {
   if (!f) return null;
   const param = f.paramOptions.includes(Number(raw?.param)) ? Number(raw.param) : f.defaultParams[0];
   const side: Side = raw?.side === 'low' || raw?.side === 'high' || raw?.side === 'band' ? raw.side : f.defaultSide;
-  const skip = (f.id === 'momentum' || f.id === 'xbench')
+  const skip = supportsSkip(f.id)
     ? Math.round(clampNum(raw?.skip, 0, 0, Math.max(0, param - 1)))
     : 0;
   if (side === 'band') {

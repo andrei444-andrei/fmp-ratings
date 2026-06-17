@@ -2,7 +2,7 @@
 // СИГНАЛ — выбор области внутри фактора (порог + сторона high/low). Реестр общий для клиента
 // (селекты, дефолтные сетки свипа) и для валидации конфига на сервере.
 
-export type FactorId = 'momentum' | 'xbench' | 'vol' | 'dist_ath' | 'sma_dist' | 'rsi';
+export type FactorId = 'momentum' | 'xbench' | 'xvol' | 'vol' | 'dist_ath' | 'sma_dist' | 'rsi';
 export type Side = 'high' | 'low' | 'band';
 
 export type FactorDef = {
@@ -42,6 +42,18 @@ export const FACTORS: FactorDef[] = [
     defaultSide: 'high',
     defaultThresholds: [0, 5, 10, 15, 20],
     hint: 'Доходность инструмента минус бенчмарк за период. Сигнал — превышение больше порога.',
+  },
+  {
+    id: 'xvol',
+    label: 'Превышение бенчмарка ÷ волатильность',
+    core: true,
+    unit: '',
+    paramLabel: 'Период избытка (дн.)',
+    paramOptions: [5, 21, 63, 126, 252],
+    defaultParams: [21, 63, 126],
+    defaultSide: 'high',
+    defaultThresholds: [-1, -0.5, 0, 0.5, 1, 1.5, 2],
+    hint: 'Превышение над бенчмарком, делённое на годовую волатильность актива (учитывает природу/риск актива). Единица — пп избытка на 1% год. волатильности (как информационное отношение).',
   },
   {
     id: 'vol',
@@ -107,7 +119,7 @@ export type SignalDef = {
 
 // Пропуск (gap) применим только к импульсным факторам.
 export function supportsSkip(factor: FactorId): boolean {
-  return factor === 'momentum' || factor === 'xbench';
+  return factor === 'momentum' || factor === 'xbench' || factor === 'xvol';
 }
 
 export function signalLabel(s: SignalDef): string {
