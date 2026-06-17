@@ -103,6 +103,7 @@ function Signals() {
   const [factorId, setFactorId] = useState<FactorId>('xbench');
   const factorDef = FACTOR_BY_ID[factorId];
   const [fSide, setFSide] = useState<Side>(factorDef.defaultSide);
+  const [fBins, setFBins] = useState<'cumulative' | 'range'>('cumulative');
   const [fParams, setFParams] = useState<number[]>(factorDef.defaultParams);
   const [fThresholds, setFThresholds] = useState<string>(factorDef.defaultThresholds.join(', '));
   const [selCell, setSelCell] = useState<HeatCell | null>(null);
@@ -113,6 +114,8 @@ function Signals() {
   const [sParam, setSParam] = useState<number>(sDef.defaultParams[0]);
   const [sSide, setSSide] = useState<Side>(sDef.defaultSide);
   const [sThreshold, setSThreshold] = useState<number>(sDef.defaultThresholds[0]);
+  const [sLo, setSLo] = useState<number>(sDef.defaultThresholds[0]);
+  const [sHi, setSHi] = useState<number>(sDef.defaultThresholds[sDef.defaultThresholds.length - 1]);
 
   // ── Комбинация ──
   const [saved, setSaved] = useState<SavedSignal[] | null>(null);
@@ -165,6 +168,12 @@ function Signals() {
     setSParam(f.defaultParams[0]);
     setSSide(f.defaultSide);
     setSThreshold(f.defaultThresholds[0]);
+    setSLo(f.defaultThresholds[0]);
+    setSHi(f.defaultThresholds[f.defaultThresholds.length - 1]);
+  }
+  function currentSignalDef(): SignalDef {
+    if (sSide === 'band') return { factor: sFactor, param: sParam, side: 'band', lo: sLo, hi: sHi };
+    return { factor: sFactor, param: sParam, side: sSide, threshold: sThreshold };
   }
 
   async function runStudy(payload: Record<string, unknown>) {
@@ -244,10 +253,10 @@ function Signals() {
 
   // ── Запуск по вкладкам ──
   function runFactor() {
-    runStudy({ mode: 'factor', factor: factorId, side: fSide, params: fParams, thresholds: parseList(fThresholds) });
+    runStudy({ mode: 'factor', factor: factorId, side: fSide, bins: fBins, params: fParams, thresholds: parseList(fThresholds) });
   }
   function runSignal() {
-    runStudy({ mode: 'signal', signal: { factor: sFactor, param: sParam, side: sSide, threshold: sThreshold } });
+    runStudy({ mode: 'signal', signal: currentSignalDef() });
   }
   function runCombine() {
     const sigs = (saved ?? []).filter((s) => picked.includes(s.id)).map((s) => s.def);
@@ -351,6 +360,8 @@ function Signals() {
                   changeFactor={changeFactor}
                   side={fSide}
                   setSide={setFSide}
+                  bins={fBins}
+                  setBins={setFBins}
                   params={fParams}
                   setParams={setFParams}
                   thresholds={fThresholds}
@@ -369,8 +380,12 @@ function Signals() {
                   setSide={setSSide}
                   threshold={sThreshold}
                   setThreshold={setSThreshold}
+                  lo={sLo}
+                  setLo={setSLo}
+                  hi={sHi}
+                  setHi={setSHi}
                   onRun={runSignal}
-                  onSave={() => saveSignalDef({ factor: sFactor, param: sParam, side: sSide, threshold: sThreshold })}
+                  onSave={() => saveSignalDef(currentSignalDef())}
                   running={running}
                   saved={saved}
                   onLoad={(d: SignalDef) => changeSignalFactorFromDef(d)}
@@ -436,29 +451,38 @@ function Signals() {
 
   // Загрузка сохранённого сигнала в форму вкладки «Сигнал».
   function changeSignalFactorFromDef(d: SignalDef) {
+    const f = FACTOR_BY_ID[d.factor];
     setSFactor(d.factor);
     setSParam(d.param);
     setSSide(d.side);
-    setSThreshold(d.threshold);
+    if (d.side === 'band') {
+      setSLo(d.lo ?? f.defaultThresholds[0]);
+      setSHi(d.hi ?? f.defaultThresholds[f.defaultThresholds.length - 1]);
+    } else {
+      setSThreshold(d.threshold ?? f.defaultThresholds[0]);
+    }
     setTab('signal');
   }
 }
 
 // ─────────────────────── Формы ───────────────────────
 
-function SideToggle({ side, setSide }: { side: Side; setSide: (s: Side) => void }) {
+function SideToggle({ side, setSide, allowBand }: { side: Side; setSide: (s: Side) => void; allowBand?: boolean }) {
+  const opts: { id: Side; label: string }[] = allowBand
+    ? [{ id: 'high', label: '≥ порог' }, { id: 'low', label: '≤ порог' }, { id: 'band', label: 'диапазон' }]
+    : [{ id: 'high', label: 'значение ≥ порог' }, { id: 'low', label: 'значение ≤ порог' }];
   return (
     <div className="flex gap-1 rounded-fk bg-surface-2 p-1">
-      {(['high', 'low'] as Side[]).map((s) => (
+      {opts.map((o) => (
         <button
-          key={s}
+          key={o.id}
           type="button"
-          onClick={() => setSide(s)}
+          onClick={() => setSide(o.id)}
           className={`flex-1 rounded-fk-sm px-2 py-1 text-[12px] font-semibold transition-colors ${
-            side === s ? 'bg-surface-elev text-ink shadow-fk-sm' : 'text-ink-3'
+            side === o.id ? 'bg-surface-elev text-ink shadow-fk-sm' : 'text-ink-3'
           }`}
         >
-          {s === 'high' ? 'значение ≥ порог' : 'значение ≤ порог'}
+          {o.label}
         </button>
       ))}
     </div>
@@ -492,9 +516,28 @@ function FactorForm(p: any) {
         <p className="text-[11px] text-ink-3">{f.hint}</p>
       </Field>
       <Field>
-        <Label>Сторона сигнала</Label>
-        <SideToggle side={p.side} setSide={p.setSide} />
+        <Label>Биннинг столбцов</Label>
+        <div className="flex gap-1 rounded-fk bg-surface-2 p-1">
+          {([['cumulative', 'Накопительно (≥/≤)'], ['range', 'Диапазоны (от–до)']] as const).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => p.setBins(id)}
+              className={`flex-1 rounded-fk-sm px-2 py-1 text-[12px] font-semibold transition-colors ${
+                p.bins === id ? 'bg-surface-elev text-ink shadow-fk-sm' : 'text-ink-3'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </Field>
+      {p.bins === 'cumulative' && (
+        <Field>
+          <Label>Сторона сигнала</Label>
+          <SideToggle side={p.side} setSide={p.setSide} />
+        </Field>
+      )}
       <Field>
         <Label>{f.paramLabel} — ось строк</Label>
         <div className="flex flex-wrap gap-1.5">
@@ -534,24 +577,35 @@ function SignalForm(p: any) {
         <Label>Фактор</Label>
         <FactorSelect value={p.factor} onChange={p.changeFactor} />
       </Field>
-      <div className="grid grid-cols-2 gap-3">
-        <Field>
-          <Label>{f.paramLabel}</Label>
-          <Select value={p.param} onChange={(e: any) => p.setParam(Number(e.target.value))}>
-            {f.paramOptions.map((o: number) => (
-              <option key={o} value={o}>{o}</option>
-            ))}
-          </Select>
-        </Field>
+      <Field>
+        <Label>{f.paramLabel}</Label>
+        <Select value={p.param} onChange={(e: any) => p.setParam(Number(e.target.value))}>
+          {f.paramOptions.map((o: number) => (
+            <option key={o} value={o}>{o}</option>
+          ))}
+        </Select>
+      </Field>
+      <Field>
+        <Label>Область</Label>
+        <SideToggle side={p.side} setSide={p.setSide} allowBand />
+      </Field>
+      {p.side === 'band' ? (
+        <div className="grid grid-cols-2 gap-3">
+          <Field>
+            <Label htmlFor="slo">От ({f.unit || '—'})</Label>
+            <Input id="slo" type="number" value={p.lo} onChange={(e: any) => p.setLo(Number(e.target.value))} />
+          </Field>
+          <Field>
+            <Label htmlFor="shi">До ({f.unit || '—'})</Label>
+            <Input id="shi" type="number" value={p.hi} onChange={(e: any) => p.setHi(Number(e.target.value))} />
+          </Field>
+        </div>
+      ) : (
         <Field>
           <Label htmlFor="sthr">Порог ({f.unit || '—'})</Label>
           <Input id="sthr" type="number" value={p.threshold} onChange={(e: any) => p.setThreshold(Number(e.target.value))} />
         </Field>
-      </div>
-      <Field>
-        <Label>Сторона</Label>
-        <SideToggle side={p.side} setSide={p.setSide} />
-      </Field>
+      )}
       <div className="flex gap-2">
         <Button onClick={p.onRun} loading={p.running} fullWidth data-testid="run-study">
           Проверить сигнал
@@ -646,6 +700,69 @@ function SavedList({ saved, onLoad, onDelete }: { saved: SavedSignal[] | null; o
 
 // ─────────────────────── Результаты ───────────────────────
 
+function YearlyBars({ yearly }: { yearly: any[] }) {
+  if (!Array.isArray(yearly) || yearly.length === 0) return null;
+  return (
+    <div>
+      <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-ink-3">Изменение по годам (ср. изб. дох.)</div>
+      <div className="space-y-1">
+        {yearly.map((y: any) => (
+          <div key={y.year} className="flex items-center gap-2 text-[12px]">
+            <span className="w-10 shrink-0 tabular-nums text-ink-2">{y.year}</span>
+            <div className="relative h-3 flex-1 rounded-fk-pill bg-surface-2">
+              <div
+                className={`absolute top-0 h-3 rounded-fk-pill ${(y.mean ?? 0) >= 0 ? 'bg-up' : 'bg-down'}`}
+                style={{ left: '50%', width: `${Math.min(50, Math.abs(y.mean ?? 0) * 6)}%`, transform: (y.mean ?? 0) < 0 ? 'translateX(-100%)' : 'none' }}
+              />
+            </div>
+            <span className={`w-16 shrink-0 text-right tabular-nums ${(y.mean ?? 0) >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{fpct(y.mean)}</span>
+            <span className="w-12 shrink-0 text-right text-[10px] text-ink-3">n={y.n}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TickerTable({ tickers, kw }: { tickers: any[]; kw: any }) {
+  if (!Array.isArray(tickers) || tickers.length === 0) return null;
+  return (
+    <div>
+      <div className="mb-1 flex flex-wrap items-baseline gap-x-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">По тикерам</span>
+        {kw && kw.p != null && (
+          <span className="text-[11px] text-ink-3">
+            различие между тикерами (Краскел–Уоллис): H={fnum(kw.H)}, p={fnum(kw.p, 3)}
+            <span className={kw.p < 0.05 ? 'font-semibold text-up-strong' : 'text-ink-3'}>{kw.p < 0.05 ? ' — значимо' : ' — не значимо'}</span>
+          </span>
+        )}
+      </div>
+      <div className="max-h-[280px] overflow-auto rounded-fk border border-line">
+        <table className="w-full text-[12px]">
+          <thead className="sticky top-0 bg-surface-2 text-ink-3">
+            <tr>
+              <th className="px-2 py-1 text-left font-semibold">Тикер</th>
+              <th className="px-2 py-1 text-right font-semibold">Ср. изб. дох.</th>
+              <th className="px-2 py-1 text-right font-semibold">t</th>
+              <th className="px-2 py-1 text-right font-semibold">n</th>
+            </tr>
+          </thead>
+          <tbody>
+            {tickers.map((r: any) => (
+              <tr key={r.sym} className="border-t border-line">
+                <td className="px-2 py-1 font-medium text-ink">{r.sym}</td>
+                <td className={`px-2 py-1 text-right tabular-nums ${(r.mean ?? 0) >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{fpct(r.mean)}</td>
+                <td className="px-2 py-1 text-right tabular-nums text-ink-2">{fnum(r.t)}</td>
+                <td className="px-2 py-1 text-right tabular-nums text-ink-3">{r.n}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function MetaBar({ meta }: { meta: any }) {
   if (!meta) return null;
   return (
@@ -656,59 +773,78 @@ function MetaBar({ meta }: { meta: any }) {
   );
 }
 
+function regionLabel(f: any, region: any): string {
+  const unit = f ? f.unit : '';
+  if (!region) return '';
+  if (region.side === 'band') return `∈ [${region.lo}; ${region.hi}]${unit}`;
+  return `${region.side === 'high' ? '≥' : '≤'} ${region.threshold}${unit}`;
+}
+
 function FactorResult({ data, selCell, setSelCell, onSave }: { data: any; selCell: HeatCell | null; setSelCell: (c: HeatCell) => void; onSave: (d: SignalDef, name?: string) => void }) {
   const f = FACTOR_BY_ID[data.factor];
-  const cells: HeatCell[] = data.grid.map((g: any) => ({ row: g.param, col: g.thr, value: g.mean, n: g.n, sig: g.sig }));
-  const sel = selCell ? data.grid.find((g: any) => g.param === selCell.row && g.thr === selCell.col) : null;
+  const isRange = data.bins === 'range';
+  const cells: HeatCell[] = data.grid.map((g: any) => ({ row: g.param, col: g.col, value: g.mean, n: g.n, sig: g.sig }));
+  const sel = selCell ? data.grid.find((g: any) => g.param === selCell.row && g.col === selCell.col) : null;
   const hz: number[] = data.hz || [];
   return (
     <div className="space-y-4">
       <MetaBar meta={data.meta} />
       <div className="flex flex-wrap items-center gap-3">
         <Stat label="Базовая дох. (среднее)" value={fpct(data.baseline)} hint="безусловная, на горизонте" />
-        <Badge variant="neutral">{f.label} · {data.side === 'high' ? '≥ порог' : '≤ порог'} · гор. {data.horizon}д</Badge>
+        <Badge variant="neutral">
+          {f.label} · {isRange ? 'диапазоны' : data.side === 'high' ? '≥ порог' : '≤ порог'} · гор. {data.horizon}д
+        </Badge>
       </div>
       <div>
-        <div className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-ink-3">Карта: ср. изб. доходность (%) по {f.paramLabel.toLowerCase()} × порог</div>
+        <div className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-ink-3">
+          Карта: ср. изб. доходность (%) по {f.paramLabel.toLowerCase()} × {isRange ? 'диапазон' : 'порог'}
+        </div>
         <Heatmap
           cells={cells}
           rows={data.params}
-          cols={data.thresholds}
-          rowLabel="Период"
-          colLabel="Порог"
+          cols={data.cols}
+          rowLabel="Параметр"
+          colLabel={isRange ? 'Диапазон' : 'Порог'}
           selected={selCell ? { row: selCell.row, col: selCell.col } : null}
           onSelect={setSelCell}
           fmt={(v) => (v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2))}
         />
-        <p className="mt-1 text-[11px] text-ink-3">Точка в углу ячейки = значимо после FDR-поправки. Клик по ячейке — детали ниже.</p>
+        <p className="mt-1 text-[11px] text-ink-3">
+          {isRange
+            ? 'Диапазоны не пересекаются — видно вклад каждой зоны отдельно. '
+            : ''}
+          Точка в углу ячейки = значимо после FDR-поправки. Клик по ячейке — детали ниже.
+        </p>
       </div>
       {sel && (
         <Card>
           <CardHeader>
             <CardTitle>
-              Ячейка: {f.label} ({sel.param}д) {data.side === 'high' ? '≥' : '≤'} {sel.thr}{f.unit}
+              Ячейка: {f.label} ({sel.param}д) {regionLabel(f, sel.region)}
             </CardTitle>
-            <CardDescription>Затухание по горизонтам и статистика этой области.</CardDescription>
+            <CardDescription>Затухание, изменение по годам и разбивка по тикерам для этой области.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="space-y-4">
             <div className="flex flex-wrap gap-3">
-              <Stat label="Ср. изб. дох." value={fpct(sel.mean)} tone={sel.mean >= 0 ? 'up' : 'down'} />
+              <Stat label="Ср. изб. дох." value={fpct(sel.mean)} tone={(sel.mean ?? 0) >= 0 ? 'up' : 'down'} />
               <Stat label="t-стат" value={fnum(sel.t)} />
               <Stat label="Доля плюс" value={fnum(sel.hit, 1) + '%'} />
               <Stat label="Наблюдений" value={String(sel.n)} hint={`${sel.periods} периодов`} />
             </div>
-            {hz.length > 1 && sel.decay && (
+            {hz.length > 1 && sel.decay && Object.keys(sel.decay).length > 0 && (
               <div>
                 <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-ink-3">Затухание: ср. изб. дох. по горизонтам (дн.)</div>
-                <Sparkline data={hz.map((h) => sel.decay[String(h)] ?? 0)} width={260} height={48} />
+                <Sparkline data={hz.map((h: number) => sel.decay[String(h)] ?? 0)} width={260} height={48} />
                 <div className="mt-0.5 flex justify-between text-[10px] text-ink-3">
-                  {hz.map((h) => (
+                  {hz.map((h: number) => (
                     <span key={h}>{h}</span>
                   ))}
                 </div>
               </div>
             )}
-            <Button size="sm" variant="secondary" onClick={() => onSave({ factor: data.factor, param: sel.param, side: data.side, threshold: sel.thr })}>
+            <YearlyBars yearly={sel.yearly} />
+            <TickerTable tickers={sel.tickers} kw={sel.kw} />
+            <Button size="sm" variant="secondary" onClick={() => onSave({ factor: data.factor, param: sel.param, ...sel.region })}>
               Сохранить как сигнал
             </Button>
           </CardContent>
@@ -751,26 +887,8 @@ function SignalResult({ data, onSave }: { data: any; onSave: (d: SignalDef, name
           </div>
         </div>
       )}
-      {Array.isArray(data.yearly) && data.yearly.length > 0 && (
-        <div>
-          <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-ink-3">Устойчивость по годам</div>
-          <div className="space-y-1">
-            {data.yearly.map((y: any) => (
-              <div key={y.year} className="flex items-center gap-2 text-[12px]">
-                <span className="w-10 shrink-0 tabular-nums text-ink-2">{y.year}</span>
-                <div className="relative h-3 flex-1 rounded-fk-pill bg-surface-2">
-                  <div
-                    className={`absolute top-0 h-3 rounded-fk-pill ${y.mean >= 0 ? 'bg-up' : 'bg-down'}`}
-                    style={{ left: '50%', width: `${Math.min(50, Math.abs(y.mean) * 6)}%`, transform: y.mean < 0 ? 'translateX(-100%)' : 'none' }}
-                  />
-                </div>
-                <span className={`w-16 shrink-0 text-right tabular-nums ${y.mean >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{fpct(y.mean)}</span>
-                <span className="w-12 shrink-0 text-right text-[10px] text-ink-3">n={y.n}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <YearlyBars yearly={data.yearly} />
+      <TickerTable tickers={data.tickers} kw={data.kw} />
     </div>
   );
 }
@@ -809,11 +927,22 @@ function CombineResult({ data }: { data: any }) {
           ))}
         </div>
       )}
-      {cells.length > 0 && (
+      {cells.length > 0 ? (
         <div>
-          <div className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-ink-3">Карта пересечения: порог #0 × порог #1 → ср. изб. дох.</div>
-          <Heatmap cells={cells} rows={data.grid0} cols={data.grid1} rowLabel="Порог #0" colLabel="Порог #1" fmt={(v) => (v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2))} />
+          <div className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-ink-3">
+            Карта пересечения: порог #{data.tun_idx?.[0] ?? 0} × порог #{data.tun_idx?.[1] ?? 1} → ср. изб. дох.
+          </div>
+          <Heatmap
+            cells={cells}
+            rows={data.grid0}
+            cols={data.grid1}
+            rowLabel={`Порог #${data.tun_idx?.[0] ?? 0}`}
+            colLabel={`Порог #${data.tun_idx?.[1] ?? 1}`}
+            fmt={(v) => (v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2))}
+          />
         </div>
+      ) : (
+        <p className="text-[13px] text-ink-3">2D-карта и автоподбор доступны при ≥2 пороговых сигналах (≥/≤); диапазонные сигналы участвуют только как фильтр.</p>
       )}
       {at ? (
         <Card>
@@ -839,9 +968,9 @@ function CombineResult({ data }: { data: any }) {
             </div>
           </CardContent>
         </Card>
-      ) : (
+      ) : data.tun_idx ? (
         <p className="text-[13px] text-ink-3">Автоподбор пропущен: коротковата история периодов для walk-forward.</p>
-      )}
+      ) : null}
     </div>
   );
 }
