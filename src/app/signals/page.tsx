@@ -38,6 +38,18 @@ function fnum(v: number | null | undefined, d = 2): string {
   if (v == null || !Number.isFinite(v)) return '—';
   return v.toFixed(d);
 }
+function resultTitle(r: any): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const ts = `${pad(d.getDate())}.${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  if (r?.mode === 'factor') {
+    const f = FACTOR_BY_ID[r.factor];
+    return `Фактор · ${f?.label || r.factor} · ${r.bins === 'range' ? 'диапазоны' : 'пороги'} · ${ts}`;
+  }
+  if (r?.mode === 'signal') return `Сигнал · ${signalLabel(r.signal)} · ${ts}`;
+  if (r?.mode === 'combine') return `Комбинация · ${r.signals?.length || 0} сигн. · ${ts}`;
+  return `Результат · ${ts}`;
+}
 
 export default function SignalsPage() {
   return (
@@ -87,8 +99,8 @@ function Stat({ label, value, hint, tone }: { label: string; value: string; hint
 function Signals() {
   const { toast } = useToast();
 
-  // ── Общий конфиг ──
-  const [presets, setPresets] = useState<Set<UniversePreset>>(new Set(['broad']));
+  // ── Общий конфиг ── (вселенную не выбираем по умолчанию — выбирает пользователь)
+  const [presets, setPresets] = useState<Set<UniversePreset>>(new Set());
   const [custom, setCustom] = useState('');
   const [benchmark, setBenchmark] = useState('SPY');
   const [horizon, setHorizon] = useState(5);
@@ -106,7 +118,6 @@ function Signals() {
   const [fBins, setFBins] = useState<'cumulative' | 'range'>('cumulative');
   const [fParams, setFParams] = useState<number[]>(factorDef.defaultParams);
   const [fThresholds, setFThresholds] = useState<string>(factorDef.defaultThresholds.join(', '));
-  const [selCell, setSelCell] = useState<HeatCell | null>(null);
 
   // ── Сигнал ──
   const [sFactor, setSFactor] = useState<FactorId>('momentum');
@@ -125,6 +136,10 @@ function Signals() {
   const [minN, setMinN] = useState(30);
   const [folds, setFolds] = useState(4);
 
+  // ── Сохранённые результаты (снимки) ──
+  const [savedResults, setSavedResults] = useState<{ id: number; title: string; mode: string; created_at: string }[] | null>(null);
+  const [savingResult, setSavingResult] = useState(false);
+
   const outRef = useRef<HTMLDivElement>(null);
 
   const universe = useMemo(() => {
@@ -138,6 +153,19 @@ function Signals() {
     return [...set];
   }, [presets, custom, benchmark]);
 
+  // Группы для раздельных таблиц по классам активов (режим «Фактор»): каждая выбранная
+  // группа + «свои тикеры» — отдельная таблица.
+  const groups = useMemo(() => {
+    const out: { label: string; tickers: string[] }[] = [];
+    for (const pr of UNIVERSE_PRESETS) if (presets.has(pr.id)) out.push({ label: pr.label, tickers: pr.tickers });
+    const customSyms = custom
+      .split(/[\s,;]+/)
+      .map((s) => s.toUpperCase().trim())
+      .filter((s) => /^[A-Z][A-Z0-9.\-]{0,9}$/.test(s));
+    if (customSyms.length) out.push({ label: 'Свои тикеры', tickers: customSyms });
+    return out;
+  }, [presets, custom]);
+
   async function loadSaved() {
     try {
       const d = await (await fetch('/api/signals/saved')).json();
@@ -146,9 +174,60 @@ function Signals() {
       setSaved([]);
     }
   }
+  async function loadResults() {
+    try {
+      const d = await (await fetch('/api/signals/results')).json();
+      setSavedResults(Array.isArray(d?.results) ? d.results : []);
+    } catch {
+      setSavedResults([]);
+    }
+  }
   useEffect(() => {
     loadSaved();
+    loadResults();
   }, []);
+
+  async function saveCurrentResult() {
+    if (!result || savingResult) return;
+    setSavingResult(true);
+    try {
+      const r = await fetch('/api/signals/results', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: resultTitle(result), mode: result.mode, payload: result }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d?.error || 'не удалось');
+      toast({ variant: 'success', title: 'Результат сохранён', description: d?.title });
+      loadResults();
+    } catch (e: any) {
+      toast({ variant: 'error', title: 'Ошибка сохранения', description: e?.message });
+    } finally {
+      setSavingResult(false);
+    }
+  }
+  async function openResult(id: number) {
+    try {
+      const d = await (await fetch(`/api/signals/results/${id}`)).json();
+      const res = d?.result;
+      if (!res?.payload) throw new Error('не найдено');
+      setRunning(false);
+      setErrMsg('');
+      setResult(res.payload);
+      if (['factor', 'signal', 'combine'].includes(res.payload.mode)) setTab(res.payload.mode);
+      setStatus('Сохранённый результат');
+    } catch (e: any) {
+      toast({ variant: 'error', title: 'Не удалось открыть', description: e?.message });
+    }
+  }
+  async function deleteResultById(id: number) {
+    try {
+      await fetch(`/api/signals/results/${id}`, { method: 'DELETE' });
+      loadResults();
+    } catch {
+      /* noop */
+    }
+  }
   useEffect(() => {
     outRef.current?.scrollTo({ top: 0 });
   }, [result]);
@@ -160,7 +239,6 @@ function Signals() {
     setFSide(f.defaultSide);
     setFParams(f.defaultParams);
     setFThresholds(f.defaultThresholds.join(', '));
-    setSelCell(null);
   }
   function changeSignalFactor(id: FactorId) {
     setSFactor(id);
@@ -185,7 +263,6 @@ function Signals() {
     setRunning(true);
     setResult(null);
     setErrMsg('');
-    setSelCell(null);
     setStatus('Отправка запроса…');
     try {
       const res = await fetch('/api/signals/study', {
@@ -253,7 +330,7 @@ function Signals() {
 
   // ── Запуск по вкладкам ──
   function runFactor() {
-    runStudy({ mode: 'factor', factor: factorId, side: fSide, bins: fBins, params: fParams, thresholds: parseList(fThresholds) });
+    runStudy({ mode: 'factor', factor: factorId, side: fSide, bins: fBins, params: fParams, thresholds: parseList(fThresholds), groups });
   }
   function runSignal() {
     runStudy({ mode: 'signal', signal: currentSignalDef() });
@@ -327,6 +404,9 @@ function Signals() {
                     );
                   })}
                 </div>
+                {universe.length < 4 && (
+                  <p className="text-[11px] font-medium text-warn-strong">Выберите вселенную: группу выше или впишите тикеры ниже (нужно ≥ 4).</p>
+                )}
               </Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field>
@@ -368,6 +448,7 @@ function Signals() {
                   setThresholds={setFThresholds}
                   onRun={runFactor}
                   running={running}
+                  canRun={universe.length >= 4}
                 />
               )}
               {tab === 'signal' && (
@@ -387,6 +468,7 @@ function Signals() {
                   onRun={runSignal}
                   onSave={() => saveSignalDef(currentSignalDef())}
                   running={running}
+                  canRun={universe.length >= 4}
                   saved={saved}
                   onLoad={(d: SignalDef) => changeSignalFactorFromDef(d)}
                   onDelete={deleteSaved}
@@ -407,8 +489,41 @@ function Signals() {
                   setFolds={setFolds}
                   onRun={runCombine}
                   running={running}
+                  canRun={universe.length >= 4}
                   onDelete={deleteSaved}
                 />
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Сохранённые результаты</CardTitle>
+              <CardDescription>Снимок отчёта — открывается мгновенно, без пересчёта.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {savedResults === null ? (
+                <Skeleton className="h-10 w-full" />
+              ) : savedResults.length === 0 ? (
+                <p className="text-sm text-ink-3">Пока пусто. Постройте результат и нажмите «Сохранить результат».</p>
+              ) : (
+                <ul className="space-y-1" data-testid="saved-results">
+                  {savedResults.map((r) => (
+                    <li key={r.id} className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        data-testid="result-open"
+                        onClick={() => openResult(r.id)}
+                        className="min-w-0 flex-1 truncate rounded-fk-sm px-2 py-1.5 text-left text-[12px] text-ink-2 transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
+                      >
+                        {r.title}
+                      </button>
+                      <button type="button" aria-label="Удалить результат" onClick={() => deleteResultById(r.id)} className="shrink-0 rounded-fk-sm px-1.5 text-ink-3 hover:text-down">
+                        ×
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               )}
             </CardContent>
           </Card>
@@ -418,14 +533,21 @@ function Signals() {
         <Card className="flex min-h-[60vh] min-w-0 flex-col">
           <CardHeader className="flex flex-row items-center justify-between gap-3">
             <CardTitle>Результат</CardTitle>
-            {running ? (
-              <span className="inline-flex items-center gap-2 text-sm text-ink-2">
-                <Spinner className="text-brand" />
-                {status}
-              </span>
-            ) : status ? (
-              <Badge variant={status === 'Ошибка' ? 'down' : 'up'}>{status}</Badge>
-            ) : null}
+            <div className="flex items-center gap-3">
+              {running ? (
+                <span className="inline-flex items-center gap-2 text-sm text-ink-2">
+                  <Spinner className="text-brand" />
+                  {status}
+                </span>
+              ) : status ? (
+                <Badge variant={status === 'Ошибка' ? 'down' : 'up'}>{status}</Badge>
+              ) : null}
+              {result && !running && (
+                <Button size="sm" variant="secondary" onClick={saveCurrentResult} loading={savingResult}>
+                  Сохранить результат
+                </Button>
+              )}
+            </div>
           </CardHeader>
           <div ref={outRef} className="flex-1 overflow-auto px-5 pb-5 sm:px-6" data-testid="signals-output">
             {errMsg && (
@@ -440,7 +562,7 @@ function Signals() {
               </div>
             )}
             {running && !result && <Skeleton className="h-40 w-full" />}
-            {result?.mode === 'factor' && <FactorResult data={result} selCell={selCell} setSelCell={setSelCell} onSave={saveSignalDef} />}
+            {result?.mode === 'factor' && <FactorResult data={result} onSave={saveSignalDef} />}
             {result?.mode === 'signal' && <SignalResult data={result} onSave={saveSignalDef} />}
             {result?.mode === 'combine' && <CombineResult data={result} />}
           </div>
@@ -562,7 +684,7 @@ function FactorForm(p: any) {
         <Label htmlFor="thr">Пороги — ось столбцов ({f.unit || '—'})</Label>
         <Input id="thr" value={p.thresholds} onChange={(e: any) => p.setThresholds(e.target.value)} placeholder="через запятую" />
       </Field>
-      <Button onClick={p.onRun} loading={p.running} fullWidth data-testid="run-study">
+      <Button onClick={p.onRun} loading={p.running} disabled={!p.canRun} fullWidth data-testid="run-study">
         Построить карту
       </Button>
     </>
@@ -607,7 +729,7 @@ function SignalForm(p: any) {
         </Field>
       )}
       <div className="flex gap-2">
-        <Button onClick={p.onRun} loading={p.running} fullWidth data-testid="run-study">
+        <Button onClick={p.onRun} loading={p.running} disabled={!p.canRun} fullWidth data-testid="run-study">
           Проверить сигнал
         </Button>
         <Button variant="secondary" onClick={p.onSave}>Сохранить</Button>
@@ -664,7 +786,7 @@ function CombineForm(p: any) {
           <Input id="fo" type="number" value={p.folds} onChange={(e: any) => p.setFolds(Number(e.target.value) || 4)} />
         </Field>
       </div>
-      <Button onClick={p.onRun} loading={p.running} fullWidth data-testid="run-study" disabled={p.picked.length < 2}>
+      <Button onClick={p.onRun} loading={p.running} fullWidth data-testid="run-study" disabled={p.picked.length < 2 || !p.canRun}>
         Исследовать комбинацию
       </Button>
       <SavedList saved={p.saved} onDelete={p.onDelete} />
@@ -780,61 +902,74 @@ function regionLabel(f: any, region: any): string {
   return `${region.side === 'high' ? '≥' : '≤'} ${region.threshold}${unit}`;
 }
 
-function FactorResult({ data, selCell, setSelCell, onSave }: { data: any; selCell: HeatCell | null; setSelCell: (c: HeatCell) => void; onSave: (d: SignalDef, name?: string) => void }) {
+function FactorResult({ data, onSave }: { data: any; onSave: (d: SignalDef, name?: string) => void }) {
   const f = FACTOR_BY_ID[data.factor];
   const isRange = data.bins === 'range';
-  const cells: HeatCell[] = data.grid.map((g: any) => ({ row: g.param, col: g.col, value: g.mean, n: g.n, sig: g.sig }));
-  const sel = selCell ? data.grid.find((g: any) => g.param === selCell.row && g.col === selCell.col) : null;
+  const groups: any[] = data.groups && data.groups.length ? data.groups : [{ label: null, baseline: data.baseline, grid: data.grid }];
+  const multi = groups.length > 1;
+  return (
+    <div className="space-y-5">
+      <MetaBar meta={data.meta} />
+      <Badge variant="neutral">
+        {f.label} · {isRange ? 'диапазоны' : data.side === 'high' ? '≥ порог' : '≤ порог'} · гор. {data.horizon}д
+      </Badge>
+      {multi && (
+        <p className="text-[12px] text-ink-3">Разные классы активов — отдельными таблицами: сравните, отличается ли поведение фактора.</p>
+      )}
+      {groups.map((g: any, i: number) => (
+        <FactorGroup key={i} data={data} group={g} f={f} isRange={isRange} multi={multi} onSave={onSave} />
+      ))}
+    </div>
+  );
+}
+
+function FactorGroup({ data, group, f, isRange, multi, onSave }: { data: any; group: any; f: any; isRange: boolean; multi: boolean; onSave: (d: SignalDef, name?: string) => void }) {
+  const [sel, setSel] = useState<HeatCell | null>(null);
+  const cells: HeatCell[] = (group.grid || []).map((g: any) => ({ row: g.param, col: g.col, value: g.mean, n: g.n, sig: g.sig }));
+  const cell = sel ? (group.grid || []).find((g: any) => g.param === sel.row && g.col === sel.col) : null;
   const hz: number[] = data.hz || [];
   return (
-    <div className="space-y-4">
-      <MetaBar meta={data.meta} />
-      <div className="flex flex-wrap items-center gap-3">
-        <Stat label="Базовая дох. (среднее)" value={fpct(data.baseline)} hint="безусловная, на горизонте" />
-        <Badge variant="neutral">
-          {f.label} · {isRange ? 'диапазоны' : data.side === 'high' ? '≥ порог' : '≤ порог'} · гор. {data.horizon}д
-        </Badge>
+    <div className={multi ? 'space-y-3 rounded-fk border border-line bg-surface-elev p-3' : 'space-y-3'}>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        {group.label && <span className="text-[13px] font-bold text-ink">{group.label}</span>}
+        {group.symbols != null && <span className="text-[11px] text-ink-3">{group.symbols} инстр.</span>}
+        <span className="text-[11px] text-ink-3">базовая дох.: {fpct(group.baseline)}</span>
       </div>
-      <div>
-        <div className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-ink-3">
-          Карта: ср. изб. доходность (%) по {f.paramLabel.toLowerCase()} × {isRange ? 'диапазон' : 'порог'}
-        </div>
-        <Heatmap
-          cells={cells}
-          rows={data.params}
-          cols={data.cols}
-          rowLabel="Параметр"
-          colLabel={isRange ? 'Диапазон' : 'Порог'}
-          selected={selCell ? { row: selCell.row, col: selCell.col } : null}
-          onSelect={setSelCell}
-          fmt={(v) => (v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2))}
-        />
-        <p className="mt-1 text-[11px] text-ink-3">
-          {isRange
-            ? 'Диапазоны не пересекаются — видно вклад каждой зоны отдельно. '
-            : ''}
-          Точка в углу ячейки = значимо после FDR-поправки. Клик по ячейке — детали ниже.
+      <Heatmap
+        cells={cells}
+        rows={data.params}
+        cols={data.cols}
+        rowLabel="Параметр"
+        colLabel={isRange ? 'Диапазон' : 'Порог'}
+        selected={sel ? { row: sel.row, col: sel.col } : null}
+        onSelect={setSel}
+        fmt={(v) => (v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2))}
+      />
+      {!sel && (
+        <p className="text-[11px] text-ink-3">
+          {isRange ? 'Диапазоны не пересекаются — видно вклад каждой зоны отдельно. ' : ''}
+          Точка в углу ячейки = значимо (FDR). Клик по ячейке — детали.
         </p>
-      </div>
-      {sel && (
+      )}
+      {cell && (
         <Card>
           <CardHeader>
             <CardTitle>
-              Ячейка: {f.label} ({sel.param}д) {regionLabel(f, sel.region)}
+              {group.label ? group.label + ' · ' : ''}{f.label} ({cell.param}д) {regionLabel(f, cell.region)}
             </CardTitle>
             <CardDescription>Затухание, изменение по годам и разбивка по тикерам для этой области.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-wrap gap-3">
-              <Stat label="Ср. изб. дох." value={fpct(sel.mean)} tone={(sel.mean ?? 0) >= 0 ? 'up' : 'down'} />
-              <Stat label="t-стат" value={fnum(sel.t)} />
-              <Stat label="Доля плюс" value={fnum(sel.hit, 1) + '%'} />
-              <Stat label="Наблюдений" value={String(sel.n)} hint={`${sel.periods} периодов`} />
+              <Stat label="Ср. изб. дох." value={fpct(cell.mean)} tone={(cell.mean ?? 0) >= 0 ? 'up' : 'down'} />
+              <Stat label="t-стат" value={fnum(cell.t)} />
+              <Stat label="Доля плюс" value={fnum(cell.hit, 1) + '%'} />
+              <Stat label="Наблюдений" value={String(cell.n)} hint={`${cell.periods} периодов`} />
             </div>
-            {hz.length > 1 && sel.decay && Object.keys(sel.decay).length > 0 && (
+            {hz.length > 1 && cell.decay && Object.keys(cell.decay).length > 0 && (
               <div>
                 <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-ink-3">Затухание: ср. изб. дох. по горизонтам (дн.)</div>
-                <Sparkline data={hz.map((h: number) => sel.decay[String(h)] ?? 0)} width={260} height={48} />
+                <Sparkline data={hz.map((h: number) => cell.decay[String(h)] ?? 0)} width={260} height={48} />
                 <div className="mt-0.5 flex justify-between text-[10px] text-ink-3">
                   {hz.map((h: number) => (
                     <span key={h}>{h}</span>
@@ -842,9 +977,9 @@ function FactorResult({ data, selCell, setSelCell, onSave }: { data: any; selCel
                 </div>
               </div>
             )}
-            <YearlyBars yearly={sel.yearly} />
-            <TickerTable tickers={sel.tickers} kw={sel.kw} />
-            <Button size="sm" variant="secondary" onClick={() => onSave({ factor: data.factor, param: sel.param, ...sel.region })}>
+            <YearlyBars yearly={cell.yearly} />
+            <TickerTable tickers={cell.tickers} kw={cell.kw} />
+            <Button size="sm" variant="secondary" onClick={() => onSave({ factor: data.factor, param: cell.param, ...cell.region })}>
               Сохранить как сигнал
             </Button>
           </CardContent>

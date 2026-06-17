@@ -57,13 +57,25 @@ export const MEGA_STOCKS = [
   'XOM', 'JNJ', 'WMT', 'PG', 'MA', 'HD', 'COST', 'ORCL', 'AVGO', 'LLY',
 ];
 
-export type UniversePreset = 'country' | 'sector' | 'factor' | 'mega' | 'broad' | 'all';
+// Сырьё (commodities) — ликвидные ETF.
+export const COMMODITY_ETFS = [
+  'DBC', 'PDBC', 'GSG', 'USO', 'BNO', 'UNG', 'DBA', 'CORN', 'WEAT', 'SOYB', 'DBB', 'URA',
+];
+
+// Металлы (драгоценные и промышленные) — ETF и майнеры.
+export const METAL_ETFS = [
+  'GLD', 'IAU', 'SLV', 'PPLT', 'PALL', 'GLTR', 'GDX', 'GDXJ', 'SIL', 'COPX', 'CPER',
+];
+
+export type UniversePreset = 'country' | 'sector' | 'factor' | 'mega' | 'commodity' | 'metal' | 'broad' | 'all';
 
 export const UNIVERSE_PRESETS: { id: UniversePreset; label: string; tickers: string[] }[] = [
   { id: 'country', label: 'Страновые ETF', tickers: COUNTRY_ETFS },
   { id: 'sector', label: 'Секторные ETF', tickers: SECTOR_ETFS },
   { id: 'factor', label: 'Факторные / стилевые ETF', tickers: FACTOR_ETFS },
   { id: 'mega', label: 'Крупные акции', tickers: MEGA_STOCKS },
+  { id: 'commodity', label: 'Сырьё (commodities)', tickers: COMMODITY_ETFS },
+  { id: 'metal', label: 'Металлы', tickers: METAL_ETFS },
   {
     id: 'broad',
     label: 'Широкая: страновые + секторные + факторные',
@@ -71,8 +83,8 @@ export const UNIVERSE_PRESETS: { id: UniversePreset; label: string; tickers: str
   },
   {
     id: 'all',
-    label: 'Всё: + крупные акции',
-    tickers: [...COUNTRY_ETFS, ...SECTOR_ETFS, ...FACTOR_ETFS, ...MEGA_STOCKS],
+    label: 'Всё: + акции, сырьё, металлы',
+    tickers: [...COUNTRY_ETFS, ...SECTOR_ETFS, ...FACTOR_ETFS, ...MEGA_STOCKS, ...COMMODITY_ETFS, ...METAL_ETFS],
   },
 ];
 

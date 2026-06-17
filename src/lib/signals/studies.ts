@@ -217,7 +217,7 @@ async def main():
         fid = CFG['factor']; side = CFG['side']; bins = CFG.get('bins', 'cumulative')
         params = [int(p) for p in CFG['params']]
         thresholds = sorted([float(t) for t in CFG['thresholds']])
-        base = pstat(tgt, maincol)
+        alpha = float(CFG.get('fdrAlpha', 0.1))
         # Описываем столбцы: накопительно (пороги) ИЛИ диапазоны (корзины между порогами).
         if bins == 'range':
             def _lab(x):
@@ -235,38 +235,49 @@ async def main():
         else:
             cols = [{'label': c, 'region': {'side': side, 'threshold': c}} for c in thresholds]
         col_labels = [c['label'] for c in cols]
-        grid = []; pvals = []
+        # fval по всей вселенной один раз на параметр (потом фильтруем по группам).
+        mcache = {}
         for p in params:
             fv = build_fval(px, bench, fid, p, H)
-            m = tgt.merge(fv, on=['symbol', 'date'], how='inner')
-            f = m['fval']
-            for col in cols:
-                if bins == 'range':
-                    if col['lo'] is None:
-                        sel = m[f < col['hi']]
-                    elif col['hi'] is None:
-                        sel = m[f >= col['lo']]
+            mcache[p] = tgt.merge(fv, on=['symbol', 'date'], how='inner')
+        groups_cfg = CFG.get('groups') or [{'label': None, 'tickers': CFG['universe']}]
+        out_groups = []
+        for grp in groups_cfg:
+            gsyms = set(str(s).upper() for s in (grp.get('tickers') or []))
+            tgt_g = tgt[tgt['symbol'].isin(gsyms)]
+            base_g = pstat(tgt_g, maincol)
+            grid = []; pvals = []
+            for p in params:
+                mg = mcache[p][mcache[p]['symbol'].isin(gsyms)]
+                fcol = mg['fval']
+                for col in cols:
+                    if bins == 'range':
+                        if col['lo'] is None:
+                            sel = mg[fcol < col['hi']]
+                        elif col['hi'] is None:
+                            sel = mg[fcol >= col['lo']]
+                        else:
+                            sel = mg[(fcol >= col['lo']) & (fcol < col['hi'])]
                     else:
-                        sel = m[(f >= col['lo']) & (f < col['hi'])]
-                else:
-                    sel = m[region_mask(f, col['region'])]
-                st = pstat(sel, maincol)
-                cell = {'param': p, 'col': col['label'], 'region': col['region']}
-                if st:
-                    cell.update({'n': st['n'], 'periods': st['periods'], 'mean': _f(st['mean']),
-                                 't': _f(st['t']), 'hit': _f(st['hit'])})
-                    cell.update(cell_extras(sel, maincol, HZ))
-                    pvals.append((str(p) + ':' + str(col['label']), st['p']))
-                else:
-                    cell.update({'n': int(len(sel)), 'periods': 0, 'mean': None, 't': None, 'hit': None,
-                                 'decay': {}, 'yearly': [], 'tickers': [], 'kw': None})
-                grid.append(cell)
-        sigset = _bh(pvals, float(CFG.get('fdrAlpha', 0.1)))
-        for cell in grid:
-            cell['sig'] = (str(cell['param']) + ':' + str(cell['col'])) in sigset
+                        sel = mg[region_mask(fcol, col['region'])]
+                    st = pstat(sel, maincol)
+                    cell = {'param': p, 'col': col['label'], 'region': col['region']}
+                    if st:
+                        cell.update({'n': st['n'], 'periods': st['periods'], 'mean': _f(st['mean']),
+                                     't': _f(st['t']), 'hit': _f(st['hit'])})
+                        cell.update(cell_extras(sel, maincol, HZ))
+                        pvals.append((str(p) + ':' + str(col['label']), st['p']))
+                    else:
+                        cell.update({'n': int(len(sel)), 'periods': 0, 'mean': None, 't': None, 'hit': None,
+                                     'decay': {}, 'yearly': [], 'tickers': [], 'kw': None})
+                    grid.append(cell)
+            sigset = _bh(pvals, alpha)
+            for cell in grid:
+                cell['sig'] = (str(cell['param']) + ':' + str(cell['col'])) in sigset
+            out_groups.append({'label': grp.get('label'), 'baseline': _f(base_g['mean']) if base_g else None,
+                               'symbols': int(tgt_g['symbol'].nunique()), 'grid': grid})
         return {'mode': 'factor', 'factor': fid, 'side': side, 'bins': bins, 'horizon': H,
-                'params': params, 'cols': col_labels, 'hz': HZ,
-                'baseline': _f(base['mean']) if base else None, 'grid': grid, 'meta': meta}
+                'params': params, 'cols': col_labels, 'hz': HZ, 'groups': out_groups, 'meta': meta}
 
     if mode == 'signal':
         s0 = CFG['signal']

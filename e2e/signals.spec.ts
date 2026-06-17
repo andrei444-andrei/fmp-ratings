@@ -7,19 +7,32 @@ import { test, expect } from '@playwright/test';
 
 type Page = import('@playwright/test').Page;
 
-// Узкая вселенная (быстрый прогон на синтетике).
+// Узкая вселенная (быстрый прогон на синтетике). Пресеты по умолчанию НЕ выбраны.
 async function setup(page: Page) {
   await page.goto('/signals');
-  await page.getByRole('button', { name: 'Широкая' }).click(); // выключаем дефолтный широкий пресет
   await page.getByPlaceholder('SMH, GLD, TLT').fill('AAA, BBB, CCC, DDD, EEE, FFF');
 }
 
 test.describe('Signals /signals', () => {
-  test('пустое состояние и вкладки рендерятся', async ({ page }) => {
+  test('пустое состояние; вселенная не выбрана по умолчанию (запуск заблокирован)', async ({ page }) => {
     await page.goto('/signals');
     await expect(page.getByRole('heading', { name: 'Данные' })).toBeVisible();
     await expect(page.getByTestId('tab-factor')).toBeVisible();
     await expect(page.getByText('Здесь появится результат')).toBeVisible();
+    // Вселенная пуста → подсказка видна, кнопка запуска заблокирована.
+    await expect(page.getByText(/Выберите вселенную/)).toBeVisible();
+    await expect(page.getByTestId('run-study')).toBeDisabled();
+  });
+
+  test('разные классы активов — отдельные таблицы (металлы + сырьё)', async ({ page }) => {
+    await page.goto('/signals');
+    await page.getByRole('button', { name: 'Металлы', exact: true }).click();
+    await page.getByRole('button', { name: 'Сырьё (commodities)', exact: true }).click();
+    await page.getByTestId('run-study').click();
+    await expect(page.getByTestId('heat-cell').first()).toBeVisible({ timeout: 150000 });
+    const out = page.locator('[data-testid="signals-output"]');
+    await expect(out.getByText('Металлы', { exact: true })).toBeVisible();
+    await expect(out.getByText('Сырьё (commodities)', { exact: true })).toBeVisible();
   });
 
   test('режим Фактор: карта строится, клик по ячейке раскрывает детали, сигнал сохраняется', async ({ page }) => {
