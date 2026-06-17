@@ -38,7 +38,7 @@ function normGroups(raw: unknown, benchmark: string): { label: string; tickers: 
   for (const g of raw.slice(0, 8)) {
     const gg = g as any;
     const label = typeof gg?.label === 'string' && gg.label.trim() ? gg.label.trim().slice(0, 60) : 'Группа';
-    const tickers = normUniverse(gg?.tickers, benchmark, 100);
+    const tickers = normUniverse(gg?.tickers, benchmark, 520);
     if (tickers.length) out.push({ label, tickers });
   }
   return out;
@@ -69,7 +69,7 @@ export function normalizeStudyConfig(body: any): StudyConfig {
   const benchmark = (typeof body?.benchmark === 'string' && body.benchmark.trim() ? body.benchmark : 'SPY')
     .toUpperCase()
     .trim();
-  const universe = normUniverse(body?.universe, benchmark, 200);
+  const universe = normUniverse(body?.universe, benchmark, 520);
   const horizon = Math.round(clampNum(body?.horizon, 5, 1, 63));
   const dre = /^\d{4}-\d{2}-\d{2}/;
   const start = typeof body?.start === 'string' && dre.test(body.start) ? body.start.slice(0, 10) : undefined;
@@ -84,7 +84,7 @@ export function normalizeStudyConfig(body: any): StudyConfig {
     // Раздельные таблицы по классам активов: каждая выбранная группа считается отдельно.
     const groups = normGroups(body?.groups, benchmark);
     const factorUniverse = groups.length
-      ? [...new Set(groups.flatMap((g) => g.tickers))].slice(0, 200)
+      ? [...new Set(groups.flatMap((g) => g.tickers))].slice(0, 520)
       : universe;
     return {
       ...base,

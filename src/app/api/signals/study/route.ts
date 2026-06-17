@@ -33,7 +33,7 @@ export async function POST(req: Request) {
         const to = new Date().toISOString().slice(0, 10);
         const from = new Date(Date.now() - 25 * 365 * 864e5).toISOString().slice(0, 10);
         const fetchPrices = async (symbols: string[], start?: string, end?: string) => {
-          const syms = [...new Set((symbols || []).map((s) => String(s).toUpperCase().trim()).filter(Boolean))].slice(0, 200);
+          const syms = [...new Set((symbols || []).map((s) => String(s).toUpperCase().trim()).filter(Boolean))].slice(0, 520);
           const f = start && /^\d{4}-\d{2}-\d{2}/.test(start) ? start.slice(0, 10) : from;
           const t = end && /^\d{4}-\d{2}-\d{2}/.test(end) ? end.slice(0, 10) : to;
           const out: { symbol: string; date: string; close: number; volume: number | null }[] = [];

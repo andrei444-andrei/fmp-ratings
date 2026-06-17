@@ -73,7 +73,7 @@ export const UNIVERSE_PRESETS: { id: UniversePreset; label: string; tickers: str
   { id: 'country', label: 'Страновые ETF', tickers: COUNTRY_ETFS },
   { id: 'sector', label: 'Секторные ETF', tickers: SECTOR_ETFS },
   { id: 'factor', label: 'Факторные / стилевые ETF', tickers: FACTOR_ETFS },
-  { id: 'mega', label: 'Крупные акции', tickers: MEGA_STOCKS },
+  { id: 'mega', label: 'Крупные акции (S&P 500)', tickers: MEGA_STOCKS },
   { id: 'commodity', label: 'Сырьё (commodities)', tickers: COMMODITY_ETFS },
   { id: 'metal', label: 'Металлы', tickers: METAL_ETFS },
   {

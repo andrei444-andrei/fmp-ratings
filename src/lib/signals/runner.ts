@@ -34,11 +34,18 @@ const DATA_PRELUDE =
   '        raise RuntimeError("get_prices недоступна на сервере")\n' +
   '    if isinstance(symbols, str): symbols = [symbols]\n' +
   '    __syms = [str(s) for s in symbols]\n' +
-  '    __raw = await __f(__json.dumps({"symbols": __syms, "start": start, "end": end}))\n' +
-  '    __d = pd.DataFrame(__json.loads(__raw))\n' +
-  '    if __d.empty: return pd.DataFrame()\n' +
-  '    __d["date"] = pd.to_datetime(__d["date"])\n' +
-  '    return __d.pivot_table(index="date", columns="symbol", values="close", aggfunc="last").sort_index()\n';
+  '    __parts = []\n' +
+  '    __CH = 40\n' +
+  '    for __i in range(0, len(__syms), __CH):\n' +
+  '        __chunk = __syms[__i:__i + __CH]\n' +
+  '        __raw = await __f(__json.dumps({"symbols": __chunk, "start": start, "end": end}))\n' +
+  '        __d = pd.DataFrame(__json.loads(__raw))\n' +
+  '        if __d.empty: continue\n' +
+  '        __d["date"] = pd.to_datetime(__d["date"])\n' +
+  '        __parts.append(__d.pivot_table(index="date", columns="symbol", values="close", aggfunc="last"))\n' +
+  '        del __d, __raw\n' +
+  '    if not __parts: return pd.DataFrame()\n' +
+  '    return pd.concat(__parts, axis=1).sort_index()\n';
 
 // Прогоны сериализуются через общий интерпретатор.
 let chain: Promise<unknown> = Promise.resolve();
