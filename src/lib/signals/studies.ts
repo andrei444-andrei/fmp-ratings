@@ -82,13 +82,16 @@ def _bh(pairs, alpha):
         if p <= alpha * i / m: thr = i
     return set(k for i, (k, p) in enumerate(items, start=1) if i <= thr)
 
-def factor_series(c, bc, fid, param, has_b):
-    p = int(param)
+def factor_series(c, bc, fid, param, has_b, skip=0):
+    p = int(param); sk = int(skip)
+    if sk < 0: sk = 0
+    if sk >= p: sk = max(0, p - 1)
     if fid == 'momentum':
-        return (c / c.shift(p) - 1.0) * 100.0
+        # доходность от t-p до t-sk (исключаем последние sk дней — gap).
+        return (c.shift(sk) / c.shift(p) - 1.0) * 100.0
     if fid == 'xbench':
-        if not has_b: return (c / c.shift(p) - 1.0) * 100.0
-        return ((c / c.shift(p)) - (bc / bc.shift(p))) * 100.0
+        if not has_b: return (c.shift(sk) / c.shift(p) - 1.0) * 100.0
+        return ((c.shift(sk) / c.shift(p)) - (bc.shift(sk) / bc.shift(p))) * 100.0
     if fid == 'vol':
         return c.pct_change().rolling(p).std() * math.sqrt(252) * 100.0
     if fid == 'dist_ath':
@@ -118,14 +121,14 @@ def build_targets(px, bench, horizons, step):
     full = pd.concat(frames, ignore_index=True)
     return full[full['date'].isin(keep)]
 
-def build_fval(px, bench, fid, param, step):
+def build_fval(px, bench, fid, param, step, skip=0):
     px = px.sort_index(); has_b = bench in px.columns; bc = px[bench] if has_b else None
     dates = list(px.index); keep = set(dates[::max(1, step)])
     frames = []
     for s in [c for c in px.columns if c != bench]:
         c = px[s]
         if c.notna().sum() < 260: continue
-        d = pd.DataFrame({'fval': factor_series(c, bc, fid, param, has_b)})
+        d = pd.DataFrame({'fval': factor_series(c, bc, fid, param, has_b, skip)})
         d['symbol'] = s; d['date'] = px.index
         frames.append(d)
     if not frames: return pd.DataFrame()
@@ -205,6 +208,13 @@ async def main():
     px = await get_prices(syms + [bench])
     if px is None or px.empty or px.shape[1] < 2:
         return {'error': 'Недостаточно данных: не загрузились цены.'}
+    # Окно анализа: годы от-до (чтобы отдельный год не искажал выборку).
+    if CFG.get('start'):
+        px = px[px.index >= pd.Timestamp(CFG['start'])]
+    if CFG.get('end'):
+        px = px[px.index <= pd.Timestamp(CFG['end'])]
+    if px.empty or px.shape[1] < 2:
+        return {'error': 'В выбранном окне дат нет данных — расширьте годы.'}
     HZ = sorted(set([1, 2, 3, 5, 10, 21, H]))
     if mode == 'combine': HZ = [H]
     print('Строю форвардные таргеты...')
@@ -235,10 +245,11 @@ async def main():
         else:
             cols = [{'label': c, 'region': {'side': side, 'threshold': c}} for c in thresholds]
         col_labels = [c['label'] for c in cols]
+        skip = int(CFG.get('skip', 0))
         # fval по всей вселенной один раз на параметр (потом фильтруем по группам).
         mcache = {}
         for p in params:
-            fv = build_fval(px, bench, fid, p, H)
+            fv = build_fval(px, bench, fid, p, H, skip)
             mcache[p] = tgt.merge(fv, on=['symbol', 'date'], how='inner')
         groups_cfg = CFG.get('groups') or [{'label': None, 'tickers': CFG['universe']}]
         out_groups = []
@@ -276,12 +287,12 @@ async def main():
                 cell['sig'] = (str(cell['param']) + ':' + str(cell['col'])) in sigset
             out_groups.append({'label': grp.get('label'), 'baseline': _f(base_g['mean']) if base_g else None,
                                'symbols': int(tgt_g['symbol'].nunique()), 'grid': grid})
-        return {'mode': 'factor', 'factor': fid, 'side': side, 'bins': bins, 'horizon': H,
+        return {'mode': 'factor', 'factor': fid, 'side': side, 'bins': bins, 'horizon': H, 'skip': skip,
                 'params': params, 'cols': col_labels, 'hz': HZ, 'groups': out_groups, 'meta': meta}
 
     if mode == 'signal':
         s0 = CFG['signal']
-        fv = build_fval(px, bench, s0['factor'], int(s0['param']), H)
+        fv = build_fval(px, bench, s0['factor'], int(s0['param']), H, int(s0.get('skip', 0)))
         m = tgt.merge(fv, on=['symbol', 'date'], how='inner')
         sel = m[region_mask(m['fval'], s0)]
         st = pstat(sel, maincol); base = pstat(m, maincol)
@@ -299,7 +310,7 @@ async def main():
             return {'error': 'Для комбинации нужно минимум 2 сигнала.'}
         m = tgt.copy()
         for i, s in enumerate(signals):
-            fv = build_fval(px, bench, s['factor'], int(s['param']), H)
+            fv = build_fval(px, bench, s['factor'], int(s['param']), H, int(s.get('skip', 0)))
             m = m.merge(fv.rename(columns={'fval': 'f' + str(i)}), on=['symbol', 'date'], how='left')
         masks = [region_mask(m['f' + str(i)], s).fillna(False) for i, s in enumerate(signals)]
         alone = []

@@ -49,14 +49,17 @@ function normSignal(raw: any): SignalDef | null {
   if (!f) return null;
   const param = f.paramOptions.includes(Number(raw?.param)) ? Number(raw.param) : f.defaultParams[0];
   const side: Side = raw?.side === 'low' || raw?.side === 'high' || raw?.side === 'band' ? raw.side : f.defaultSide;
+  const skip = (f.id === 'momentum' || f.id === 'xbench')
+    ? Math.round(clampNum(raw?.skip, 0, 0, Math.max(0, param - 1)))
+    : 0;
   if (side === 'band') {
     let lo = clampNum(raw?.lo, f.defaultThresholds[0], -1e6, 1e6);
     let hi = clampNum(raw?.hi, f.defaultThresholds[f.defaultThresholds.length - 1], -1e6, 1e6);
     if (lo > hi) [lo, hi] = [hi, lo];
-    return { factor: f.id as FactorId, param, side, lo, hi };
+    return { factor: f.id as FactorId, param, side, lo, hi, skip };
   }
   const threshold = clampNum(raw?.threshold, f.defaultThresholds[0], -1e6, 1e6);
-  return { factor: f.id as FactorId, param, side, threshold };
+  return { factor: f.id as FactorId, param, side, threshold, skip };
 }
 
 export type StudyConfig = Record<string, unknown> & { mode: 'factor' | 'signal' | 'combine' };
@@ -68,7 +71,10 @@ export function normalizeStudyConfig(body: any): StudyConfig {
     .trim();
   const universe = normUniverse(body?.universe, benchmark, 200);
   const horizon = Math.round(clampNum(body?.horizon, 5, 1, 63));
-  const base: StudyConfig = { mode, benchmark, universe, horizon };
+  const dre = /^\d{4}-\d{2}-\d{2}/;
+  const start = typeof body?.start === 'string' && dre.test(body.start) ? body.start.slice(0, 10) : undefined;
+  const end = typeof body?.end === 'string' && dre.test(body.end) ? body.end.slice(0, 10) : undefined;
+  const base: StudyConfig = { mode, benchmark, universe, horizon, start, end };
 
   if (mode === 'factor') {
     const f = FACTOR_BY_ID[String(body?.factor)] || FACTOR_BY_ID.xbench;
@@ -89,6 +95,7 @@ export function normalizeStudyConfig(body: any): StudyConfig {
       params: params.length ? params : f.defaultParams,
       thresholds: normNumberList(body?.thresholds, f.defaultThresholds, 14),
       fdrAlpha: clampNum(body?.fdrAlpha, 0.1, 0.01, 0.5),
+      skip: Math.round(clampNum(body?.skip, 0, 0, 60)),
       groups: groups.length ? groups : undefined,
     };
   }

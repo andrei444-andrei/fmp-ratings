@@ -37,6 +37,9 @@ test.describe('Signals /signals', () => {
 
   test('режим Фактор: карта строится, клик по ячейке раскрывает детали, сигнал сохраняется', async ({ page }) => {
     await setup(page);
+    // Окно дат (годы от-до) и пропуск последних дней (gap) в моментуме/превышении.
+    await page.locator('#yf').selectOption('2016');
+    await page.locator('#fskip').fill('5');
     await page.getByTestId('run-study').click();
     // Карта (тепловые ячейки) появляется.
     const cells = page.getByTestId('heat-cell');
@@ -46,6 +49,7 @@ test.describe('Signals /signals', () => {
     await cells.first().click();
     const saveBtn = page.getByRole('button', { name: 'Сохранить как сигнал' });
     await expect(saveBtn).toBeVisible({ timeout: 30000 });
+    await expect(page.getByText('Профиль по горизонтам: накопленная изб. дох. (дн.)')).toBeVisible();
     await expect(page.getByText('Изменение по годам (ср. изб. дох.)')).toBeVisible();
     await expect(page.getByText('По тикерам', { exact: true })).toBeVisible();
     await saveBtn.click();

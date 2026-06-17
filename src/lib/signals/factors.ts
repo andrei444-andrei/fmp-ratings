@@ -102,13 +102,20 @@ export type SignalDef = {
   threshold?: number;  // порог для high/low
   lo?: number;         // нижняя граница для band
   hi?: number;         // верхняя граница для band
+  skip?: number;       // пропуск последних N дней в расчёте моментума/превышения (gap)
 };
+
+// Пропуск (gap) применим только к импульсным факторам.
+export function supportsSkip(factor: FactorId): boolean {
+  return factor === 'momentum' || factor === 'xbench';
+}
 
 export function signalLabel(s: SignalDef): string {
   const f = FACTOR_BY_ID[s.factor];
   const fl = f ? f.label : s.factor;
   const unit = f ? f.unit : '';
-  if (s.side === 'band') return `${fl} (${s.param}д) ∈ [${s.lo}; ${s.hi}]${unit}`;
+  const gap = s.skip && s.skip > 0 ? ` ⏭${s.skip}д` : '';
+  if (s.side === 'band') return `${fl} (${s.param}д${gap}) ∈ [${s.lo}; ${s.hi}]${unit}`;
   const op = s.side === 'high' ? '≥' : '≤';
-  return `${fl} (${s.param}д) ${op} ${s.threshold}${unit}`;
+  return `${fl} (${s.param}д${gap}) ${op} ${s.threshold}${unit}`;
 }
