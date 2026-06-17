@@ -3,7 +3,8 @@
 
 import { FACTOR_BY_ID, supportsSkip, type FactorId, type Side, type SignalDef } from './factors';
 
-const TICKER = /^[A-Z][A-Z0-9.\-]{0,9}$/;
+// Допускаем иностранные тикеры: ведущая цифра (Токио 7203.T), суффикс биржи (.WA, .HK), до 14 симв.
+const TICKER = /^[A-Z0-9][A-Z0-9.\-]{0,13}$/;
 
 function clampNum(v: unknown, dflt: number, min: number, max: number): number {
   const n = Number(v);
@@ -32,14 +33,18 @@ function normNumberList(raw: unknown, fallback: number[], max: number, min = -1e
 }
 
 // Группы вселенной (для раздельных таблиц по классам активов в режиме factor).
-function normGroups(raw: unknown, benchmark: string): { label: string; tickers: string[] }[] {
+// Каждая группа может иметь СВОЙ бенчмарк (иностранные акции vs локальный рынок).
+function normGroups(raw: unknown, benchmark: string): { label: string; tickers: string[]; benchmark: string }[] {
   if (!Array.isArray(raw)) return [];
-  const out: { label: string; tickers: string[] }[] = [];
+  const out: { label: string; tickers: string[]; benchmark: string }[] = [];
   for (const g of raw.slice(0, 8)) {
     const gg = g as any;
     const label = typeof gg?.label === 'string' && gg.label.trim() ? gg.label.trim().slice(0, 60) : 'Группа';
-    const tickers = normUniverse(gg?.tickers, benchmark, 520);
-    if (tickers.length) out.push({ label, tickers });
+    const gbench = typeof gg?.benchmark === 'string' && TICKER.test(gg.benchmark.toUpperCase().trim())
+      ? gg.benchmark.toUpperCase().trim()
+      : benchmark;
+    const tickers = normUniverse(gg?.tickers, gbench, 520);
+    if (tickers.length) out.push({ label, tickers, benchmark: gbench });
   }
   return out;
 }
@@ -83,8 +88,9 @@ export function normalizeStudyConfig(body: any): StudyConfig {
     const params = normNumberList(body?.params, f.defaultParams, 6).filter((p) => f.paramOptions.includes(p));
     // Раздельные таблицы по классам активов: каждая выбранная группа считается отдельно.
     const groups = normGroups(body?.groups, benchmark);
+    // Вселенная для загрузки = тикеры всех групп + бенчмарки групп (нужны для расчёта избытка).
     const factorUniverse = groups.length
-      ? [...new Set(groups.flatMap((g) => g.tickers))].slice(0, 520)
+      ? [...new Set([...groups.flatMap((g) => g.tickers), ...groups.map((g) => g.benchmark)])].slice(0, 520)
       : universe;
     return {
       ...base,
@@ -93,7 +99,7 @@ export function normalizeStudyConfig(body: any): StudyConfig {
       side,
       bins: body?.bins === 'range' ? 'range' : 'cumulative',
       params: params.length ? params : f.defaultParams,
-      thresholds: normNumberList(body?.thresholds, f.defaultThresholds, 14),
+      thresholds: normNumberList(body?.thresholds, f.defaultThresholds, 40),
       fdrAlpha: clampNum(body?.fdrAlpha, 0.1, 0.01, 0.5),
       skip: Math.round(clampNum(body?.skip, 0, 0, 60)),
       groups: groups.length ? groups : undefined,

@@ -67,15 +67,30 @@ export const METAL_ETFS = [
   'GLD', 'IAU', 'SLV', 'PPLT', 'PALL', 'GLTR', 'GDX', 'GDXJ', 'SIL', 'COPX', 'CPER',
 ];
 
-export type UniversePreset = 'country' | 'sector' | 'factor' | 'mega' | 'commodity' | 'metal' | 'broad' | 'all';
+export type UniversePreset =
+  | 'country' | 'sector' | 'factor' | 'mega' | 'commodity' | 'metal' | 'broad' | 'all'
+  | 'jp_stocks' | 'pl_stocks' | 'de_stocks' | 'gb_stocks';
 
-export const UNIVERSE_PRESETS: { id: UniversePreset; label: string; tickers: string[] }[] = [
+export type PresetDef = {
+  id: UniversePreset;
+  label: string;
+  tickers: string[];
+  benchmark?: string; // локальный бенчмарк (для иностранных акций); по умолчанию глобальный SPY
+  country?: string;   // ISO-2 страны для динамической подгрузки топ-N ликвидных акций из FMP
+  dynamic?: boolean;  // список тянется с сервера (mega = S&P 500, страновые акции = FMP screener)
+};
+
+export const UNIVERSE_PRESETS: PresetDef[] = [
   { id: 'country', label: 'Страновые ETF', tickers: COUNTRY_ETFS },
   { id: 'sector', label: 'Секторные ETF', tickers: SECTOR_ETFS },
   { id: 'factor', label: 'Факторные / стилевые ETF', tickers: FACTOR_ETFS },
-  { id: 'mega', label: 'Крупные акции (S&P 500)', tickers: MEGA_STOCKS },
+  { id: 'mega', label: 'Крупные акции (S&P 500)', tickers: MEGA_STOCKS, dynamic: true },
   { id: 'commodity', label: 'Сырьё (commodities)', tickers: COMMODITY_ETFS },
   { id: 'metal', label: 'Металлы', tickers: METAL_ETFS },
+  { id: 'jp_stocks', label: 'Япония (акции)', tickers: [], benchmark: 'EWJ', country: 'JP', dynamic: true },
+  { id: 'pl_stocks', label: 'Польша (акции)', tickers: [], benchmark: 'EPOL', country: 'PL', dynamic: true },
+  { id: 'de_stocks', label: 'Германия (акции)', tickers: [], benchmark: 'EWG', country: 'DE', dynamic: true },
+  { id: 'gb_stocks', label: 'Великобритания (акции)', tickers: [], benchmark: 'EWU', country: 'GB', dynamic: true },
   {
     id: 'broad',
     label: 'Широкая: страновые + секторные + факторные',

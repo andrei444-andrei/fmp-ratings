@@ -88,6 +88,15 @@ export async function fmpDividends(symbol: string) {
   return fmpGet(`${BASE_STABLE}/dividends?symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(key)}`);
 }
 
+// Скринер компаний: фильтры (country, exchange, marketCapMoreThan, isEtf, isActivelyTrading, limit).
+// Используется для динамических списков ликвидных акций по стране (модуль /signals).
+export async function fmpScreener(params: Record<string, string | number | boolean>) {
+  const key = getFmpKey();
+  const q = new URLSearchParams({ apikey: key });
+  for (const [k, v] of Object.entries(params)) q.set(k, String(v));
+  return fmpGet(`${BASE_STABLE}/company-screener?${q.toString()}`);
+}
+
 // Поиск тикера по подстроке (symbol, name, exchange) — для строки поиска.
 export async function fmpSearchSymbol(query: string, limit = 12) {
   const key = getFmpKey();
