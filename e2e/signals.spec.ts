@@ -52,6 +52,13 @@ test.describe('Signals /signals', () => {
     await expect(page.getByText('Профиль по горизонтам: накопленная изб. дох. (дн.)')).toBeVisible();
     await expect(page.getByText('Изменение по годам (ср. изб. дох.)')).toBeVisible();
     await expect(page.getByText('По тикерам', { exact: true })).toBeVisible();
+    // Сдвиг окна лет НА результате → метрики пересчитываются без повторного прогона (заголовок ячейки показывает окно).
+    await page.locator('[data-testid="win-from"]').evaluate((el: any, val) => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(el, String(val));
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }, 2024);
+    await expect(page.locator('[data-testid="signals-output"]').getByText(/2024[–-]/).first()).toBeVisible();
     await saveBtn.click();
     await expect(page.getByText('Сигнал сохранён')).toBeVisible({ timeout: 15000 });
   });

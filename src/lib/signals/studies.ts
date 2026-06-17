@@ -188,10 +188,32 @@ def kruskal(df, tcol):
     return {'H': _f(H), 'p': _f(chi2_sf(H, k - 1)), 'k': int(k)}
 
 def cell_extras(sub, maincol, HZ):
-    return {'decay': {str(h): _f(sub['t_' + str(h)].mean()) for h in HZ},
-            'yearly': yearly_of(sub, maincol),
-            'tickers': ticker_breakdown(sub, maincol),
-            'kw': kruskal(sub, maincol)}
+    return {'tickers': ticker_breakdown(sub, maincol),
+            'kw': kruskal(sub, maincol),
+            'years': year_stats(sub, maincol, HZ)}
+
+# По-годовая агрегация для КЛИЕНТСКОГО пересчёта метрик при сдвиге окна лет (без повтора прогона).
+# На каждый год: n (наблюдений), pos (плюсовых), Q (сумма квадратов периодных средних на основном
+# горизонте — для t-стат), d[h] = [P, S] (число периодов и сумма периодных средних на горизонте h).
+def year_stats(sub, maincol, HZ):
+    s = sub.dropna(subset=[maincol]).copy()
+    if s.empty: return []
+    s['year'] = pd.to_datetime(s['date']).dt.year
+    out = []
+    for y, g in s.groupby('year'):
+        perM = g.groupby('date')[maincol].mean()
+        Q = float((perM ** 2).sum())
+        d = {}
+        for h in HZ:
+            col = 't_' + str(h)
+            gh = g[['date', col]].dropna()
+            if len(gh) == 0:
+                d[str(h)] = [0, 0.0]
+            else:
+                pm = gh.groupby('date')[col].mean()
+                d[str(h)] = [int(len(pm)), _f(float(pm.sum()))]
+        out.append({'y': int(y), 'n': int(len(g)), 'pos': int((g[maincol] > 0).sum()), 'Q': _f(Q), 'd': d})
+    return out
 
 def meta_of(tgt, px, bench):
     dates = sorted(pd.to_datetime(px.index).unique())
@@ -288,7 +310,7 @@ async def main():
             out_groups.append({'label': grp.get('label'), 'baseline': _f(base_g['mean']) if base_g else None,
                                'symbols': int(tgt_g['symbol'].nunique()), 'grid': grid})
         return {'mode': 'factor', 'factor': fid, 'side': side, 'bins': bins, 'horizon': H, 'skip': skip,
-                'params': params, 'cols': col_labels, 'hz': HZ, 'groups': out_groups, 'meta': meta}
+                'fdrAlpha': alpha, 'params': params, 'cols': col_labels, 'hz': HZ, 'groups': out_groups, 'meta': meta}
 
     if mode == 'signal':
         s0 = CFG['signal']
