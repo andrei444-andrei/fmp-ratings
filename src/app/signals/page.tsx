@@ -14,18 +14,20 @@ import {
   Label,
   Select,
   Skeleton,
-  Sparkline,
   Spinner,
   Textarea,
   ToastProvider,
   useToast,
 } from '@/components/ui';
-import { FACTORS, FACTOR_BY_ID, signalLabel, type FactorId, type Side, type SignalDef } from '@/lib/signals/factors';
+import { FACTORS, FACTOR_BY_ID, signalLabel, supportsSkip, type FactorId, type Side, type SignalDef } from '@/lib/signals/factors';
 import { UNIVERSE_PRESETS, type UniversePreset } from '@/lib/signals/presets';
 import { Heatmap, type HeatCell } from './Heatmap';
 
 type Mode = 'factor' | 'signal' | 'combine';
 type SavedSignal = { id: number; name: string; def: SignalDef };
+
+const CUR_YEAR = new Date().getFullYear();
+const YEARS: string[] = Array.from({ length: CUR_YEAR - 1999 }, (_, i) => String(CUR_YEAR - i));
 
 function parseList(s: string): number[] {
   return [...new Set(s.split(/[\s,;]+/).map((x) => Number(x)).filter((x) => Number.isFinite(x)))];
@@ -104,6 +106,8 @@ function Signals() {
   const [custom, setCustom] = useState('');
   const [benchmark, setBenchmark] = useState('SPY');
   const [horizon, setHorizon] = useState(5);
+  const [yearFrom, setYearFrom] = useState('');
+  const [yearTo, setYearTo] = useState('');
 
   const [tab, setTab] = useState<Mode>('factor');
   const [running, setRunning] = useState(false);
@@ -118,6 +122,7 @@ function Signals() {
   const [fBins, setFBins] = useState<'cumulative' | 'range'>('cumulative');
   const [fParams, setFParams] = useState<number[]>(factorDef.defaultParams);
   const [fThresholds, setFThresholds] = useState<string>(factorDef.defaultThresholds.join(', '));
+  const [fSkip, setFSkip] = useState(0);
 
   // ── Сигнал ──
   const [sFactor, setSFactor] = useState<FactorId>('momentum');
@@ -127,6 +132,7 @@ function Signals() {
   const [sThreshold, setSThreshold] = useState<number>(sDef.defaultThresholds[0]);
   const [sLo, setSLo] = useState<number>(sDef.defaultThresholds[0]);
   const [sHi, setSHi] = useState<number>(sDef.defaultThresholds[sDef.defaultThresholds.length - 1]);
+  const [sSkip, setSSkip] = useState(0);
 
   // ── Комбинация ──
   const [saved, setSaved] = useState<SavedSignal[] | null>(null);
@@ -239,6 +245,7 @@ function Signals() {
     setFSide(f.defaultSide);
     setFParams(f.defaultParams);
     setFThresholds(f.defaultThresholds.join(', '));
+    setFSkip(0);
   }
   function changeSignalFactor(id: FactorId) {
     setSFactor(id);
@@ -248,10 +255,12 @@ function Signals() {
     setSThreshold(f.defaultThresholds[0]);
     setSLo(f.defaultThresholds[0]);
     setSHi(f.defaultThresholds[f.defaultThresholds.length - 1]);
+    setSSkip(0);
   }
   function currentSignalDef(): SignalDef {
-    if (sSide === 'band') return { factor: sFactor, param: sParam, side: 'band', lo: sLo, hi: sHi };
-    return { factor: sFactor, param: sParam, side: sSide, threshold: sThreshold };
+    const skip = supportsSkip(sFactor) ? sSkip : 0;
+    if (sSide === 'band') return { factor: sFactor, param: sParam, side: 'band', lo: sLo, hi: sHi, skip };
+    return { factor: sFactor, param: sParam, side: sSide, threshold: sThreshold, skip };
   }
 
   async function runStudy(payload: Record<string, unknown>) {
@@ -265,10 +274,12 @@ function Signals() {
     setErrMsg('');
     setStatus('Отправка запроса…');
     try {
+      const start = yearFrom ? `${yearFrom}-01-01` : undefined;
+      const end = yearTo ? `${yearTo}-12-31` : undefined;
       const res = await fetch('/api/signals/study', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ...payload, universe, benchmark: benchmark.toUpperCase().trim() || 'SPY', horizon }),
+        body: JSON.stringify({ ...payload, universe, benchmark: benchmark.toUpperCase().trim() || 'SPY', horizon, start, end }),
       });
       if (!res.body) throw new Error('Нет потока ответа');
       const reader = res.body.getReader();
@@ -330,7 +341,10 @@ function Signals() {
 
   // ── Запуск по вкладкам ──
   function runFactor() {
-    runStudy({ mode: 'factor', factor: factorId, side: fSide, bins: fBins, params: fParams, thresholds: parseList(fThresholds), groups });
+    runStudy({
+      mode: 'factor', factor: factorId, side: fSide, bins: fBins, params: fParams,
+      thresholds: parseList(fThresholds), skip: supportsSkip(factorId) ? fSkip : 0, groups,
+    });
   }
   function runSignal() {
     runStudy({ mode: 'signal', signal: currentSignalDef() });
@@ -422,6 +436,26 @@ function Signals() {
                   </Select>
                 </Field>
               </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Field>
+                  <Label htmlFor="yf">Год от</Label>
+                  <Select id="yf" value={yearFrom} onChange={(e) => setYearFrom(e.target.value)}>
+                    <option value="">самый ранний</option>
+                    {YEARS.map((y) => (
+                      <option key={y} value={y}>{y}</option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field>
+                  <Label htmlFor="yt">Год до</Label>
+                  <Select id="yt" value={yearTo} onChange={(e) => setYearTo(e.target.value)}>
+                    <option value="">текущий</option>
+                    {YEARS.map((y) => (
+                      <option key={y} value={y}>{y}</option>
+                    ))}
+                  </Select>
+                </Field>
+              </div>
               <Field>
                 <Label htmlFor="ct">Свои тикеры</Label>
                 <Textarea id="ct" value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="SMH, GLD, TLT" style={{ minHeight: 48 }} />
@@ -446,6 +480,8 @@ function Signals() {
                   setParams={setFParams}
                   thresholds={fThresholds}
                   setThresholds={setFThresholds}
+                  skip={fSkip}
+                  setSkip={setFSkip}
                   onRun={runFactor}
                   running={running}
                   canRun={universe.length >= 4}
@@ -465,6 +501,8 @@ function Signals() {
                   setLo={setSLo}
                   hi={sHi}
                   setHi={setSHi}
+                  skip={sSkip}
+                  setSkip={setSSkip}
                   onRun={runSignal}
                   onSave={() => saveSignalDef(currentSignalDef())}
                   running={running}
@@ -583,6 +621,7 @@ function Signals() {
     } else {
       setSThreshold(d.threshold ?? f.defaultThresholds[0]);
     }
+    setSSkip(d.skip ?? 0);
     setTab('signal');
   }
 }
@@ -684,6 +723,13 @@ function FactorForm(p: any) {
         <Label htmlFor="thr">Пороги — ось столбцов ({f.unit || '—'})</Label>
         <Input id="thr" value={p.thresholds} onChange={(e: any) => p.setThresholds(e.target.value)} placeholder="через запятую" />
       </Field>
+      {supportsSkip(p.factorId) && (
+        <Field>
+          <Label htmlFor="fskip">Пропуск последних дней (gap)</Label>
+          <Input id="fskip" type="number" min={0} value={p.skip} onChange={(e: any) => p.setSkip(Math.max(0, Number(e.target.value) || 0))} />
+          <p className="text-[11px] text-ink-3">Исключить последние N торг. дней из расчёта (напр. 5 — убрать недельную реверсию).</p>
+        </Field>
+      )}
       <Button onClick={p.onRun} loading={p.running} disabled={!p.canRun} fullWidth data-testid="run-study">
         Построить карту
       </Button>
@@ -726,6 +772,12 @@ function SignalForm(p: any) {
         <Field>
           <Label htmlFor="sthr">Порог ({f.unit || '—'})</Label>
           <Input id="sthr" type="number" value={p.threshold} onChange={(e: any) => p.setThreshold(Number(e.target.value))} />
+        </Field>
+      )}
+      {supportsSkip(p.factor) && (
+        <Field>
+          <Label htmlFor="sskip">Пропуск последних дней (gap)</Label>
+          <Input id="sskip" type="number" min={0} value={p.skip} onChange={(e: any) => p.setSkip(Math.max(0, Number(e.target.value) || 0))} />
         </Field>
       )}
       <div className="flex gap-2">
@@ -822,6 +874,54 @@ function SavedList({ saved, onLoad, onDelete }: { saved: SavedSignal[] | null; o
 
 // ─────────────────────── Результаты ───────────────────────
 
+// Профиль по горизонтам: накопленная изб. доходность к каждому горизонту (дн.).
+// Подписи осей в той же SVG, что и линия → точное выравнивание; нулевая линия; основной горизонт жирнее.
+function DecayChart({ points, mainH }: { points: { h: number; mean: number | null }[]; mainH: number }) {
+  const valid = points.filter((p) => p.mean != null && Number.isFinite(p.mean));
+  if (valid.length < 2) return null;
+  const W = 340, H = 104, padX = 16, padTop = 12, padBot = 22;
+  const innerW = W - 2 * padX, innerH = H - padTop - padBot;
+  const ys = points.map((p) => (p.mean ?? 0) as number);
+  let lo = Math.min(0, ...ys), hi = Math.max(0, ...ys);
+  if (hi === lo) hi = lo + 1;
+  const n = points.length;
+  const x = (i: number) => padX + (n === 1 ? innerW / 2 : (i * innerW) / (n - 1));
+  const y = (v: number) => padTop + innerH - ((v - lo) / (hi - lo)) * innerH;
+  const zeroY = y(0);
+  const line = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)} ${y(p.mean ?? 0).toFixed(1)}`).join(' ');
+  const last = (points[points.length - 1].mean ?? 0) >= 0;
+  const color = last ? 'var(--fk-up)' : 'var(--fk-down)';
+  return (
+    <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ maxWidth: 460 }} aria-hidden="true">
+      <line x1={padX} x2={W - padX} y1={zeroY} y2={zeroY} stroke="var(--fk-line-strong)" strokeWidth={1} strokeDasharray="3 3" />
+      <path d={line} fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      {points.map((p, i) =>
+        p.mean == null ? null : (
+          <circle key={`c${i}`} cx={x(i)} cy={y(p.mean)} r={p.h === mainH ? 4 : 2.6} fill={color} />
+        ),
+      )}
+      {points.map((p, i) => (
+        <text key={`t${i}`} x={x(i)} y={H - 7} textAnchor="middle" fontSize={p.h === mainH ? 11 : 10} fontWeight={p.h === mainH ? 700 : 400} fill="var(--fk-text-3)">
+          {p.h}
+        </text>
+      ))}
+    </svg>
+  );
+}
+
+function DecayBlock({ points, mainH }: { points: { h: number; mean: number | null }[]; mainH: number }) {
+  if (!points || points.filter((p) => p.mean != null).length < 2) return null;
+  return (
+    <div>
+      <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-ink-3">
+        Профиль по горизонтам: накопленная изб. дох. (дн.)
+      </div>
+      <DecayChart points={points} mainH={mainH} />
+      <p className="mt-0.5 text-[10px] text-ink-3">Накопленная избыточная доходность к горизонту; жирная точка — основной горизонт {mainH}д (его и показывают метрики выше).</p>
+    </div>
+  );
+}
+
 function YearlyBars({ yearly }: { yearly: any[] }) {
   if (!Array.isArray(yearly) || yearly.length === 0) return null;
   return (
@@ -912,6 +1012,7 @@ function FactorResult({ data, onSave }: { data: any; onSave: (d: SignalDef, name
       <MetaBar meta={data.meta} />
       <Badge variant="neutral">
         {f.label} · {isRange ? 'диапазоны' : data.side === 'high' ? '≥ порог' : '≤ порог'} · гор. {data.horizon}д
+        {data.skip ? ` · gap ${data.skip}д` : ''}
       </Badge>
       {multi && (
         <p className="text-[12px] text-ink-3">Разные классы активов — отдельными таблицами: сравните, отличается ли поведение фактора.</p>
@@ -966,20 +1067,12 @@ function FactorGroup({ data, group, f, isRange, multi, onSave }: { data: any; gr
               <Stat label="Доля плюс" value={fnum(cell.hit, 1) + '%'} />
               <Stat label="Наблюдений" value={String(cell.n)} hint={`${cell.periods} периодов`} />
             </div>
-            {hz.length > 1 && cell.decay && Object.keys(cell.decay).length > 0 && (
-              <div>
-                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-ink-3">Затухание: ср. изб. дох. по горизонтам (дн.)</div>
-                <Sparkline data={hz.map((h: number) => cell.decay[String(h)] ?? 0)} width={260} height={48} />
-                <div className="mt-0.5 flex justify-between text-[10px] text-ink-3">
-                  {hz.map((h: number) => (
-                    <span key={h}>{h}</span>
-                  ))}
-                </div>
-              </div>
+            {cell.decay && Object.keys(cell.decay).length > 0 && (
+              <DecayBlock points={hz.map((h: number) => ({ h, mean: cell.decay[String(h)] ?? null }))} mainH={data.horizon} />
             )}
             <YearlyBars yearly={cell.yearly} />
             <TickerTable tickers={cell.tickers} kw={cell.kw} />
-            <Button size="sm" variant="secondary" onClick={() => onSave({ factor: data.factor, param: cell.param, ...cell.region })}>
+            <Button size="sm" variant="secondary" onClick={() => onSave({ factor: data.factor, param: cell.param, ...cell.region, skip: data.skip || 0 })}>
               Сохранить как сигнал
             </Button>
           </CardContent>
@@ -992,7 +1085,6 @@ function FactorGroup({ data, group, f, isRange, multi, onSave }: { data: any; gr
 function SignalResult({ data, onSave }: { data: any; onSave: (d: SignalDef, name?: string) => void }) {
   const f = FACTOR_BY_ID[data.signal.factor];
   const st = data.stat;
-  const hz: number[] = data.hz || [];
   return (
     <div className="space-y-4">
       <MetaBar meta={data.meta} />
@@ -1011,16 +1103,8 @@ function SignalResult({ data, onSave }: { data: any; onSave: (d: SignalDef, name
       ) : (
         <p className="text-[13px] text-ink-3">Слишком мало событий для надёжной статистики — ослабьте порог.</p>
       )}
-      {hz.length > 1 && data.decay && (
-        <div>
-          <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-ink-3">Затухание по горизонтам (сигнал vs база)</div>
-          <Sparkline data={data.decay.map((d: any) => d.mean ?? 0)} width={280} height={50} />
-          <div className="mt-0.5 flex justify-between text-[10px] text-ink-3">
-            {data.decay.map((d: any) => (
-              <span key={d.h}>{d.h}</span>
-            ))}
-          </div>
-        </div>
+      {data.decay && (
+        <DecayBlock points={data.decay.map((d: any) => ({ h: d.h, mean: d.mean }))} mainH={data.horizon} />
       )}
       <YearlyBars yearly={data.yearly} />
       <TickerTable tickers={data.tickers} kw={data.kw} />
