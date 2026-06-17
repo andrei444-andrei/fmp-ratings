@@ -63,6 +63,14 @@ test.describe('Signals /signals', () => {
     await expect(page.getByText('Сигнал сохранён')).toBeVisible({ timeout: 15000 });
   });
 
+  test('иностранные тикеры (7203.T) принимаются и строят карту', async ({ page }) => {
+    await page.goto('/signals');
+    await page.getByPlaceholder('SMH, GLD, TLT').fill('7203.T, 6758.T, PKN.WA, AAA, BBB');
+    await page.getByTestId('run-study').click();
+    await expect(page.getByTestId('heat-cell').first()).toBeVisible({ timeout: 150000 });
+    await expect(page.locator('[data-testid="signals-output"]').getByText(/Свои тикеры/).first()).toBeVisible();
+  });
+
   test('фактор «превышение ÷ волатильность» (xvol) строит карту', async ({ page }) => {
     await setup(page);
     await page.getByTestId('factor-select').selectOption('xvol');

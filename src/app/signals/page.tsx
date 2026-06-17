@@ -188,9 +188,19 @@ function Signals() {
   const [yearFrom, setYearFrom] = useState('');
   const [yearTo, setYearTo] = useState('');
   // Динамический список «Крупные акции» (S&P 500 из FMP, с fallback на статику).
-  const [megaTickers, setMegaTickers] = useState<string[] | null>(null);
-  const presetTickers = (p: { id: UniversePreset; tickers: string[] }) =>
-    p.id === 'mega' && megaTickers && megaTickers.length ? megaTickers : p.tickers;
+  // Динамические списки (preset id → tickers): S&P 500 + страновые акции из FMP.
+  const [dynTickers, setDynTickers] = useState<Record<string, string[]>>({});
+  const presetTickers = (p: { id: UniversePreset; tickers: string[]; dynamic?: boolean }) =>
+    p.dynamic && dynTickers[p.id]?.length ? dynTickers[p.id] : p.tickers;
+  async function loadDyn(id: string) {
+    if (dynTickers[id]) return;
+    try {
+      const d = await (await fetch(`/api/signals/universe?preset=${encodeURIComponent(id)}`)).json();
+      if (Array.isArray(d?.tickers)) setDynTickers((m) => ({ ...m, [id]: d.tickers }));
+    } catch {
+      /* fallback на статический список пресета */
+    }
+  }
 
   const [tab, setTab] = useState<Mode>('factor');
   const [running, setRunning] = useState(false);
@@ -236,24 +246,24 @@ function Signals() {
     for (const p of UNIVERSE_PRESETS) if (presets.has(p.id)) for (const t of presetTickers(p)) set.add(t);
     for (const t of custom.split(/[\s,;]+/)) {
       const s = t.toUpperCase().trim();
-      if (/^[A-Z][A-Z0-9.\-]{0,9}$/.test(s)) set.add(s);
+      if (/^[A-Z0-9][A-Z0-9.\-]{0,13}$/.test(s)) set.add(s);
     }
     set.delete(benchmark.toUpperCase().trim());
     return [...set];
-  }, [presets, custom, benchmark, megaTickers]);
+  }, [presets, custom, benchmark, dynTickers]);
 
   // Группы для раздельных таблиц по классам активов (режим «Фактор»): каждая выбранная
   // группа + «свои тикеры» — отдельная таблица.
   const groups = useMemo(() => {
-    const out: { label: string; tickers: string[] }[] = [];
-    for (const pr of UNIVERSE_PRESETS) if (presets.has(pr.id)) out.push({ label: pr.label, tickers: presetTickers(pr) });
+    const out: { label: string; tickers: string[]; benchmark?: string }[] = [];
+    for (const pr of UNIVERSE_PRESETS) if (presets.has(pr.id)) out.push({ label: pr.label, tickers: presetTickers(pr), benchmark: pr.benchmark });
     const customSyms = custom
       .split(/[\s,;]+/)
       .map((s) => s.toUpperCase().trim())
-      .filter((s) => /^[A-Z][A-Z0-9.\-]{0,9}$/.test(s));
+      .filter((s) => /^[A-Z0-9][A-Z0-9.\-]{0,13}$/.test(s));
     if (customSyms.length) out.push({ label: 'Свои тикеры', tickers: customSyms });
     return out;
-  }, [presets, custom, megaTickers]);
+  }, [presets, custom, dynTickers]);
 
   async function loadSaved() {
     try {
@@ -274,15 +284,8 @@ function Signals() {
   useEffect(() => {
     loadSaved();
     loadResults();
-    (async () => {
-      try {
-        const d = await (await fetch('/api/signals/universe')).json();
-        if (Array.isArray(d?.mega) && d.mega.length) setMegaTickers(d.mega);
-      } catch {
-        /* fallback на статический список в пресете */
-      }
-    })();
-  }, []);
+    loadDyn('mega'); // S&P 500 подгружаем сразу (частый выбор)
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function saveCurrentResult() {
     if (!result || savingResult) return;
@@ -493,13 +496,14 @@ function Signals() {
                       <button
                         key={p.id}
                         type="button"
-                        onClick={() =>
+                        onClick={() => {
                           setPresets((prev) => {
                             const n = new Set(prev);
                             n.has(p.id) ? n.delete(p.id) : n.add(p.id);
                             return n;
-                          })
-                        }
+                          });
+                          if (p.dynamic) loadDyn(p.id); // подтянуть список при включении
+                        }}
                         className={`rounded-fk-pill border px-2.5 py-1 text-[12px] font-medium transition-colors ${
                           on ? 'border-brand bg-brand-50 text-brand-700' : 'border-line-strong bg-surface-elev text-ink-2 hover:bg-surface-2'
                         }`}
@@ -1167,6 +1171,12 @@ function FactorGroup({ data, group, f, isRange, multi, onSave, winFrom, winTo, f
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         {group.label && <span className="text-[13px] font-bold text-ink">{group.label}</span>}
         {group.symbols != null && <span className="text-[11px] text-ink-3">{group.symbols} инстр.</span>}
+        {group.benchmark && (
+          <span className="text-[11px] text-ink-3">
+            vs {group.benchmark}
+            {group.has_bench === false && <span className="text-warn-strong"> (бенчмарк не загрузился)</span>}
+          </span>
+        )}
         <span className="text-[11px] text-ink-3">базовая дох.: {fpct(group.baseline)}</span>
       </div>
       <Heatmap

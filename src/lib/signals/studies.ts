@@ -250,10 +250,13 @@ async def main():
     HZ = sorted(set([1, 2, 3, 5, 10, 21, H]))
     if mode == 'combine': HZ = [H]
     print('Строю форвардные таргеты...')
-    tgt = build_targets(px, bench, HZ, H)
-    if tgt.empty or tgt['date'].nunique() < 10:
-        return {'error': 'Недостаточно истории для построения панели.'}
-    maincol = 't_' + str(H); meta = meta_of(tgt, px, bench)
+    maincol = 't_' + str(H)
+    # signal/combine — один глобальный бенчмарк; factor строит панель на КАЖДУЮ группу со своим бенчмарком.
+    if mode in ('signal', 'combine'):
+        tgt = build_targets(px, bench, HZ, H)
+        if tgt.empty or tgt['date'].nunique() < 10:
+            return {'error': 'Недостаточно истории для построения панели.'}
+        meta = meta_of(tgt, px, bench)
 
     if mode == 'factor':
         fid = CFG['factor']; side = CFG['side']; bins = CFG.get('bins', 'cumulative')
@@ -278,20 +281,27 @@ async def main():
             cols = [{'label': c, 'region': {'side': side, 'threshold': c}} for c in thresholds]
         col_labels = [c['label'] for c in cols]
         skip = int(CFG.get('skip', 0))
-        # fval по всей вселенной один раз на параметр (потом фильтруем по группам).
-        mcache = {}
-        for p in params:
-            fv = build_fval(px, bench, fid, p, H, skip)
-            mcache[p] = tgt.merge(fv, on=['symbol', 'date'], how='inner')
-        groups_cfg = CFG.get('groups') or [{'label': None, 'tickers': CFG['universe']}]
-        out_groups = []
+        groups_cfg = CFG.get('groups') or [{'label': None, 'tickers': CFG['universe'], 'benchmark': bench}]
+        out_groups = []; total_obs = 0; all_syms = set()
         for grp in groups_cfg:
             gsyms = set(str(s).upper() for s in (grp.get('tickers') or []))
-            tgt_g = tgt[tgt['symbol'].isin(gsyms)]
+            all_syms |= gsyms
+            gbench = str(grp.get('benchmark') or bench).upper()
+            # Панель группы СО СВОИМ бенчмарком: и таргет, и xbench/xvol считаются к локальному рынку.
+            cols_g = [c for c in px.columns if c in gsyms or c == gbench]
+            pxg = px[cols_g] if cols_g else px.iloc[:, :0]
+            has_b_g = gbench in pxg.columns
+            tgt_g = build_targets(pxg, gbench, HZ, H)
+            if tgt_g.empty:
+                out_groups.append({'label': grp.get('label'), 'baseline': None, 'symbols': 0,
+                                   'benchmark': gbench, 'has_bench': has_b_g, 'grid': []})
+                continue
             base_g = pstat(tgt_g, maincol)
+            if base_g: total_obs += base_g['n']
             grid = []; pvals = []
             for p in params:
-                mg = mcache[p][mcache[p]['symbol'].isin(gsyms)]
+                fv = build_fval(pxg, gbench, fid, p, H, skip)
+                mg = tgt_g.merge(fv, on=['symbol', 'date'], how='inner')
                 fcol = mg['fval']
                 for col in cols:
                     if bins == 'range':
@@ -312,13 +322,20 @@ async def main():
                         pvals.append((str(p) + ':' + str(col['label']), st['p']))
                     else:
                         cell.update({'n': int(len(sel)), 'periods': 0, 'mean': None, 't': None, 'hit': None,
-                                     'decay': {}, 'yearly': [], 'tickers': [], 'kw': None})
+                                     'years': [], 'tickers': [], 'kw': None})
                     grid.append(cell)
             sigset = _bh(pvals, alpha)
             for cell in grid:
                 cell['sig'] = (str(cell['param']) + ':' + str(cell['col'])) in sigset
             out_groups.append({'label': grp.get('label'), 'baseline': _f(base_g['mean']) if base_g else None,
-                               'symbols': int(tgt_g['symbol'].nunique()), 'grid': grid})
+                               'symbols': int(tgt_g['symbol'].nunique()), 'benchmark': gbench,
+                               'has_bench': has_b_g, 'grid': grid})
+        dts = sorted(px.index)
+        meta = {'symbols': int(len([s for s in all_syms if s in px.columns])),
+                'periods': int(len(px.index[::max(1, H)])), 'obs': int(total_obs),
+                'first': str(pd.Timestamp(dts[0]).date()) if len(dts) else '',
+                'last': str(pd.Timestamp(dts[-1]).date()) if len(dts) else '',
+                'benchmark': bench, 'has_bench': True}
         return {'mode': 'factor', 'factor': fid, 'side': side, 'bins': bins, 'horizon': H, 'skip': skip,
                 'fdrAlpha': alpha, 'params': params, 'cols': col_labels, 'hz': HZ, 'groups': out_groups, 'meta': meta}
 

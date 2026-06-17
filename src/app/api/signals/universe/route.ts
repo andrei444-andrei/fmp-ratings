@@ -1,13 +1,17 @@
 import { libsqlClient } from '@/db/client';
-import { fmpSp500Current } from '@/lib/fmp';
-import { MEGA_STOCKS } from '@/lib/signals/presets';
+import { fmpSp500Current, fmpScreener } from '@/lib/fmp';
+import { MEGA_STOCKS, UNIVERSE_PRESETS } from '@/lib/signals/presets';
 
-// Динамический список «крупных/ликвидных акций» = текущие компоненты S&P 500 (≈500 ликвидных
-// крупнокапов США) из FMP. Кэшируется в БД на 7 дней; при недоступности FMP — последний кэш,
-// иначе статический fallback (MEGA_STOCKS). Используется пресетом «Крупные акции» на /signals.
+// Динамические списки вселенной для /signals:
+//  - preset=mega → текущий состав S&P 500 (≈500 ликвидных крупнокапов США) из FMP;
+//  - preset=<страна>_stocks → топ-N ликвидных акций страны через FMP screener (по капитализации).
+// Кэш в БД на 7 дней; при недоступности FMP — последний кэш, иначе статический список пресета.
 export const dynamic = 'force-dynamic';
 
 const TTL_MS = 7 * 24 * 3600 * 1000;
+const TICKER = /^[A-Z0-9][A-Z0-9.\-]{0,13}$/;
+const TOP_N = 80;
+
 let ensured = false;
 async function ensure(): Promise<void> {
   if (ensured) return;
@@ -19,9 +23,9 @@ async function ensure(): Promise<void> {
   ensured = true;
 }
 
-async function readCache(): Promise<{ tickers: string[]; at: number } | null> {
+async function readCache(preset: string): Promise<{ tickers: string[]; at: number } | null> {
   try {
-    const r = await libsqlClient.execute({ sql: `SELECT tickers, fetched_at FROM signals_universe WHERE preset = ?`, args: ['mega'] });
+    const r = await libsqlClient.execute({ sql: `SELECT tickers, fetched_at FROM signals_universe WHERE preset = ?`, args: [preset] });
     const x = r.rows[0] as any;
     if (!x) return null;
     const tickers = JSON.parse(String(x.tickers));
@@ -31,39 +35,53 @@ async function readCache(): Promise<{ tickers: string[]; at: number } | null> {
   }
 }
 
-export async function GET() {
+async function fetchTickers(preset: string, country?: string): Promise<string[]> {
+  if (country) {
+    const data: any = await fmpScreener({ country, isEtf: false, isActivelyTrading: true, limit: 600 });
+    const arr: any[] = Array.isArray(data) ? data : [];
+    return arr
+      .filter((x) => Number.isFinite(Number(x?.marketCap)))
+      .sort((a, b) => Number(b.marketCap) - Number(a.marketCap))
+      .map((x) => String(x?.symbol ?? '').toUpperCase().trim())
+      .filter((s) => TICKER.test(s))
+      .slice(0, TOP_N);
+  }
+  // mega → S&P 500
+  const data: any = await fmpSp500Current();
+  const arr: any[] = Array.isArray(data) ? data : [];
+  return [...new Set(arr.map((x) => String(x?.symbol ?? '').toUpperCase().trim()).filter((s) => TICKER.test(s)))];
+}
+
+export async function GET(req: Request) {
+  const preset = new URL(req.url).searchParams.get('preset') || 'mega';
+  const def = UNIVERSE_PRESETS.find((p) => p.id === preset);
+  if (!def) return Response.json({ error: 'unknown preset' }, { status: 400 });
+  if (!def.dynamic) return Response.json({ tickers: def.tickers, source: 'static' });
+
+  const minCount = def.country ? 5 : 100; // у небольших рынков допускаем меньше
   try {
     await ensure();
   } catch {
-    return Response.json({ mega: MEGA_STOCKS, source: 'fallback' });
+    return Response.json({ tickers: preset === 'mega' ? MEGA_STOCKS : def.tickers, source: 'fallback' });
   }
-  const cached = await readCache();
-  if (cached && cached.tickers.length >= 100 && Date.now() - cached.at < TTL_MS) {
-    return Response.json({ mega: cached.tickers, source: 'cache' });
+  const cached = await readCache(preset);
+  if (cached && cached.tickers.length >= minCount && Date.now() - cached.at < TTL_MS) {
+    return Response.json({ tickers: cached.tickers, source: 'cache' });
   }
-  // Тянем актуальный состав S&P 500 из FMP.
   try {
-    const data: any = await fmpSp500Current();
-    const arr: any[] = Array.isArray(data) ? data : [];
-    const tickers = [
-      ...new Set(
-        arr
-          .map((x) => String(x?.symbol ?? '').toUpperCase().trim())
-          .filter((s) => /^[A-Z][A-Z0-9.\-]{0,9}$/.test(s)),
-      ),
-    ];
-    if (tickers.length >= 100) {
+    const tickers = await fetchTickers(preset, def.country);
+    if (tickers.length >= minCount) {
       const now = new Date().toISOString();
       await libsqlClient.execute({
         sql: `INSERT INTO signals_universe (preset, tickers, fetched_at) VALUES (?, ?, ?)
               ON CONFLICT(preset) DO UPDATE SET tickers=excluded.tickers, fetched_at=excluded.fetched_at`,
-        args: ['mega', JSON.stringify(tickers), now],
+        args: [preset, JSON.stringify(tickers), now],
       });
-      return Response.json({ mega: tickers, source: 'fmp' });
+      return Response.json({ tickers, source: 'fmp' });
     }
   } catch {
-    /* нет ключа / ошибка FMP — падаем на кэш/статику */
+    /* нет ключа / нет тарифа на междунар. данные — падаем на кэш/статику */
   }
-  if (cached && cached.tickers.length) return Response.json({ mega: cached.tickers, source: 'cache-stale' });
-  return Response.json({ mega: MEGA_STOCKS, source: 'fallback' });
+  if (cached && cached.tickers.length) return Response.json({ tickers: cached.tickers, source: 'cache-stale' });
+  return Response.json({ tickers: preset === 'mega' ? MEGA_STOCKS : def.tickers, source: 'fallback' });
 }
