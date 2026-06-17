@@ -2,10 +2,8 @@
 // для Python). Три режима: factor (свип), signal (событийный анализ), combine (комбинация).
 
 import { FACTOR_BY_ID, type FactorId, type Side, type SignalDef } from './factors';
-import { UNIVERSE_PRESETS } from './presets';
 
 const TICKER = /^[A-Z][A-Z0-9.\-]{0,9}$/;
-const BROAD = UNIVERSE_PRESETS.find((p) => p.id === 'broad')!.tickers;
 
 function clampNum(v: unknown, dflt: number, min: number, max: number): number {
   const n = Number(v);
@@ -13,16 +11,17 @@ function clampNum(v: unknown, dflt: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, n));
 }
 
+// Вселенную НЕ подставляем по умолчанию — её выбирает пользователь целенаправленно.
+// Пустой/невалидный список → пустая вселенная (движок вернёт понятную ошибку «мало данных»).
 function normUniverse(raw: unknown, benchmark: string, max: number): string[] {
-  const arr = Array.isArray(raw) ? raw : BROAD;
-  const set = [
+  const arr = Array.isArray(raw) ? raw : [];
+  return [
     ...new Set(
       arr
         .map((s) => String(s).toUpperCase().trim())
         .filter((s) => TICKER.test(s) && s !== benchmark),
     ),
   ].slice(0, max);
-  return set.length ? set : BROAD.filter((t) => t !== benchmark);
 }
 
 function normNumberList(raw: unknown, fallback: number[], max: number, min = -1e6, hi = 1e6): number[] {
@@ -30,6 +29,19 @@ function normNumberList(raw: unknown, fallback: number[], max: number, min = -1e
   const out = [...new Set(arr.map((x) => Number(x)).filter((x) => Number.isFinite(x) && x >= min && x <= hi))];
   out.sort((a, b) => a - b);
   return (out.length ? out : fallback).slice(0, max);
+}
+
+// Группы вселенной (для раздельных таблиц по классам активов в режиме factor).
+function normGroups(raw: unknown, benchmark: string): { label: string; tickers: string[] }[] {
+  if (!Array.isArray(raw)) return [];
+  const out: { label: string; tickers: string[] }[] = [];
+  for (const g of raw.slice(0, 8)) {
+    const gg = g as any;
+    const label = typeof gg?.label === 'string' && gg.label.trim() ? gg.label.trim().slice(0, 60) : 'Группа';
+    const tickers = normUniverse(gg?.tickers, benchmark, 100);
+    if (tickers.length) out.push({ label, tickers });
+  }
+  return out;
 }
 
 function normSignal(raw: any): SignalDef | null {
@@ -63,14 +75,21 @@ export function normalizeStudyConfig(body: any): StudyConfig {
     // Свип всегда односторонний (high/low); диапазоны строит режим bins='range' из тех же порогов.
     const side: Side = body?.side === 'low' ? 'low' : body?.side === 'high' ? 'high' : f.defaultSide === 'low' ? 'low' : 'high';
     const params = normNumberList(body?.params, f.defaultParams, 6).filter((p) => f.paramOptions.includes(p));
+    // Раздельные таблицы по классам активов: каждая выбранная группа считается отдельно.
+    const groups = normGroups(body?.groups, benchmark);
+    const factorUniverse = groups.length
+      ? [...new Set(groups.flatMap((g) => g.tickers))].slice(0, 200)
+      : universe;
     return {
       ...base,
+      universe: factorUniverse,
       factor: f.id,
       side,
       bins: body?.bins === 'range' ? 'range' : 'cumulative',
       params: params.length ? params : f.defaultParams,
       thresholds: normNumberList(body?.thresholds, f.defaultThresholds, 14),
       fdrAlpha: clampNum(body?.fdrAlpha, 0.1, 0.01, 0.5),
+      groups: groups.length ? groups : undefined,
     };
   }
 

@@ -11,6 +11,14 @@ export async function ensureSignalTables(): Promise<void> {
     def TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
+  // Снимок результата исследования (JSON payload) — чтобы открыть без пересчёта.
+  await libsqlClient.execute(`CREATE TABLE IF NOT EXISTS signal_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
   ensured = true;
 }
 
@@ -48,4 +56,41 @@ export async function saveSignal(name: string, def: unknown): Promise<number> {
 export async function deleteSignal(id: number): Promise<void> {
   await ensureSignalTables();
   await libsqlClient.execute({ sql: `DELETE FROM signals_saved WHERE id = ?`, args: [id] });
+}
+
+// ─── Снимки результатов ───
+export type SavedResultItem = { id: number; title: string; mode: string; created_at: string };
+
+export async function listResults(): Promise<SavedResultItem[]> {
+  await ensureSignalTables();
+  const r = await libsqlClient.execute(`SELECT id, title, mode, created_at FROM signal_results ORDER BY id DESC LIMIT 100`);
+  return r.rows.map((x: any) => ({
+    id: Number(x.id),
+    title: String(x.title),
+    mode: String(x.mode),
+    created_at: String(x.created_at),
+  }));
+}
+
+export async function getResult(id: number): Promise<{ id: number; title: string; mode: string; payload: any } | null> {
+  await ensureSignalTables();
+  const r = await libsqlClient.execute({ sql: `SELECT id, title, mode, payload FROM signal_results WHERE id = ?`, args: [id] });
+  const x = r.rows[0] as any;
+  if (!x) return null;
+  return { id: Number(x.id), title: String(x.title), mode: String(x.mode), payload: safeParse(String(x.payload)) };
+}
+
+export async function saveResult(title: string, mode: string, payload: unknown): Promise<number> {
+  await ensureSignalTables();
+  const now = new Date().toISOString();
+  const r = await libsqlClient.execute({
+    sql: `INSERT INTO signal_results (title, mode, payload, created_at) VALUES (?, ?, ?, ?)`,
+    args: [title, mode, JSON.stringify(payload), now],
+  });
+  return Number(r.lastInsertRowid ?? 0);
+}
+
+export async function deleteResult(id: number): Promise<void> {
+  await ensureSignalTables();
+  await libsqlClient.execute({ sql: `DELETE FROM signal_results WHERE id = ?`, args: [id] });
 }
