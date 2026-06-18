@@ -69,7 +69,9 @@ export const METAL_ETFS = [
 
 export type UniversePreset =
   | 'country' | 'sector' | 'factor' | 'mega' | 'commodity' | 'metal' | 'broad' | 'all'
-  | 'jp_stocks' | 'pl_stocks' | 'de_stocks' | 'gb_stocks';
+  | 'jp_stocks' | 'pl_stocks' | 'de_stocks' | 'gb_stocks'
+  | 'fr_stocks' | 'kr_stocks' | 'in_stocks' | 'br_stocks' | 'ca_stocks'
+  | 'au_stocks' | 'ch_stocks' | 'tw_stocks' | 'mx_stocks' | 'nl_stocks';
 
 export type PresetDef = {
   id: UniversePreset;
@@ -91,6 +93,16 @@ export const UNIVERSE_PRESETS: PresetDef[] = [
   { id: 'pl_stocks', label: 'Польша (акции)', tickers: [], benchmark: 'EPOL', country: 'PL', dynamic: true },
   { id: 'de_stocks', label: 'Германия (акции)', tickers: [], benchmark: 'EWG', country: 'DE', dynamic: true },
   { id: 'gb_stocks', label: 'Великобритания (акции)', tickers: [], benchmark: 'EWU', country: 'GB', dynamic: true },
+  { id: 'fr_stocks', label: 'Франция (акции)', tickers: [], benchmark: 'EWQ', country: 'FR', dynamic: true },
+  { id: 'kr_stocks', label: 'Корея (акции)', tickers: [], benchmark: 'EWY', country: 'KR', dynamic: true },
+  { id: 'in_stocks', label: 'Индия (акции)', tickers: [], benchmark: 'INDA', country: 'IN', dynamic: true },
+  { id: 'br_stocks', label: 'Бразилия (акции)', tickers: [], benchmark: 'EWZ', country: 'BR', dynamic: true },
+  { id: 'ca_stocks', label: 'Канада (акции)', tickers: [], benchmark: 'EWC', country: 'CA', dynamic: true },
+  { id: 'au_stocks', label: 'Австралия (акции)', tickers: [], benchmark: 'EWA', country: 'AU', dynamic: true },
+  { id: 'ch_stocks', label: 'Швейцария (акции)', tickers: [], benchmark: 'EWL', country: 'CH', dynamic: true },
+  { id: 'tw_stocks', label: 'Тайвань (акции)', tickers: [], benchmark: 'EWT', country: 'TW', dynamic: true },
+  { id: 'mx_stocks', label: 'Мексика (акции)', tickers: [], benchmark: 'EWW', country: 'MX', dynamic: true },
+  { id: 'nl_stocks', label: 'Нидерланды (акции)', tickers: [], benchmark: 'EWN', country: 'NL', dynamic: true },
   {
     id: 'broad',
     label: 'Широкая: страновые + секторные + факторные',
