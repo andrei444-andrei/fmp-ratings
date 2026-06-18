@@ -607,31 +607,60 @@ function Backtest() {
               <CardTitle>Стратегия (Python · on_bar)</CardTitle>
               <CardDescription>
                 Объявите <code>def on_bar(ctx):</code> (и опц. <code>initialize</code>). ctx даёт только прошлое;
-                заявки исполняются по close следующего бара. Можно сгенерировать черновик по описанию.
+                заявки исполняются по close следующего бара.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <Input
+            <CardContent className="space-y-4">
+              {/* AI-помощник: описание задачи словами → готовый код стратегии */}
+              <div className="space-y-2 rounded-fk border border-line bg-surface-2 p-3">
+                <div className="flex items-center gap-2">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-fk-pill bg-brand-50 text-[10px] font-bold text-brand">AI</span>
+                  <span className="text-[13px] font-semibold text-ink">Сгенерировать стратегию по описанию</span>
+                </div>
+                <Textarea
+                  aria-label="Описание задачи для AI"
                   value={draftPrompt}
                   onChange={(e) => setDraftPrompt(e.target.value)}
-                  placeholder="Опишите стратегию для AI-черновика…"
                   data-testid="draft-prompt"
+                  placeholder={
+                    'Опишите словами, что должна делать стратегия. Например:\n' +
+                    '• Лонг, пока цена выше 200-дневной SMA, иначе уходим в кэш.\n' +
+                    '• Раз в месяц держим топ-5 по 6-месячному моментуму, шортим худшие 5.\n' +
+                    '• Покупка при пробое 50-дневного максимума, выход ниже 20-дневного минимума.'
+                  }
+                  className="min-h-[110px] text-[13px]"
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') draft();
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') draft();
                   }}
                 />
-                <Button variant="secondary" onClick={draft} loading={drafting} className="shrink-0">
-                  AI-черновик
-                </Button>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] text-ink-3">Код подставится в редактор ниже — проверьте перед запуском. ⌘/Ctrl+Enter</span>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={draft}
+                    loading={drafting}
+                    disabled={!draftPrompt.trim()}
+                    data-testid="draft-btn"
+                    className="shrink-0"
+                  >
+                    {drafting ? 'Генерирую…' : 'Сгенерировать код'}
+                  </Button>
+                </div>
               </div>
-              <Textarea
-                value={strategy}
-                onChange={(e) => setStrategy(e.target.value)}
-                data-testid="strategy-code"
-                spellCheck={false}
-                className="min-h-[260px] font-mono text-[12.5px] leading-relaxed"
-              />
+
+              <Field>
+                <Label htmlFor="strategy-code">Код стратегии (Python)</Label>
+                <Textarea
+                  id="strategy-code"
+                  value={strategy}
+                  onChange={(e) => setStrategy(e.target.value)}
+                  data-testid="strategy-code"
+                  spellCheck={false}
+                  className="min-h-[260px] font-mono text-[12.5px] leading-relaxed"
+                />
+              </Field>
+
               <Button onClick={execute} loading={running} disabled={universe.length < 1} fullWidth data-testid="run-backtest">
                 {running ? 'Прогоняю бэктест…' : 'Запустить бэктест'}
               </Button>
