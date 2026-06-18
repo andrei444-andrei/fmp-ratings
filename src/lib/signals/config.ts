@@ -92,14 +92,19 @@ export function normalizeStudyConfig(body: any): StudyConfig {
     const factorUniverse = groups.length
       ? [...new Set([...groups.flatMap((g) => g.tickers), ...groups.map((g) => g.benchmark)])].slice(0, 520)
       : universe;
+    const bins = body?.bins === 'range' ? 'range' : body?.bins === 'quantile' ? 'quantile' : 'cumulative';
+    // В режиме перцентилей пороги — это размеры хвоста в % (дно/топ), 0.1..50; иначе значения фактора.
+    const thresholds = bins === 'quantile'
+      ? normNumberList(body?.thresholds, [2, 5, 10, 25], 20, 0.1, 50)
+      : normNumberList(body?.thresholds, f.defaultThresholds, 40);
     return {
       ...base,
       universe: factorUniverse,
       factor: f.id,
       side,
-      bins: body?.bins === 'range' ? 'range' : 'cumulative',
+      bins,
       params: params.length ? params : f.defaultParams,
-      thresholds: normNumberList(body?.thresholds, f.defaultThresholds, 40),
+      thresholds,
       fdrAlpha: clampNum(body?.fdrAlpha, 0.1, 0.01, 0.5),
       skip: Math.round(clampNum(body?.skip, 0, 0, 60)),
       groups: groups.length ? groups : undefined,
