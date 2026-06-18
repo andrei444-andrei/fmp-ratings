@@ -72,18 +72,27 @@ test.describe('Signals /signals', () => {
     await expect(page.getByTestId('heat-cell').first()).toBeVisible({ timeout: 30000 });
   });
 
-  test('«Сохранить результат» переживает перезагрузку и открывается из БД (gzip-снимок)', async ({ page }) => {
+  test('сохранение со своим именем, переименование, перезагрузка и открытие из БД (gzip-снимок)', async ({ page }) => {
     await setup(page);
     await page.getByTestId('run-study').click();
     await expect(page.getByTestId('heat-cell').first()).toBeVisible({ timeout: 150000 });
-    await page.getByRole('button', { name: 'Сохранить результат' }).click();
+    // Сохранение со СВОИМ названием (двухшаговый ввод имени).
+    await page.getByTestId('save-result-btn').click();
+    await page.getByTestId('save-name-input').fill('Мой моментум-тест');
+    await page.getByTestId('save-name-confirm').click();
     await expect(page.getByText('Результат сохранён')).toBeVisible({ timeout: 15000 });
-    await expect(page.getByTestId('saved-results').locator('[data-testid="result-open"]').first()).toBeVisible();
-    // Перезагрузка → снимок остаётся в списке (БД) и открывается (распаковка gzip-payload).
+    const list = page.getByTestId('saved-results');
+    await expect(list.getByText('Мой моментум-тест', { exact: true })).toBeVisible();
+    // Переименование в списке.
+    await list.getByTestId('result-rename').first().click();
+    await page.getByTestId('result-rename-input').fill('Переименованный');
+    await page.keyboard.press('Enter');
+    await expect(list.getByText('Переименованный', { exact: true })).toBeVisible({ timeout: 15000 });
+    await expect(list.getByText('Мой моментум-тест', { exact: true })).toHaveCount(0);
+    // Перезагрузка → имя и снимок остаются в БД, открывается (распаковка gzip-payload).
     await page.reload();
-    const saved = page.getByTestId('saved-results').locator('[data-testid="result-open"]').first();
-    await expect(saved).toBeVisible({ timeout: 30000 });
-    await saved.click();
+    await expect(list.getByText('Переименованный', { exact: true })).toBeVisible({ timeout: 30000 });
+    await list.getByTestId('result-open').first().click();
     await expect(page.getByTestId('heat-cell').first()).toBeVisible({ timeout: 30000 });
   });
 
