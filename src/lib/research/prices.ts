@@ -1,6 +1,6 @@
 import { libsqlClient } from '@/db/client';
 import { fmpHistoricalPriceEod } from '@/lib/fmp';
-import { hasEodhd, eodhdEod } from '@/lib/eodhd';
+import { eodhdEod } from '@/lib/eodhd';
 
 // Коннектор «база с ценами по тикерам»: кэш-таблица в libSQL, доливаемая из FMP.
 // Покрытие на тикер (price_meta) решает, ходить ли в FMP: один раз скачали — дальше отдаём из БД,
@@ -25,10 +25,12 @@ export async function ensurePricesTable(): Promise<void> {
     last_date TEXT NOT NULL,
     refreshed_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
-  try {
-    await libsqlClient.execute(`ALTER TABLE price_meta ADD COLUMN provider TEXT`);
-  } catch {
-    /* колонка уже есть */
+  for (const col of ['provider TEXT', 'epoch TEXT']) {
+    try {
+      await libsqlClient.execute(`ALTER TABLE price_meta ADD COLUMN ${col}`);
+    } catch {
+      /* колонка уже есть */
+    }
   }
   ensured = true;
 }
@@ -36,23 +38,33 @@ export async function ensurePricesTable(): Promise<void> {
 export type PriceRow = { date: string; close: number; volume: number | null };
 
 const REFRESH_TTL_MS = 12 * 3600 * 1000; // освежаем хвост не чаще раза в ~12ч (EOD-данные)
+// Версия кэша цен. Бамп → одноразовый полный рефетч на тикер (лечит битый/короткий кэш, напр. после
+// неудачного переключения провайдера). Меняем, когда нужно пере-набрать историю у всех бумаг.
+const PRICES_EPOCH = '2';
+const MIN_FULL_ROWS = 60; // меньше — считаем, что нормальной истории нет (не затираем чужой кэш этим)
 
-type Meta = { fetched_from: string; last_date: string; refreshed_at: string; provider: string };
+type Meta = { fetched_from: string; last_date: string; refreshed_at: string; provider: string; epoch: string };
 
 async function readMeta(sym: string): Promise<Meta | null> {
-  const r = await libsqlClient.execute({ sql: `SELECT fetched_from, last_date, refreshed_at, provider FROM price_meta WHERE symbol=?`, args: [sym] });
+  const r = await libsqlClient.execute({ sql: `SELECT fetched_from, last_date, refreshed_at, provider, epoch FROM price_meta WHERE symbol=?`, args: [sym] });
   const x = r.rows[0] as any;
   return x
-    ? { fetched_from: String(x.fetched_from), last_date: String(x.last_date), refreshed_at: String(x.refreshed_at), provider: x.provider ? String(x.provider) : 'fmp' }
+    ? { fetched_from: String(x.fetched_from), last_date: String(x.last_date), refreshed_at: String(x.refreshed_at), provider: x.provider ? String(x.provider) : 'fmp', epoch: x.epoch ? String(x.epoch) : '1' }
     : null;
 }
 
 async function writeMeta(sym: string, fetchedFrom: string, lastDate: string, provider: string): Promise<void> {
   await libsqlClient.execute({
-    sql: `INSERT INTO price_meta (symbol, fetched_from, last_date, refreshed_at, provider) VALUES (?,?,?,?,?)
-          ON CONFLICT(symbol) DO UPDATE SET fetched_from=excluded.fetched_from, last_date=excluded.last_date, refreshed_at=excluded.refreshed_at, provider=excluded.provider`,
-    args: [sym, fetchedFrom, lastDate, new Date().toISOString(), provider],
+    sql: `INSERT INTO price_meta (symbol, fetched_from, last_date, refreshed_at, provider, epoch) VALUES (?,?,?,?,?,?)
+          ON CONFLICT(symbol) DO UPDATE SET fetched_from=excluded.fetched_from, last_date=excluded.last_date, refreshed_at=excluded.refreshed_at, provider=excluded.provider, epoch=excluded.epoch`,
+    args: [sym, fetchedFrom, lastDate, new Date().toISOString(), provider, PRICES_EPOCH],
   });
+}
+
+async function priceExtent(sym: string): Promise<{ min: string; count: number }> {
+  const r = await libsqlClient.execute({ sql: `SELECT MIN(date) AS lo, COUNT(*) AS c FROM prices WHERE symbol=? AND close IS NOT NULL`, args: [sym] });
+  const x = r.rows[0] as any;
+  return { min: x?.lo ? String(x.lo) : '', count: Number(x?.c || 0) };
 }
 
 async function selectRange(sym: string, from: string, to: string): Promise<PriceRow[]> {
@@ -94,11 +106,16 @@ async function fetchFromFmp(sym: string, from: string, to: string): Promise<Pric
     .sort((a, b) => (a.date < b.date ? -1 : 1));
 }
 
-// Провайдер цен: EODHD (скорректированные цены, широкое гео) при наличии ключа, иначе FMP.
-function priceProvider(): { name: string; fetch: (sym: string, from: string, to: string) => Promise<PriceRow[]> } | null {
-  if (hasEodhd()) return { name: 'eodhd', fetch: eodhdEod };
-  if (process.env.FMP_API_KEY) return { name: 'fmp', fetch: fetchFromFmp };
-  return null;
+type Provider = { name: string; fetch: (sym: string, from: string, to: string) => Promise<PriceRow[]> };
+
+// Провайдеры цен в порядке приоритета. FMP — ОСНОВНОЙ (полная история, проверенная глубина).
+// EODHD — только ДОБОР пробелов (символы, которых нет в FMP), т.к. в проде его план может отдавать
+// усечённую историю; нельзя ухудшать рабочие данные FMP. Порядок: [FMP, EODHD].
+function priceProviders(): Provider[] {
+  const list: Provider[] = [];
+  if (process.env.FMP_API_KEY) list.push({ name: 'fmp', fetch: fetchFromFmp });
+  if (process.env.EODHD_API_KEY) list.push({ name: 'eodhd', fetch: eodhdEod });
+  return list;
 }
 
 /** Возвращает дневные close+volume за период. Кэш-первым; в FMP идём только если тикер не покрыт
@@ -106,48 +123,73 @@ function priceProvider(): { name: string; fetch: (sym: string, from: string, to:
 export async function getPrices(symbol: string, from: string, to: string): Promise<PriceRow[]> {
   await ensurePricesTable();
   const sym = symbol.toUpperCase();
-  const provider = priceProvider();
+  const provs = priceProviders();
+  const primary = provs[0] ?? null;
 
   let meta = await readMeta(sym);
-  // Бутстрап покрытия из легаси-данных (таблица prices без price_meta): считаем, что их тянули с тем же
-  // окном (роут давно использует фиксированный from) провайдером FMP, чтобы не перекачивать заново.
+  // Бутстрап покрытия из легаси-данных (таблица prices без price_meta): доверяем как FMP-истории
+  // текущей эпохи, чтобы не перекачивать заново.
   if (!meta) {
-    const mm = await libsqlClient.execute({ sql: `SELECT MIN(date) AS lo, MAX(date) AS hi FROM prices WHERE symbol=? AND close IS NOT NULL`, args: [sym] });
-    const lo = (mm.rows[0] as any)?.lo;
-    const hi = (mm.rows[0] as any)?.hi;
-    if (lo && hi) {
-      const fetchedFrom = String(lo) < from ? String(lo) : from;
-      await writeMeta(sym, fetchedFrom, String(hi), 'fmp');
-      meta = { fetched_from: fetchedFrom, last_date: String(hi), refreshed_at: new Date(0).toISOString(), provider: 'fmp' };
+    const ex = await priceExtent(sym);
+    if (ex.count > 0) {
+      const mm = await libsqlClient.execute({ sql: `SELECT MAX(date) AS hi FROM prices WHERE symbol=? AND close IS NOT NULL`, args: [sym] });
+      const hi = String((mm.rows[0] as any)?.hi || to);
+      const fetchedFrom = ex.min && ex.min < from ? ex.min : from;
+      await writeMeta(sym, fetchedFrom, hi, 'fmp');
+      meta = { fetched_from: fetchedFrom, last_date: hi, refreshed_at: new Date(0).toISOString(), provider: 'fmp', epoch: PRICES_EPOCH };
     }
   }
 
-  // Смена провайдера (напр. подключили EODHD): цены по-разному скорректированы — нельзя дописывать
-  // хвост к чужой истории. Чистим кэш тикера и тянем заново целиком новым провайдером.
-  if (provider && meta && meta.provider !== provider.name) {
-    await libsqlClient.execute({ sql: `DELETE FROM prices WHERE symbol=?`, args: [sym] });
-    meta = null;
-  }
-
-  const haveStart = !!meta && meta.fetched_from <= from;
-  const fresh = !!meta && Date.now() - Date.parse(meta.refreshed_at) < REFRESH_TTL_MS;
+  // Новая эпоха кэша → один раз набираем историю заново (лечит битый/короткий кэш), но НЕ разрушительно
+  // (старые данные удаляем только когда новые не хуже — см. ниже).
+  const epochStale = !!meta && meta.epoch !== PRICES_EPOCH;
+  const haveStart = !!meta && meta.fetched_from <= from && !epochStale;
+  const fresh = !!meta && Date.now() - Date.parse(meta.refreshed_at) < REFRESH_TTL_MS && !epochStale;
   const haveEnd = !!meta && meta.last_date >= to;
   // Полностью покрыто и свежо (или уже есть данные по запрошенный конец) → из БД, без сети.
   if (haveStart && (fresh || haveEnd)) return selectRange(sym, from, to);
 
-  if (!provider) return selectRange(sym, from, to); // без ключей (e2e) — что есть в кэше
+  if (!primary) return selectRange(sym, from, to); // без ключей (e2e) — что есть в кэше
 
-  // Идём к провайдеру: хвост, если начало уже покрыто; иначе всю историю (первый раз для тикера).
-  const fetchFrom = haveStart && meta ? meta.last_date : from;
+  const fullFetch = epochStale || !haveStart;
+  const fetchFrom = fullFetch ? from : meta!.last_date;
   try {
-    const rows = await provider.fetch(sym, fetchFrom, to);
+    // Основной провайдер; при полном наборе и нехватке данных — добор резервным (заполняем пробелы FMP).
+    let rows = await primary.fetch(sym, fetchFrom, to);
+    let used = primary.name;
+    if (fullFetch && rows.length < MIN_FULL_ROWS && provs[1]) {
+      try {
+        const alt = await provs[1].fetch(sym, fetchFrom, to);
+        if (alt.length > rows.length) { rows = alt; used = provs[1].name; }
+      } catch {
+        /* резервный недоступен */
+      }
+    }
+
+    if (fullFetch) {
+      // НЕ ухудшаем покрытие: заменяем кэш только если новые данные не короче существующих
+      // (иначе короткий ответ провайдера затёр бы рабочую историю). Иначе — оставляем как есть.
+      const ex = await priceExtent(sym);
+      const newMin = rows.length ? rows[0].date : '';
+      const notWorse = rows.length >= MIN_FULL_ROWS && (ex.count === 0 || (!!newMin && newMin <= ex.min) || rows.length >= ex.count);
+      if (!notWorse) {
+        if (meta) await writeMeta(sym, meta.fetched_from, meta.last_date, meta.provider); // фиксируем эпоху, не зацикливаемся
+        return selectRange(sym, from, to);
+      }
+      await libsqlClient.execute({ sql: `DELETE FROM prices WHERE symbol=?`, args: [sym] });
+      if (rows.length) await upsertRows(sym, rows);
+      await writeMeta(sym, from, rows.length ? rows[rows.length - 1].date : to, used);
+      return selectRange(sym, from, to);
+    }
+
+    // Тот же провайдер/эпоха: доливаем только хвост.
     if (rows.length) await upsertRows(sym, rows);
-    const newFetchedFrom = meta ? (meta.fetched_from < from ? meta.fetched_from : from) : from;
+    const newFetchedFrom = meta!.fetched_from < from ? meta!.fetched_from : from;
     const fetchedLast = rows.length ? rows[rows.length - 1].date : '';
-    const finalLast = meta ? (fetchedLast > meta.last_date ? fetchedLast : meta.last_date) : fetchedLast || to;
-    await writeMeta(sym, newFetchedFrom, finalLast, provider.name);
+    const finalLast = fetchedLast > meta!.last_date ? fetchedLast : meta!.last_date;
+    await writeMeta(sym, newFetchedFrom, finalLast, meta!.provider);
     return selectRange(sym, from, to);
   } catch {
-    return selectRange(sym, from, to); // провайдер недоступен — отдаём кэш
+    return selectRange(sym, from, to); // провайдер недоступен — отдаём кэш (старые данные не тронуты)
   }
 }
