@@ -28,9 +28,9 @@ test.describe('Backtest /backtest', () => {
 
   test('прогоняет стратегию и рендерит отчёт без ошибок', async ({ page }) => {
     await runSmallBacktest(page);
-    // Метрики (kpi-карточки) и кривая капитала (img) появляются по ходу исполнения.
+    // Кривая капитала (итеративный SVG) появляется по ходу прогона, метрики — после.
+    await expect(page.getByTestId('equity-chart').locator('svg')).toBeVisible({ timeout: 180000 });
     await expect(page.locator('.research-output .rkit-kpi').first()).toBeVisible({ timeout: 180000 });
-    await expect(page.locator('.research-output img').first()).toBeVisible({ timeout: 60000 });
     // Таблица модели издержек по рынкам и лог сделок.
     await expect(page.locator('.research-output .rt-cap', { hasText: 'Модель издержек по рынкам' })).toBeVisible({ timeout: 60000 });
     await expect(page.locator('.research-output .rt-cap', { hasText: 'Сделки' })).toBeVisible({ timeout: 60000 });

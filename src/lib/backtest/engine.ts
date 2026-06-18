@@ -9,7 +9,7 @@
 // Любые escape-последовательности здесь запрещены by design (как в src/lib/signals/pipeline.ts).
 
 const ENGINE_BODY = `
-import json, base64, io, math
+import json, base64, math, asyncio
 import numpy as np
 import pandas as pd
 
@@ -193,6 +193,41 @@ if ok:
     lev_warned = [False]
     err = None
 
+    # Бенчмарк buy & hold по всей истории (для итеративного графика и финальных метрик).
+    bench_eq_full = None
+    if bench_present:
+        bser = PXFF_DF[bench].astype(float).values
+        fin = np.where(np.isfinite(bser))[0]
+        if len(fin) > 0 and bser[fin[0]] > 0:
+            bench_eq_full = INIT_CAP * (bser / bser[fin[0]])
+
+    # Итеративный график: периодически шлём вниз снимок кривой капитала (стрид до 250 точек),
+    # клиент рисует SVG и обновляет его по ходу. data-bt-equity перехватывается на клиенте.
+    def _equity_payload(upto, done):
+        m = upto + 1
+        stride = max(1, m // 250)
+        idxs = list(range(0, m, stride))
+        if idxs[-1] != upto:
+            idxs.append(upto)
+        strat = [round(float(eq[k]), 2) for k in idxs]
+        bn = None
+        if bench_eq_full is not None:
+            bn = []
+            for k in idxs:
+                v = bench_eq_full[k]
+                bn.append(round(float(v), 2) if np.isfinite(v) else None)
+        obj = {"strat": strat, "bench": bn, "init": INIT_CAP,
+               "d0": str(pd.Timestamp(DATES[0]).date()),
+               "d1": str(pd.Timestamp(DATES[upto]).date()), "done": bool(done)}
+        return base64.b64encode(json.dumps(obj).encode()).decode()
+
+    def _emit_equity(upto, done):
+        try:
+            emit({"__kit__": True, "html": "<div data-bt-equity='" + _equity_payload(upto, done) + "'></div>"})
+        except Exception:
+            pass
+
+    flush_every = max(1, N // 40)
     print("Прогоняю", N, "баров по", K, "инструментам...")
     for i in range(N):
         prow = PFF[i]
@@ -212,6 +247,10 @@ if ok:
         if cash < 0:
             mi = (-cash) * MARGIN_DAILY
             cash -= mi; margin_total += mi
+        # Итеративная отрисовка: шлём снимок кривой и уступаем управление, чтобы чанк ушёл в UI.
+        if i % flush_every == 0 or i == N - 1:
+            _emit_equity(i, i == N - 1)
+            await asyncio.sleep(0)
         if i >= N - 1:
             break
         # Решение стратегии (данные до i включительно) -> исполнение по close на i+1.
@@ -321,23 +360,7 @@ if ok:
             kpi("Бенчмарк", (str(round(b_tot * 100, 1)) + "%") if b_tot is not None else "—", hint=bench),
         ))
 
-        # --- График капитала vs бенчмарк ---
-        try:
-            fig = plt.figure(figsize=(9, 3.6))
-            ax = fig.add_subplot(111)
-            ax.plot(equity.index, equity.values, label="Стратегия", color="#6d5bf0", linewidth=1.6)
-            if bench_eq is not None:
-                ax.plot(bench_eq.index, bench_eq.values, label="Бенчмарк (" + bench + ")", color="#94a3b8", linewidth=1.3)
-            ax.set_title("Кривая капитала")
-            ax.legend(loc="upper left", fontsize=8)
-            ax.grid(True, alpha=0.25)
-            buf = io.BytesIO()
-            fig.savefig(buf, format="png", bbox_inches="tight", dpi=110)
-            b64 = base64.b64encode(buf.getvalue()).decode()
-            emit({"__kit__": True, "html": "<div class='rblk'><img alt='equity' src='data:image/png;base64," + b64 + "'/></div>"})
-            plt.close(fig)
-        except Exception as e:
-            _warn("Не удалось построить график капитала: " + str(e))
+        # (Кривая капитала рисуется итеративно по ходу прогона — клиентский SVG, см. data-bt-equity.)
 
         # --- Издержки по рынкам (прозрачность модели) ---
         try:
