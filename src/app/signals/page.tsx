@@ -1227,13 +1227,16 @@ function regionLabel(f: any, region: any): string {
 function LeaderboardView({ data, groups, winFrom, winTo }: { data: any; groups: any[]; winFrom: number; winTo: number }) {
   const mainH: number = data.horizon;
   const alpha: number = data.fdrAlpha || 0.1;
-  const cols: string[] = data.cols || [];
+  const cols: any[] = data.cols || [];
   const params: number[] = data.params || [];
   const f = FACTOR_BY_ID[data.factor];
-  const [selCol, setSelCol] = useState<string>(cols[0] || '');
+  const colKey = (c: any) => String(c); // столбцы бывают числами (пороги) — сравниваем как строки
+  const [selCol, setSelCol] = useState<string>(cols.length ? colKey(cols[0]) : '');
+  const [selParam, setSelParam] = useState<string>('best'); // 'best' = авто-лучший, иначе конкретный период
   const [sortBy, setSortBy] = useState<'t' | 'mean'>('t');
   useEffect(() => {
-    setSelCol(cols[0] || '');
+    setSelCol(cols.length ? colKey(cols[0]) : '');
+    setSelParam('best');
   }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Метрики ячейки под выбранное окно лет (из по-годовой агрегации), иначе сырые значения.
@@ -1249,24 +1252,33 @@ function LeaderboardView({ data, groups, winFrom, winTo }: { data: any; groups: 
     groups.forEach((g, gi) =>
       (g.grid || []).forEach((c: any) => {
         const s = statOf(c);
-        if (s) allItems.push({ key: `${gi}:${c.param}:${c.col}`, p: pval(s.t) });
+        if (s) allItems.push({ key: `${gi}:${c.param}:${colKey(c.col)}`, p: pval(s.t) });
       }),
     );
     const globalSig = bhSig(allItems, alpha);
+    const fixedParam = selParam === 'best' ? null : Number(selParam);
     const rows = groups.map((g, gi) => {
-      let best: any = null;
-      for (const p of params) {
-        const c = (g.grid || []).find((x: any) => x.param === p && x.col === selCol);
+      const cells = (g.grid || []).filter((x: any) => colKey(x.col) === selCol);
+      const mk = (c: any) => {
         const s = statOf(c);
-        if (!s) continue;
-        const metric = sortBy === 'mean' ? s.mean : s.t;
-        if (best == null || metric > best.metric) best = { metric, param: p, ...s, sig: globalSig.has(`${gi}:${p}:${selCol}`) };
+        return s ? { param: c.param, ...s, sig: globalSig.has(`${gi}:${c.param}:${colKey(c.col)}`) } : null;
+      };
+      let best: any = null;
+      if (fixedParam == null) {
+        for (const c of cells) {
+          const r = mk(c);
+          if (!r) continue;
+          const metric = sortBy === 'mean' ? r.mean : r.t;
+          if (best == null || metric > best.metric) best = { ...r, metric };
+        }
+      } else {
+        best = mk(cells.find((x: any) => x.param === fixedParam));
       }
       return { label: g.label || `Группа ${gi + 1}`, benchmark: g.benchmark, best };
     });
     rows.sort((a, b) => (b.best ? (sortBy === 'mean' ? b.best.mean : b.best.t) : -Infinity) - (a.best ? (sortBy === 'mean' ? a.best.mean : a.best.t) : -Infinity));
     return { rows, sigCount: rows.filter((r) => r.best?.sig).length };
-  }, [groups, selCol, sortBy, winFrom, winTo, alpha, mainH, params]);
+  }, [groups, selCol, selParam, sortBy, winFrom, winTo, alpha, mainH, params]);
 
   const top = rows.find((r) => r.best);
   const pl = (f?.paramLabel || 'Параметр').toLowerCase();
@@ -1275,7 +1287,7 @@ function LeaderboardView({ data, groups, winFrom, winTo }: { data: any; groups: 
       <CardHeader>
         <CardTitle>Лидерборд: где эффект сильнее</CardTitle>
         <CardDescription>
-          {f?.label} · столбец «{selCol}» · гор. {data.horizon}д · лучший {pl} на страну; значимость — после ОБЩЕЙ FDR-поправки по всему скану.
+          {f?.label} · столбец «{selCol}» · гор. {data.horizon}д · {selParam === 'best' ? `лучший ${pl} на страну` : `${pl} = ${selParam}`}; значимость — после ОБЩЕЙ FDR-поправки по всему скану.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -1289,8 +1301,24 @@ function LeaderboardView({ data, groups, winFrom, winTo }: { data: any; groups: 
               className="rounded-fk-sm border border-line-strong bg-surface-elev px-2 py-1 text-[12px] text-ink"
             >
               {cols.map((c) => (
-                <option key={c} value={c}>
-                  {c}
+                <option key={colKey(c)} value={colKey(c)}>
+                  {colKey(c)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-[12px] text-ink-3">
+            {f?.paramLabel || 'Период'}:{' '}
+            <select
+              value={selParam}
+              onChange={(e) => setSelParam(e.target.value)}
+              data-testid="leaderboard-param"
+              className="rounded-fk-sm border border-line-strong bg-surface-elev px-2 py-1 text-[12px] text-ink"
+            >
+              <option value="best">лучший</option>
+              {params.map((p) => (
+                <option key={p} value={String(p)}>
+                  {p}
                 </option>
               ))}
             </select>
