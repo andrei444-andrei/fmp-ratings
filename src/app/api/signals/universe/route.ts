@@ -1,6 +1,6 @@
 import { libsqlClient } from '@/db/client';
 import { fmpSp500Current, fmpScreener } from '@/lib/fmp';
-import { hasEodhd, eodhdConstituents, COUNTRY_EXCHANGE } from '@/lib/eodhd';
+import { hasEodhd, eodhdConstituents, COUNTRY_EXCHANGE, keepNativeListings } from '@/lib/eodhd';
 import { MEGA_STOCKS, UNIVERSE_PRESETS } from '@/lib/signals/presets';
 
 // Динамические списки вселенной для /signals:
@@ -12,6 +12,9 @@ export const dynamic = 'force-dynamic';
 const TTL_MS = 7 * 24 * 3600 * 1000;
 const TICKER = /^[A-Z0-9][A-Z0-9.\-]{0,13}$/;
 const TOP_N = 80;
+// Версия логики формирования вселенной. Бамп инвалидирует кэш (ключ = preset@VER), не трогая схему:
+// после деплоя чистки составов старые (грязные) записи просто перестают читаться. v2 = чистка по бирже.
+const CACHE_VER = 'v2';
 
 let ensured = false;
 async function ensure(): Promise<void> {
@@ -38,24 +41,31 @@ async function readCache(preset: string): Promise<{ tickers: string[]; at: numbe
 
 async function fetchTickers(preset: string, country?: string): Promise<string[]> {
   if (country) {
-    // EODHD (если есть ключ): реальный состав биржи страны — широкое гео (Бразилия и др.).
-    const exch = COUNTRY_EXCHANGE[country.toUpperCase()];
+    const cc = country.toUpperCase();
+    const exch = COUNTRY_EXCHANGE[cc];
+    // Берём кандидатов С ЗАПАСОМ (оба источника отдают мировые листинги компании — ADR, вторичные
+    // биржи), чистку до родной биржи делаем ниже, поэтому до фильтра нужно много имён.
+    let raw: string[] = [];
     if (hasEodhd() && exch) {
       try {
-        const syms = (await eodhdConstituents(exch, TOP_N)).filter((s) => TICKER.test(s));
-        if (syms.length >= 5) return syms;
+        raw = await eodhdConstituents(exch, TOP_N * 5);
       } catch {
         /* EODHD недоступен — падаем на FMP screener */
       }
     }
-    const data: any = await fmpScreener({ country, isEtf: false, isActivelyTrading: true, limit: 600 });
-    const arr: any[] = Array.isArray(data) ? data : [];
-    return arr
-      .filter((x) => Number.isFinite(Number(x?.marketCap)))
-      .sort((a, b) => Number(b.marketCap) - Number(a.marketCap))
-      .map((x) => String(x?.symbol ?? '').toUpperCase().trim())
-      .filter((s) => TICKER.test(s))
-      .slice(0, TOP_N);
+    if (raw.length < 5) {
+      const data: any = await fmpScreener({ country: cc, isEtf: false, isActivelyTrading: true, limit: 600 });
+      const arr: any[] = Array.isArray(data) ? data : [];
+      raw = arr
+        .filter((x) => Number.isFinite(Number(x?.marketCap)))
+        .sort((a, b) => Number(b.marketCap) - Number(a.marketCap))
+        .map((x) => String(x?.symbol ?? '').toUpperCase().trim());
+    }
+    // Чистка: только листинги РОДНОЙ биржи страны (дропаем ADR/вторичные/дубли NSE+BSE), порядок по
+    // капитализации сохраняется. Если карта суффиксов не покрыла рынок — отдаём сырьё (без регресса).
+    const clean = keepNativeListings(raw, cc).filter((s) => TICKER.test(s));
+    const out = clean.length >= 5 ? clean : raw.filter((s) => TICKER.test(s));
+    return [...new Set(out)].slice(0, TOP_N);
   }
   // mega → S&P 500
   const data: any = await fmpSp500Current();
@@ -75,7 +85,8 @@ export async function GET(req: Request) {
   } catch {
     return Response.json({ tickers: preset === 'mega' ? MEGA_STOCKS : def.tickers, source: 'fallback' });
   }
-  const cached = await readCache(preset);
+  const cacheKey = `${preset}@${CACHE_VER}`;
+  const cached = await readCache(cacheKey);
   if (cached && cached.tickers.length >= minCount && Date.now() - cached.at < TTL_MS) {
     return Response.json({ tickers: cached.tickers, source: 'cache' });
   }
@@ -86,7 +97,7 @@ export async function GET(req: Request) {
       await libsqlClient.execute({
         sql: `INSERT INTO signals_universe (preset, tickers, fetched_at) VALUES (?, ?, ?)
               ON CONFLICT(preset) DO UPDATE SET tickers=excluded.tickers, fetched_at=excluded.fetched_at`,
-        args: [preset, JSON.stringify(tickers), now],
+        args: [cacheKey, JSON.stringify(tickers), now],
       });
       return Response.json({ tickers, source: 'fmp' });
     }
