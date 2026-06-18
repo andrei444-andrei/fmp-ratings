@@ -1208,6 +1208,7 @@ function MetaBar({ meta }: { meta: any }) {
     <p className="text-[11px] text-ink-3">
       {meta.symbols} инструментов · {meta.periods} периодов · {meta.obs} наблюдений · окно {meta.first} — {meta.last} · бенчмарк {meta.benchmark}
       {!meta.has_bench && ' (не загрузился — доходность абсолютная)'}
+      {meta.cleaned > 0 && <span className="text-warn-strong"> · очищено {meta.cleaned} битых баров</span>}
     </p>
   );
 }
