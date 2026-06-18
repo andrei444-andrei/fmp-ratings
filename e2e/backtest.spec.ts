@@ -24,6 +24,9 @@ test.describe('Backtest /backtest', () => {
     await expect(page.getByTestId('run-backtest')).toBeVisible();
     // Дефолтная стратегия предзаполнена.
     await expect(page.getByTestId('strategy-code')).toContainText('def on_bar(ctx):');
+    // AI-панель: поле описания задачи + кнопка генерации.
+    await expect(page.getByTestId('draft-prompt')).toBeVisible();
+    await expect(page.getByTestId('draft-btn')).toBeVisible();
   });
 
   test('прогоняет стратегию и рендерит отчёт без ошибок', async ({ page }) => {
