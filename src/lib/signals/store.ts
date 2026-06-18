@@ -112,3 +112,8 @@ export async function deleteResult(id: number): Promise<void> {
   await ensureSignalTables();
   await libsqlClient.execute({ sql: `DELETE FROM signal_results WHERE id = ?`, args: [id] });
 }
+
+export async function renameResult(id: number, title: string): Promise<void> {
+  await ensureSignalTables();
+  await libsqlClient.execute({ sql: `UPDATE signal_results SET title = ? WHERE id = ?`, args: [title, id] });
+}

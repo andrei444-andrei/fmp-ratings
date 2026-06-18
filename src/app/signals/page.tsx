@@ -238,6 +238,10 @@ function Signals() {
   // ── Сохранённые результаты (снимки) ──
   const [savedResults, setSavedResults] = useState<{ id: number; title: string; mode: string; created_at: string }[] | null>(null);
   const [savingResult, setSavingResult] = useState(false);
+  const [namingSave, setNamingSave] = useState(false); // режим ввода имени при сохранении
+  const [saveTitle, setSaveTitle] = useState('');
+  const [editingId, setEditingId] = useState<number | null>(null); // переименование в списке
+  const [editTitle, setEditTitle] = useState('');
 
   const outRef = useRef<HTMLDivElement>(null);
 
@@ -304,23 +308,44 @@ function Signals() {
     }
   }, [result]);
 
-  async function saveCurrentResult() {
+  async function saveCurrentResult(title: string) {
     if (!result || savingResult) return;
+    const name = title.trim().slice(0, 200) || resultTitle(result);
     setSavingResult(true);
     try {
       const r = await fetch('/api/signals/results', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ title: resultTitle(result), mode: result.mode, payload: result }),
+        body: JSON.stringify({ title: name, mode: result.mode, payload: result }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d?.error || 'не удалось');
       toast({ variant: 'success', title: 'Результат сохранён', description: d?.title });
+      setNamingSave(false);
       loadResults();
     } catch (e: any) {
       toast({ variant: 'error', title: 'Ошибка сохранения', description: e?.message });
     } finally {
       setSavingResult(false);
+    }
+  }
+  async function commitRename(id: number) {
+    const t = editTitle.trim();
+    if (!t) {
+      setEditingId(null);
+      return;
+    }
+    try {
+      const r = await fetch(`/api/signals/results/${id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: t }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'не удалось');
+      setEditingId(null);
+      loadResults();
+    } catch (e: any) {
+      toast({ variant: 'error', title: 'Не удалось переименовать', description: e?.message });
     }
   }
   async function openResult(id: number) {
@@ -660,17 +685,53 @@ function Signals() {
                 <ul className="space-y-1" data-testid="saved-results">
                   {savedResults.map((r) => (
                     <li key={r.id} className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        data-testid="result-open"
-                        onClick={() => openResult(r.id)}
-                        className="min-w-0 flex-1 truncate rounded-fk-sm px-2 py-1.5 text-left text-[12px] text-ink-2 transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
-                      >
-                        {r.title}
-                      </button>
-                      <button type="button" aria-label="Удалить результат" onClick={() => deleteResultById(r.id)} className="shrink-0 rounded-fk-sm px-1.5 text-ink-3 hover:text-down">
-                        ×
-                      </button>
+                      {editingId === r.id ? (
+                        <>
+                          <Input
+                            autoFocus
+                            value={editTitle}
+                            onChange={(e: any) => setEditTitle(e.target.value)}
+                            onKeyDown={(e: any) => {
+                              if (e.key === 'Enter') commitRename(r.id);
+                              if (e.key === 'Escape') setEditingId(null);
+                            }}
+                            className="h-8 min-w-0 flex-1 text-[12px]"
+                            data-testid="result-rename-input"
+                          />
+                          <button type="button" aria-label="Сохранить имя" onClick={() => commitRename(r.id)} className="shrink-0 rounded-fk-sm px-1.5 text-brand-700 hover:text-brand">
+                            ✓
+                          </button>
+                          <button type="button" aria-label="Отмена" onClick={() => setEditingId(null)} className="shrink-0 rounded-fk-sm px-1.5 text-ink-3 hover:text-ink-2">
+                            ×
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            data-testid="result-open"
+                            onClick={() => openResult(r.id)}
+                            className="min-w-0 flex-1 truncate rounded-fk-sm px-2 py-1.5 text-left text-[12px] text-ink-2 transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
+                          >
+                            {r.title}
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="Переименовать результат"
+                            data-testid="result-rename"
+                            onClick={() => {
+                              setEditingId(r.id);
+                              setEditTitle(r.title);
+                            }}
+                            className="shrink-0 rounded-fk-sm px-1.5 text-ink-3 hover:text-ink-2"
+                          >
+                            ✎
+                          </button>
+                          <button type="button" aria-label="Удалить результат" onClick={() => deleteResultById(r.id)} className="shrink-0 rounded-fk-sm px-1.5 text-ink-3 hover:text-down">
+                            ×
+                          </button>
+                        </>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -693,9 +754,40 @@ function Signals() {
                 <Badge variant={status === 'Ошибка' ? 'down' : 'up'}>{status}</Badge>
               ) : null}
               {result && !running && (
-                <Button size="sm" variant="secondary" onClick={saveCurrentResult} loading={savingResult}>
-                  Сохранить результат
-                </Button>
+                namingSave ? (
+                  <div className="flex items-center gap-1">
+                    <Input
+                      autoFocus
+                      value={saveTitle}
+                      onChange={(e: any) => setSaveTitle(e.target.value)}
+                      onKeyDown={(e: any) => {
+                        if (e.key === 'Enter') saveCurrentResult(saveTitle);
+                        if (e.key === 'Escape') setNamingSave(false);
+                      }}
+                      placeholder="Название результата"
+                      className="h-8 w-44 text-[12px]"
+                      data-testid="save-name-input"
+                    />
+                    <Button size="sm" onClick={() => saveCurrentResult(saveTitle)} loading={savingResult} data-testid="save-name-confirm">
+                      ОК
+                    </Button>
+                    <button type="button" aria-label="Отмена" onClick={() => setNamingSave(false)} className="shrink-0 rounded-fk-sm px-1.5 text-ink-3 hover:text-ink-2">
+                      ×
+                    </button>
+                  </div>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      setSaveTitle(resultTitle(result));
+                      setNamingSave(true);
+                    }}
+                    data-testid="save-result-btn"
+                  >
+                    Сохранить результат
+                  </Button>
+                )
               )}
             </div>
           </CardHeader>
