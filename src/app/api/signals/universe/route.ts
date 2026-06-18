@@ -1,5 +1,6 @@
 import { libsqlClient } from '@/db/client';
 import { fmpSp500Current, fmpScreener } from '@/lib/fmp';
+import { hasEodhd, eodhdConstituents, COUNTRY_EXCHANGE } from '@/lib/eodhd';
 import { MEGA_STOCKS, UNIVERSE_PRESETS } from '@/lib/signals/presets';
 
 // Динамические списки вселенной для /signals:
@@ -37,6 +38,16 @@ async function readCache(preset: string): Promise<{ tickers: string[]; at: numbe
 
 async function fetchTickers(preset: string, country?: string): Promise<string[]> {
   if (country) {
+    // EODHD (если есть ключ): реальный состав биржи страны — широкое гео (Бразилия и др.).
+    const exch = COUNTRY_EXCHANGE[country.toUpperCase()];
+    if (hasEodhd() && exch) {
+      try {
+        const syms = (await eodhdConstituents(exch, TOP_N)).filter((s) => TICKER.test(s));
+        if (syms.length >= 5) return syms;
+      } catch {
+        /* EODHD недоступен — падаем на FMP screener */
+      }
+    }
     const data: any = await fmpScreener({ country, isEtf: false, isActivelyTrading: true, limit: 600 });
     const arr: any[] = Array.isArray(data) ? data : [];
     return arr
