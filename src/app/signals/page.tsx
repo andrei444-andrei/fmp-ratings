@@ -285,7 +285,24 @@ function Signals() {
     loadSaved();
     loadResults();
     loadDyn('mega'); // S&P 500 подгружаем сразу (частый выбор)
+    // Восстанавливаем ПОСЛЕДНИЙ прогон (чтобы перезаход во вкладку не терял карту).
+    // Явная кнопка «Сохранить» — для именованного долгого хранения в списке слева.
+    try {
+      const s = localStorage.getItem('signals:lastResult');
+      if (s) setResult(JSON.parse(s));
+    } catch {
+      /* ignore */
+    }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Автосохранение последнего результата в браузере (переживает перезагрузку/перезаход).
+  useEffect(() => {
+    try {
+      if (result) localStorage.setItem('signals:lastResult', JSON.stringify(result));
+    } catch {
+      /* квота переполнена — не критично */
+    }
+  }, [result]);
 
   async function saveCurrentResult() {
     if (!result || savingResult) return;

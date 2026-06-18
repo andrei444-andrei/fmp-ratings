@@ -1,4 +1,22 @@
+import { gzipSync, gunzipSync } from 'node:zlib';
 import { libsqlClient } from '@/db/client';
+
+// Снимок отчёта по большой вселенной (S&P 500 × параметры × столбцы с дрилл-дауном) — это
+// мегабайты JSON. Несжатый INSERT в Turso по HTTP может не пролезть → «сохранение пропадает».
+// Поэтому payload пакуем gzip+base64 (≈×5–10). Префикс 'gz:' — чтобы читать и старые несжатые строки.
+function packPayload(payload: unknown): string {
+  return 'gz:' + gzipSync(Buffer.from(JSON.stringify(payload), 'utf8')).toString('base64');
+}
+function unpackPayload(raw: string): any {
+  if (raw.startsWith('gz:')) {
+    try {
+      return JSON.parse(gunzipSync(Buffer.from(raw.slice(3), 'base64')).toString('utf8'));
+    } catch {
+      return null;
+    }
+  }
+  return safeParse(raw);
+}
 
 // СИГНАЛ как сохраняемая сущность: имя + определение (фактор, параметр, сторона, порог).
 // Self-provisioning (§1 конституции), created_at обязателен.
@@ -77,7 +95,7 @@ export async function getResult(id: number): Promise<{ id: number; title: string
   const r = await libsqlClient.execute({ sql: `SELECT id, title, mode, payload FROM signal_results WHERE id = ?`, args: [id] });
   const x = r.rows[0] as any;
   if (!x) return null;
-  return { id: Number(x.id), title: String(x.title), mode: String(x.mode), payload: safeParse(String(x.payload)) };
+  return { id: Number(x.id), title: String(x.title), mode: String(x.mode), payload: unpackPayload(String(x.payload)) };
 }
 
 export async function saveResult(title: string, mode: string, payload: unknown): Promise<number> {
@@ -85,7 +103,7 @@ export async function saveResult(title: string, mode: string, payload: unknown):
   const now = new Date().toISOString();
   const r = await libsqlClient.execute({
     sql: `INSERT INTO signal_results (title, mode, payload, created_at) VALUES (?, ?, ?, ?)`,
-    args: [title, mode, JSON.stringify(payload), now],
+    args: [title, mode, packPayload(payload), now],
   });
   return Number(r.lastInsertRowid ?? 0);
 }
