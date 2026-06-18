@@ -54,12 +54,46 @@ export function parseExchangeList(arr: unknown, exchange: string): string[] {
   return [...new Set(out)];
 }
 
-// Разбор ответа screener (ранжирование по капитализации).
-export function parseScreener(json: unknown, exchange: string): string[] {
+// Разбор ответа screener (ранжирование по капитализации). Берём символ КАК ОТДАЁТ строка
+// (с её собственной биржей), НЕ навешивая суффикс запрошенной биржи на ADR/вторичные листинги —
+// иначе US-ADR «PBR» превратился бы в фейковый «PBR.SA». Чистку по родной бирже делает вызывающий.
+export function parseScreener(json: unknown): string[] {
   const j: any = json;
   const data: any[] = Array.isArray(j?.data) ? j.data : Array.isArray(j) ? j : [];
-  const out = data.map((x) => normSym(x?.code ?? x?.Code, exchange)).filter(Boolean);
+  const out = data
+    .map((x) => {
+      const code = String(x?.code ?? x?.Code ?? '').toUpperCase().trim();
+      if (!code) return '';
+      if (code.includes('.')) return code;
+      const rowEx = String(x?.exchange ?? x?.Exchange ?? x?.exchange_short_name ?? '').toUpperCase().trim();
+      return rowEx ? `${code}.${rowEx}` : code;
+    })
+    .filter(Boolean);
   return [...new Set(out)];
+}
+
+// ISO-страна → РОДНЫЕ суффиксы символов её биржи (то, что реально приходит в тикерах провайдера).
+// Проверено по живым составам прода. Цель — отсечь ADR/вторичные листинги и дубли (напр. NSE+BSE),
+// которыми и FMP-`country=`, и EODHD-screener засоряют корзину «акций страны».
+export const COUNTRY_NATIVE_SUFFIX: Record<string, string[]> = {
+  US: ['US'], GB: ['L'], DE: ['DE'], PL: ['WA'], FR: ['PA'], KR: ['KS', 'KQ', 'KO'],
+  IN: ['NS'], BR: ['SA'], CA: ['TO'], AU: ['AX'], CH: ['SW'], TW: ['TW', 'TWO'],
+  MX: ['MX'], NL: ['AS'], JP: ['T'],
+};
+
+// Оставляет только бумаги РОДНОЙ биржи страны (по суффиксу .XX), сохраняя порядок (капитализацию)
+// и убирая дубли. Карты нет / после фильтра пусто → возвращаем исходный дедуплицированный список,
+// чтобы непредвиденный суффикс провайдера не обнулил рабочую вселенную (без регресса).
+export function keepNativeListings(symbols: string[], country: string): string[] {
+  const dedup = [...new Set((symbols || []).map((s) => String(s || '').toUpperCase().trim()).filter(Boolean))];
+  const suf = COUNTRY_NATIVE_SUFFIX[String(country || '').toUpperCase()];
+  if (!suf || !suf.length) return dedup;
+  const keep = new Set(suf.map((x) => x.toUpperCase()));
+  const native = dedup.filter((s) => {
+    const i = s.lastIndexOf('.');
+    return i > 0 && keep.has(s.slice(i + 1));
+  });
+  return native.length ? native : dedup;
 }
 
 /** Скорректированные дневные бары из EODHD. Пусто/исключение → вызывающий падает на кэш/FMP. */
@@ -82,7 +116,7 @@ export async function eodhdConstituents(exchange: string, topN: number): Promise
     const url = `${BASE}/screener?api_token=${key}&sort=market_capitalization.desc&filters=${filters}&limit=${topN}`;
     const r = await fetch(url);
     if (r.ok) {
-      const syms = parseScreener(await r.json(), exchange);
+      const syms = parseScreener(await r.json());
       if (syms.length >= 5) return syms.slice(0, topN);
     }
   } catch {
