@@ -1221,6 +1221,146 @@ function regionLabel(f: any, region: any): string {
   return `${region.side === 'high' ? '≥' : '≤'} ${region.threshold}${unit}`;
 }
 
+// Кросс-страновой лидерборд: ранжируем группы (страны) по силе эффекта в выбранном столбце,
+// с ОБЩЕЙ FDR-поправкой по всему скану (страны × параметры × столбцы) — где эффект реально значим.
+function LeaderboardView({ data, groups, winFrom, winTo }: { data: any; groups: any[]; winFrom: number; winTo: number }) {
+  const mainH: number = data.horizon;
+  const alpha: number = data.fdrAlpha || 0.1;
+  const cols: string[] = data.cols || [];
+  const params: number[] = data.params || [];
+  const f = FACTOR_BY_ID[data.factor];
+  const [selCol, setSelCol] = useState<string>(cols[0] || '');
+  const [sortBy, setSortBy] = useState<'t' | 'mean'>('t');
+  useEffect(() => {
+    setSelCol(cols[0] || '');
+  }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Метрики ячейки под выбранное окно лет (из по-годовой агрегации), иначе сырые значения.
+  const statOf = (c: any) => {
+    if (!c) return null;
+    if (Array.isArray(c.years) && c.years.length) return aggCell(c.years, winFrom, winTo, mainH);
+    return c.mean == null ? null : { mean: c.mean as number, t: (c.t ?? 0) as number, hit: (c.hit ?? 0) as number, n: (c.n ?? 0) as number };
+  };
+
+  const { rows, sigCount } = useMemo(() => {
+    // Общая FDR по ВСЕМ ячейкам всех групп — честная поправка на множественную проверку.
+    const allItems: { key: string; p: number }[] = [];
+    groups.forEach((g, gi) =>
+      (g.grid || []).forEach((c: any) => {
+        const s = statOf(c);
+        if (s) allItems.push({ key: `${gi}:${c.param}:${c.col}`, p: pval(s.t) });
+      }),
+    );
+    const globalSig = bhSig(allItems, alpha);
+    const rows = groups.map((g, gi) => {
+      let best: any = null;
+      for (const p of params) {
+        const c = (g.grid || []).find((x: any) => x.param === p && x.col === selCol);
+        const s = statOf(c);
+        if (!s) continue;
+        const metric = sortBy === 'mean' ? s.mean : s.t;
+        if (best == null || metric > best.metric) best = { metric, param: p, ...s, sig: globalSig.has(`${gi}:${p}:${selCol}`) };
+      }
+      return { label: g.label || `Группа ${gi + 1}`, benchmark: g.benchmark, best };
+    });
+    rows.sort((a, b) => (b.best ? (sortBy === 'mean' ? b.best.mean : b.best.t) : -Infinity) - (a.best ? (sortBy === 'mean' ? a.best.mean : a.best.t) : -Infinity));
+    return { rows, sigCount: rows.filter((r) => r.best?.sig).length };
+  }, [groups, selCol, sortBy, winFrom, winTo, alpha, mainH, params]);
+
+  const top = rows.find((r) => r.best);
+  const pl = (f?.paramLabel || 'Параметр').toLowerCase();
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Лидерборд: где эффект сильнее</CardTitle>
+        <CardDescription>
+          {f?.label} · столбец «{selCol}» · гор. {data.horizon}д · лучший {pl} на страну; значимость — после ОБЩЕЙ FDR-поправки по всему скану.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="text-[12px] text-ink-3">
+            Столбец:{' '}
+            <select
+              value={selCol}
+              onChange={(e) => setSelCol(e.target.value)}
+              data-testid="leaderboard-col"
+              className="rounded-fk-sm border border-line-strong bg-surface-elev px-2 py-1 text-[12px] text-ink"
+            >
+              {cols.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="flex gap-1 rounded-fk bg-surface-2 p-1">
+            {([['t', 'по t-стат'], ['mean', 'по доходности']] as const).map(([id, lbl]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setSortBy(id)}
+                className={`rounded-fk-sm px-2 py-1 text-[12px] font-semibold transition-colors ${sortBy === id ? 'bg-surface-elev text-ink shadow-fk-sm' : 'text-ink-3'}`}
+              >
+                {lbl}
+              </button>
+            ))}
+          </div>
+        </div>
+        {top?.best ? (
+          <p className="text-[12px] text-ink-2">
+            Сильнее всего: <b>{top.label}</b> — {pl} {top.best.param}, {fpct(top.best.mean)} ({top.best.n} набл., t={fnum(top.best.t)}). Значимо после общей FDR: <b>{sigCount}</b> из {rows.length}.
+          </p>
+        ) : (
+          <p className="text-[12px] text-ink-3">Для выбранного столбца нет данных (мало бумаг/истории).</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-[12px]" data-testid="leaderboard">
+            <thead>
+              <tr className="text-ink-3">
+                <th className="px-2 py-1 text-left font-medium">Страна</th>
+                <th className="px-2 py-1 text-right font-medium">{f?.paramLabel || 'Параметр'}</th>
+                <th className="px-2 py-1 text-right font-medium">Ср. изб.</th>
+                <th className="px-2 py-1 text-right font-medium">t-стат</th>
+                <th className="px-2 py-1 text-right font-medium">Доля+</th>
+                <th className="px-2 py-1 text-right font-medium">n</th>
+                <th className="px-2 py-1 text-center font-medium">FDR</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i} data-testid="leaderboard-row" className="border-t border-line">
+                  <td className="px-2 py-1 text-left">
+                    {r.label}
+                    {r.benchmark ? <span className="text-ink-3"> · {r.benchmark}</span> : ''}
+                  </td>
+                  {r.best ? (
+                    <>
+                      <td className="px-2 py-1 text-right tabular-nums">{r.best.param}</td>
+                      <td className={`px-2 py-1 text-right tabular-nums ${r.best.mean >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{fpct(r.best.mean)}</td>
+                      <td className="px-2 py-1 text-right tabular-nums">{fnum(r.best.t)}</td>
+                      <td className="px-2 py-1 text-right tabular-nums">{fnum(r.best.hit, 1)}%</td>
+                      <td className="px-2 py-1 text-right tabular-nums">{r.best.n}</td>
+                      <td className="px-2 py-1 text-center">{r.best.sig ? <span className="text-up-strong">✓</span> : '—'}</td>
+                    </>
+                  ) : (
+                    <td className="px-2 py-1 text-right text-ink-3" colSpan={6}>
+                      нет данных
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-[11px] text-warn-strong">
+          ⚠️ Survivorship bias: универсум = <b>текущий</b> состав (FMP). Для «покупки лузеров» это завышает реверсию — обанкротившиеся/делистнутые лузеры выпали из выборки. Считай оценку верхней границей, особенно на мелких рынках.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 function FactorResult({ data, onSave }: { data: any; onSave: (d: SignalDef, name?: string) => void }) {
   const f = FACTOR_BY_ID[data.factor];
   const isRange = data.bins === 'range';
@@ -1244,8 +1384,9 @@ function FactorResult({ data, onSave }: { data: any; onSave: (d: SignalDef, name
         {data.skip ? ` · gap ${data.skip}д` : ''}
       </Badge>
       {hasYears && <YearRange min={minY} max={maxY} from={winFrom} to={winTo} setFrom={setWinFrom} setTo={setWinTo} />}
+      {multi && <LeaderboardView data={data} groups={groups} winFrom={winFrom} winTo={winTo} />}
       {multi && (
-        <p className="text-[12px] text-ink-3">Разные классы активов — отдельными таблицами: сравните, отличается ли поведение фактора.</p>
+        <p className="text-[12px] text-ink-3">Ниже — полная карта по каждой стране/группе отдельно (клик по ячейке раскрывает детали).</p>
       )}
       {groups.map((g: any, i: number) => (
         <FactorGroup key={i} data={data} group={g} f={f} isRange={isRange} multi={multi} onSave={onSave} winFrom={winFrom} winTo={winTo} fullWindow={full} />

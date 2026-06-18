@@ -35,6 +35,22 @@ test.describe('Signals /signals', () => {
     await expect(out.getByText('Сырьё (commodities)', { exact: true })).toBeVisible();
   });
 
+  test('кросс-страновой лидерборд: ранжирует группы и реагирует на выбор столбца/сортировки', async ({ page }) => {
+    await page.goto('/signals');
+    await page.getByRole('button', { name: 'Металлы', exact: true }).click();
+    await page.getByRole('button', { name: 'Сырьё (commodities)', exact: true }).click();
+    await page.getByTestId('run-study').click();
+    await expect(page.getByTestId('heat-cell').first()).toBeVisible({ timeout: 150000 });
+    // Лидерборд: таблица с двумя строками (две группы) + переключатели столбца и сортировки.
+    const lb = page.getByTestId('leaderboard');
+    await expect(lb).toBeVisible();
+    await expect(page.getByTestId('leaderboard-row')).toHaveCount(2);
+    await page.getByTestId('leaderboard-col').selectOption({ index: 1 });
+    await expect(page.getByTestId('leaderboard-row')).toHaveCount(2);
+    await page.getByRole('button', { name: 'по доходности' }).click();
+    await expect(page.getByTestId('leaderboard-row')).toHaveCount(2);
+  });
+
   test('режим Фактор: карта строится, клик по ячейке раскрывает детали, сигнал сохраняется', async ({ page }) => {
     await setup(page);
     // Окно дат (годы от-до) и пропуск последних дней (gap) в моментуме/превышении.
