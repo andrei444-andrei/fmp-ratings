@@ -44,7 +44,7 @@ export type BacktestConfig = {
   start?: string;            // YYYY-MM-DD (опц.)
   end?: string;              // YYYY-MM-DD (опц.)
   initialCapital: number;    // стартовый капитал (в валюте счёта)
-  maxLeverage: number;       // макс. валовое плечо (sum |вес| <= maxLeverage)
+  maxLeverage: number;       // макс. валовое плечо (sum |вес| <= maxLeverage); 0 = без лимита
   allowShort: boolean;       // разрешены ли шорты (отрицательные позиции)
   marginRateAnnual: number;  // годовая ставка по дебету маржи (если кэш < 0), доля (0.06 = 6%)
   defaultMarket: string;     // рынок по умолчанию для тикеров без суффикса
@@ -103,7 +103,7 @@ export function defaultBacktestConfig(): BacktestConfig {
     universe: UNIVERSE_PRESETS[0].tickers.slice(),
     benchmark: 'SPY',
     initialCapital: 100000,
-    maxLeverage: 1.5,
+    maxLeverage: 0,
     allowShort: true,
     marginRateAnnual: 0.06,
     defaultMarket: 'US',
@@ -168,7 +168,7 @@ export function normalizeBacktestConfig(input: unknown): BacktestConfig {
     start: typeof c.start === 'string' && /^\d{4}-\d{2}-\d{2}/.test(c.start) ? c.start.slice(0, 10) : undefined,
     end: typeof c.end === 'string' && /^\d{4}-\d{2}-\d{2}/.test(c.end) ? c.end.slice(0, 10) : undefined,
     initialCapital: num(c.initialCapital, d.initialCapital, 100, 1e12),
-    maxLeverage: num(c.maxLeverage, d.maxLeverage, 0.1, 10),
+    maxLeverage: num(c.maxLeverage, d.maxLeverage, 0, 10),
     allowShort: typeof c.allowShort === 'boolean' ? c.allowShort : d.allowShort,
     marginRateAnnual: num(c.marginRateAnnual, d.marginRateAnnual, 0, 1),
     defaultMarket,

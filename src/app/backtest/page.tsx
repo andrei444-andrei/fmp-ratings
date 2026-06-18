@@ -11,6 +11,7 @@ import {
   CardHeader,
   CardTitle,
   Field,
+  FieldHint,
   Input,
   Label,
   Modal,
@@ -36,6 +37,92 @@ function renderMd(md: string): string {
   } catch {
     return esc(md);
   }
+}
+
+type EquityPayload = {
+  strat: number[];
+  bench: (number | null)[] | null;
+  init: number;
+  d0: string;
+  d1: string;
+  done: boolean;
+};
+
+function fmtPct(x: number): string {
+  return (x >= 0 ? '+' : '') + x.toFixed(1) + '%';
+}
+
+// Рендер кривой капитала в SVG-строку. Используется и для живого слота (по ходу прогона),
+// и для встраивания в сохранённый HTML результата (статичный снимок).
+function equitySvg(p: EquityPayload | null): string {
+  if (!p || !Array.isArray(p.strat) || p.strat.length < 2) {
+    return '<div class="rblk"><div class="rcap">Кривая капитала</div><div class="rt-note">сбор данных…</div></div>';
+  }
+  const strat = p.strat;
+  const bench = Array.isArray(p.bench) ? p.bench : null;
+  const W = 1000;
+  const H = 240;
+  const padL = 8;
+  const padR = 8;
+  const padT = 12;
+  const padB = 8;
+  const n = strat.length;
+  const init = Number.isFinite(p.init) ? p.init : strat[0];
+  const vals: number[] = [init];
+  for (const v of strat) if (Number.isFinite(v)) vals.push(v);
+  if (bench) for (const v of bench) if (v != null && Number.isFinite(v)) vals.push(v);
+  let lo = Math.min(...vals);
+  let hi = Math.max(...vals);
+  if (lo === hi) {
+    lo -= 1;
+    hi += 1;
+  }
+  const x = (i: number) => padL + (i / (n - 1)) * (W - padL - padR);
+  const y = (v: number) => padT + (1 - (v - lo) / (hi - lo)) * (H - padT - padB);
+  const poly = (arr: (number | null)[]) => {
+    const pts: string[] = [];
+    for (let i = 0; i < arr.length; i++) {
+      const v = arr[i];
+      if (v == null || !Number.isFinite(v)) continue;
+      pts.push(x(i).toFixed(1) + ',' + y(v).toFixed(1));
+    }
+    return pts.join(' ');
+  };
+  const baseY = y(init).toFixed(1);
+  const last = strat[n - 1];
+  const ret = init > 0 ? (last / init - 1) * 100 : 0;
+  let bRet: number | null = null;
+  if (bench) {
+    for (let i = bench.length - 1; i >= 0; i--) {
+      const v = bench[i];
+      if (v != null && Number.isFinite(v)) {
+        bRet = init > 0 ? (v / init - 1) * 100 : 0;
+        break;
+      }
+    }
+  }
+  const svg =
+    '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" ' +
+    'style="width:100%;height:240px;display:block">' +
+    '<line x1="' + padL + '" y1="' + baseY + '" x2="' + (W - padR) + '" y2="' + baseY +
+    '" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>' +
+    (bench
+      ? '<polyline fill="none" stroke="#94a3b8" stroke-width="1.5" vector-effect="non-scaling-stroke" points="' + poly(bench) + '"/>'
+      : '') +
+    '<polyline fill="none" stroke="#6d5bf0" stroke-width="2" vector-effect="non-scaling-stroke" points="' + poly(strat) + '"/>' +
+    '</svg>';
+  return (
+    '<div class="rblk">' +
+    '<div class="rcap">Кривая капитала' + (p.done ? '' : ' · идёт расчёт…') + '</div>' +
+    '<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;margin-bottom:6px">' +
+    '<span style="color:#6d5bf0">● Стратегия ' + fmtPct(ret) + '</span>' +
+    (bRet != null ? '<span style="color:#94a3b8">● Бенчмарк ' + fmtPct(bRet) + '</span>' : '') +
+    '</div>' +
+    svg +
+    '<div style="display:flex;justify-content:space-between;font-size:11px;color:#94a3b8;margin-top:4px">' +
+    '<span>' + esc(p.d0) + '</span><span>' + esc(p.d1) + '</span></div>' +
+    '</div>'
+  );
 }
 
 function TrashIcon() {
@@ -69,10 +156,15 @@ function Backtest() {
   const [custom, setCustom] = useState('');
   const [benchmark, setBenchmark] = useState('SPY');
   const [initialCapital, setInitialCapital] = useState(100000);
-  const [maxLeverage, setMaxLeverage] = useState(1.5);
+  const [maxLeverage, setMaxLeverage] = useState(0); // 0 = без лимита плеча
   const [allowShort, setAllowShort] = useState(true);
-  const [start, setStart] = useState('');
-  const [end, setEnd] = useState('');
+  const [start, setStart] = useState('2010-01-01');
+  const [end, setEnd] = useState(() => {
+    // По умолчанию — сегодня минус 6 мес (хвост-холдаут).
+    const d = new Date();
+    d.setMonth(d.getMonth() - 6);
+    return d.toISOString().slice(0, 10);
+  });
 
   // ── Стратегия ──
   const [strategy, setStrategy] = useState(DEFAULT_STRATEGY);
@@ -86,6 +178,8 @@ function Backtest() {
   const [log, setLog] = useState('');
   const [isFresh, setIsFresh] = useState(false);
   const [viewDesc, setViewDesc] = useState<string | null>(null);
+  const [liveChart, setLiveChart] = useState<EquityPayload | null>(null);
+  const [openedRunId, setOpenedRunId] = useState<number | null>(null);
   const lastConfigRef = useRef<Record<string, unknown> | null>(null);
 
   // ── Сохранённые прогоны ──
@@ -137,7 +231,8 @@ function Backtest() {
 
   function buildResultHtml(): string {
     const logHtml = log ? `<pre class="rlog">${esc(log)}</pre>` : '';
-    return logHtml + blocks.join('');
+    const chartHtml = liveChart ? equitySvg(liveChart) : '';
+    return chartHtml + logHtml + blocks.join('');
   }
 
   function buildConfig() {
@@ -195,6 +290,8 @@ function Backtest() {
     setBlocks([]);
     setLog('');
     setViewDesc(null);
+    setLiveChart(null);
+    setOpenedRunId(null);
     setStatus('Отправка запроса…');
     try {
       const res = await fetch('/api/backtest/execute', {
@@ -222,8 +319,19 @@ function Backtest() {
             continue;
           }
           if (ev.type === 'status') setStatus(ev.text);
-          else if (ev.type === 'block') setBlocks((b) => [...b, ev.html]);
-          else if (ev.type === 'log') setLog((l) => l + ev.text);
+          else if (ev.type === 'block') {
+            // Снимки кривой капитала перехватываем — рисуем в живом слоте, не копим блоками.
+            const m = typeof ev.html === 'string' && ev.html.match(/data-bt-equity='([A-Za-z0-9+/=]+)'/);
+            if (m) {
+              try {
+                setLiveChart(JSON.parse(atob(m[1])));
+              } catch {
+                /* битый снимок — пропускаем */
+              }
+            } else {
+              setBlocks((b) => [...b, ev.html]);
+            }
+          } else if (ev.type === 'log') setLog((l) => l + ev.text);
           else if (ev.type === 'done') setStatus('Готово');
         }
       }
@@ -303,6 +411,8 @@ function Backtest() {
       setRunning(false);
       setIsFresh(false);
       setLog('');
+      setLiveChart(null);
+      setOpenedRunId(id);
       setBlocks(run.result_html ? [run.result_html] : []);
       if (typeof run.strategy === 'string' && run.strategy.trim()) setStrategy(run.strategy);
       setViewDesc(run.description || null);
@@ -323,8 +433,8 @@ function Backtest() {
     }
   }
 
-  const hasOutput = blocks.length > 0 || log.length > 0 || running;
-  const canSaveResult = isFresh && !running && (blocks.length > 0 || log.length > 0);
+  const hasOutput = blocks.length > 0 || log.length > 0 || !!liveChart || running;
+  const canSaveResult = isFresh && !running && (blocks.length > 0 || log.length > 0 || !!liveChart);
 
   return (
     <>
@@ -412,11 +522,13 @@ function Backtest() {
                     id="leverage"
                     type="number"
                     step={0.1}
-                    value={maxLeverage}
-                    min={0.1}
+                    value={maxLeverage || ''}
+                    min={0}
                     max={10}
-                    onChange={(e) => setMaxLeverage(Number(e.target.value) || 1)}
+                    placeholder="без лимита"
+                    onChange={(e) => setMaxLeverage(Math.max(0, Number(e.target.value) || 0))}
                   />
+                  <FieldHint>Пусто или 0 — без лимита плеча.</FieldHint>
                 </Field>
                 <Field>
                   <Label htmlFor="short">Шорты разрешены</Label>
@@ -543,6 +655,11 @@ function Backtest() {
                     Сохранить результат
                   </Button>
                 )}
+                {!isFresh && openedRunId != null && !running && (
+                  <Button size="sm" variant="secondary" onClick={() => openEditRun(openedRunId)}>
+                    Изменить описание
+                  </Button>
+                )}
               </div>
             </CardHeader>
             <div ref={outRef} className="flex-1 overflow-auto px-5 pb-5 sm:px-6">
@@ -562,11 +679,12 @@ function Backtest() {
               ) : (
                 <div className="research-output" data-testid="backtest-output">
                   {viewDesc && <div className="rdesc" dangerouslySetInnerHTML={{ __html: renderMd(viewDesc) }} />}
+                  {liveChart && <div data-testid="equity-chart" dangerouslySetInnerHTML={{ __html: equitySvg(liveChart) }} />}
                   {log && <pre className="rlog">{log}</pre>}
                   {blocks.map((html, i) => (
                     <div key={i} dangerouslySetInnerHTML={{ __html: html }} />
                   ))}
-                  {running && blocks.length === 0 && !log && <Skeleton className="h-24 w-full" />}
+                  {running && blocks.length === 0 && !log && !liveChart && <Skeleton className="h-24 w-full" />}
                 </div>
               )}
             </div>
