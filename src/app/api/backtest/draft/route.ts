@@ -10,6 +10,16 @@ function stripFences(code: string): string {
   return (m ? m[1] : code).trim();
 }
 
+// Достаём тикеры, жёстко прописанные в коде строковыми литералами ("QQQ", "CDR.WA"),
+// чтобы UI мог сам добавить их во вселенную — иначе стратегия про QQQ ничего не торгует.
+function extractTickers(code: string): string[] {
+  const out = new Set<string>();
+  const re = /["']([A-Z][A-Z0-9.]{0,9})["']/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(code))) out.add(m[1]);
+  return [...out].slice(0, 20);
+}
+
 function pickCodeModel(body: any): string {
   const m = (body?.model ?? '').toString().trim();
   if (/^claude-[a-z0-9.\-]{1,50}$/i.test(m)) return m;
@@ -65,7 +75,7 @@ export async function POST(req: Request) {
     }
     const code = stripFences(content);
     if (!code) return Response.json({ error: 'Пустой ответ модели.' }, { status: 502 });
-    return Response.json({ code });
+    return Response.json({ code, tickers: extractTickers(code) });
   } catch (e: any) {
     const msg = e?.message || 'ошибка генерации';
     logAppError({ route: '/api/backtest/draft', message: msg, stack: e?.stack, user_agent: ua, meta: { model, prompt } }).catch(() => {});
