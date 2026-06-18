@@ -263,7 +263,7 @@ async def main():
         params = [int(p) for p in CFG['params']]
         thresholds = sorted([float(t) for t in CFG['thresholds']])
         alpha = float(CFG.get('fdrAlpha', 0.1))
-        # Описываем столбцы: накопительно (пороги) ИЛИ диапазоны (корзины между порогами).
+        # Описываем столбцы: накопительно (пороги) ИЛИ диапазоны (корзины) ИЛИ перцентили (топ/дно %).
         if bins == 'range':
             def _lab(x):
                 return '%g' % x
@@ -277,6 +277,17 @@ async def main():
             last = thresholds[-1]
             cols.append({'label': '≥' + _lab(last), 'lo': last, 'hi': None,
                          'region': {'side': 'high', 'threshold': last}})
+        elif bins == 'quantile':
+            # Кросс-секционные перцентили: на КАЖДУЮ дату берём X% худших / X% лучших по фактору.
+            # Накопительно (дно 2% ⊂ дно 5% ⊂ …); оба хвоста рядом для сравнения худшие↔лучшие.
+            qs = sorted(set(float(t) for t in thresholds))
+            cols = []
+            for q in qs:
+                cols.append({'label': 'Худшие %g%%' % q, 'qt': {'tail': 'low', 'q': q},
+                             'region': {'side': 'pct_low', 'q': q}})
+            for q in reversed(qs):
+                cols.append({'label': 'Лучшие %g%%' % q, 'qt': {'tail': 'high', 'q': q},
+                             'region': {'side': 'pct_high', 'q': q}})
         else:
             cols = [{'label': c, 'region': {'side': side, 'threshold': c}} for c in thresholds]
         col_labels = [c['label'] for c in cols]
@@ -303,8 +314,17 @@ async def main():
                 fv = build_fval(pxg, gbench, fid, p, H, skip)
                 mg = tgt_g.merge(fv, on=['symbol', 'date'], how='inner')
                 fcol = mg['fval']
+                if bins == 'quantile':
+                    # Ранг по фактору ВНУТРИ каждой даты (кросс-секция): k = max(1, round(N·q%)).
+                    gd = mg.groupby('date')['fval']
+                    n_by_date = gd.transform('size')
+                    rank_low = gd.rank(method='first', ascending=True)    # 1 = худший за дату
+                    rank_high = gd.rank(method='first', ascending=False)  # 1 = лучший за дату
                 for col in cols:
-                    if bins == 'range':
+                    if bins == 'quantile':
+                        kq = np.maximum(1.0, np.round(n_by_date * col['qt']['q'] / 100.0))
+                        sel = mg[(rank_low if col['qt']['tail'] == 'low' else rank_high) <= kq]
+                    elif bins == 'range':
                         if col['lo'] is None:
                             sel = mg[fcol < col['hi']]
                         elif col['hi'] is None:

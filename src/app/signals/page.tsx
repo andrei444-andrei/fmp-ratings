@@ -46,7 +46,7 @@ function resultTitle(r: any): string {
   const ts = `${pad(d.getDate())}.${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   if (r?.mode === 'factor') {
     const f = FACTOR_BY_ID[r.factor];
-    return `Фактор · ${f?.label || r.factor} · ${r.bins === 'range' ? 'диапазоны' : 'пороги'} · ${ts}`;
+    return `Фактор · ${f?.label || r.factor} · ${r.bins === 'range' ? 'диапазоны' : r.bins === 'quantile' ? 'топ/дно %' : 'пороги'} · ${ts}`;
   }
   if (r?.mode === 'signal') return `Сигнал · ${signalLabel(r.signal)} · ${ts}`;
   if (r?.mode === 'combine') return `Комбинация · ${r.signals?.length || 0} сигн. · ${ts}`;
@@ -212,7 +212,7 @@ function Signals() {
   const [factorId, setFactorId] = useState<FactorId>('xbench');
   const factorDef = FACTOR_BY_ID[factorId];
   const [fSide, setFSide] = useState<Side>(factorDef.defaultSide);
-  const [fBins, setFBins] = useState<'cumulative' | 'range'>('cumulative');
+  const [fBins, setFBins] = useState<'cumulative' | 'range' | 'quantile'>('cumulative');
   const [fParams, setFParams] = useState<number[]>(factorDef.defaultParams);
   const [fThresholds, setFThresholds] = useState<string>(factorDef.defaultThresholds.join(', '));
   const [fSkip, setFSkip] = useState(0);
@@ -791,7 +791,7 @@ function FactorForm(p: any) {
       <Field>
         <Label>Биннинг столбцов</Label>
         <div className="flex gap-1 rounded-fk bg-surface-2 p-1">
-          {([['cumulative', 'Накопительно (≥/≤)'], ['range', 'Диапазоны (от–до)']] as const).map(([id, label]) => (
+          {([['cumulative', 'Накопительно (≥/≤)'], ['range', 'Диапазоны (от–до)'], ['quantile', 'Топ/дно %']] as const).map(([id, label]) => (
             <button
               key={id}
               type="button"
@@ -832,8 +832,21 @@ function FactorForm(p: any) {
         </div>
       </Field>
       <Field>
-        <Label htmlFor="thr">Пороги — ось столбцов ({f.unit || '—'})</Label>
-        <Input id="thr" value={p.thresholds} onChange={(e: any) => p.setThresholds(e.target.value)} placeholder="через запятую" />
+        <Label htmlFor="thr">
+          {p.bins === 'quantile' ? 'Размер хвоста, % — ось столбцов' : `Пороги — ось столбцов (${f.unit || '—'})`}
+        </Label>
+        <Input
+          id="thr"
+          value={p.thresholds}
+          onChange={(e: any) => p.setThresholds(e.target.value)}
+          placeholder={p.bins === 'quantile' ? '2, 5, 10, 25' : 'через запятую'}
+        />
+        {p.bins === 'quantile' && (
+          <p className="text-[11px] text-ink-3">
+            На каждую дату берём X% лучших и X% худших по фактору внутри вселенной (кросс-секция, накопительно).
+            Имеет смысл на больших вселенных (S&P 500, страновые корзины), не на 10 ETF.
+          </p>
+        )}
       </Field>
       {supportsSkip(p.factorId) && (
         <Field>
@@ -1110,6 +1123,8 @@ function MetaBar({ meta }: { meta: any }) {
 function regionLabel(f: any, region: any): string {
   const unit = f ? f.unit : '';
   if (!region) return '';
+  if (region.side === 'pct_low') return `худшие ${region.q}% по фактору`;
+  if (region.side === 'pct_high') return `лучшие ${region.q}% по фактору`;
   if (region.side === 'band') return `∈ [${region.lo}; ${region.hi}]${unit}`;
   return `${region.side === 'high' ? '≥' : '≤'} ${region.threshold}${unit}`;
 }
@@ -1133,7 +1148,7 @@ function FactorResult({ data, onSave }: { data: any; onSave: (d: SignalDef, name
     <div className="space-y-5">
       <MetaBar meta={data.meta} />
       <Badge variant="neutral">
-        {f.label} · {isRange ? 'диапазоны' : data.side === 'high' ? '≥ порог' : '≤ порог'} · гор. {data.horizon}д
+        {f.label} · {data.bins === 'quantile' ? 'топ/дно %' : isRange ? 'диапазоны' : data.side === 'high' ? '≥ порог' : '≤ порог'} · гор. {data.horizon}д
         {data.skip ? ` · gap ${data.skip}д` : ''}
       </Badge>
       {hasYears && <YearRange min={minY} max={maxY} from={winFrom} to={winTo} setFrom={setWinFrom} setTo={setWinTo} />}
@@ -1151,6 +1166,7 @@ function FactorGroup({ data, group, f, isRange, multi, onSave, winFrom, winTo, f
   const [sel, setSel] = useState<HeatCell | null>(null);
   const mainH: number = data.horizon;
   const alpha: number = data.fdrAlpha || 0.1;
+  const isQ: boolean = data.bins === 'quantile';
   const grid: any[] = group.grid || [];
   const useWin = grid.some((g: any) => Array.isArray(g.years));
 
@@ -1201,7 +1217,7 @@ function FactorGroup({ data, group, f, isRange, multi, onSave, winFrom, winTo, f
         rows={data.params}
         cols={data.cols}
         rowLabel="Параметр"
-        colLabel={isRange ? 'Диапазон' : 'Порог'}
+        colLabel={isQ ? 'Хвост' : isRange ? 'Диапазон' : 'Порог'}
         selected={sel ? { row: sel.row, col: sel.col } : null}
         onSelect={setSel}
         fmt={(v) => (v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2))}
@@ -1209,6 +1225,7 @@ function FactorGroup({ data, group, f, isRange, multi, onSave, winFrom, winTo, f
       {!sel && (
         <p className="text-[11px] text-ink-3">
           {isRange ? 'Диапазоны не пересекаются — видно вклад каждой зоны отдельно. ' : ''}
+          {isQ ? 'Хвосты кросс-секционные (на каждую дату) и накопительные: «дно 5%» включает «дно 2%». Сравните худшие↔лучшие. ' : ''}
           Точка в углу ячейки = значимо (FDR). Клик по ячейке — детали.
         </p>
       )}
@@ -1235,9 +1252,11 @@ function FactorGroup({ data, group, f, isRange, multi, onSave, winFrom, winTo, f
             {decayPoints.length > 0 && <DecayBlock points={decayPoints} mainH={mainH} />}
             <YearlyBars yearly={head?.yearly ?? cell.yearly} />
             <TickerTable tickers={cell.tickers} kw={cell.kw} />
-            <Button size="sm" variant="secondary" onClick={() => onSave({ factor: data.factor, param: cell.param, ...cell.region, skip: data.skip || 0 })}>
-              Сохранить как сигнал
-            </Button>
+            {!isQ && (
+              <Button size="sm" variant="secondary" onClick={() => onSave({ factor: data.factor, param: cell.param, ...cell.region, skip: data.skip || 0 })}>
+                Сохранить как сигнал
+              </Button>
+            )}
           </CardContent>
         </Card>
       )}

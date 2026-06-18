@@ -103,6 +103,22 @@ test.describe('Signals /signals', () => {
     await expect(page.locator('[data-testid="signals-output"]').getByText(/волатильность/i).first()).toBeVisible();
   });
 
+  test('режим Фактор: перцентили (топ/дно %) строят хвосты лучшие/худшие', async ({ page }) => {
+    await page.goto('/signals');
+    await page.getByPlaceholder('SMH, GLD, TLT').fill('AAA, BBB, CCC, DDD, EEE, FFF, GGG, HHH, III, JJJ, KKK, LLL');
+    await page.getByRole('button', { name: 'Топ/дно %' }).click();
+    await page.locator('#thr').fill('5, 25');
+    await page.getByTestId('run-study').click();
+    await expect(page.getByTestId('heat-cell').first()).toBeVisible({ timeout: 150000 });
+    const out = page.locator('[data-testid="signals-output"]');
+    await expect(out.getByText('Худшие 5%', { exact: true })).toBeVisible();
+    await expect(out.getByText('Лучшие 5%', { exact: true })).toBeVisible();
+    // Клик по ячейке хвоста — детали есть, кнопки «сохранить как сигнал» нет (это не пороговый сигнал).
+    await page.getByTestId('heat-cell').first().click();
+    await expect(out.getByText(/худшие .*% по фактору|лучшие .*% по фактору/).first()).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Сохранить как сигнал' })).toHaveCount(0);
+  });
+
   test('режим Фактор: диапазоны (от–до) строят непересекающиеся корзины', async ({ page }) => {
     await setup(page);
     await page.getByRole('button', { name: 'Диапазоны (от–до)' }).click();
