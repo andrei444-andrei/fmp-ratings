@@ -264,7 +264,23 @@ function Backtest() {
       if (!r.ok) throw new Error(d?.error || 'Не удалось сгенерировать');
       if (d?.code) {
         setStrategy(d.code);
-        toast({ variant: 'success', title: 'Черновик готов', description: 'Проверьте код перед запуском.' });
+        // Тикеры, прописанные в коде, добавляем во вселенную — иначе стратегия их не торгует
+        // (движок торгует только то, что в ctx.symbols = вселенная из конфига).
+        const codeTickers: string[] = Array.isArray(d?.tickers) ? d.tickers : [];
+        const bm = benchmark.toUpperCase().trim();
+        const have = new Set(
+          custom.split(/[\s,;]+/).map((s) => s.toUpperCase().trim()).filter(Boolean),
+        );
+        const add = codeTickers.filter((t) => {
+          const u = String(t).toUpperCase();
+          return u !== bm && SYMBOL_RE.test(u) && !have.has(u);
+        });
+        if (add.length) {
+          setCustom((prev) => (prev.trim() ? prev.trim() + ', ' : '') + add.join(', '));
+          toast({ variant: 'success', title: 'Черновик готов', description: 'Во вселенную добавлены: ' + add.join(', ') + '. Проверьте код перед запуском.' });
+        } else {
+          toast({ variant: 'success', title: 'Черновик готов', description: 'Проверьте код перед запуском.' });
+        }
       }
     } catch (e: any) {
       toast({ variant: 'error', title: 'Ошибка AI-черновика', description: e?.message });
