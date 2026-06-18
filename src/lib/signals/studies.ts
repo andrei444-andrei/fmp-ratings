@@ -82,6 +82,34 @@ def _bh(pairs, alpha):
         if p <= alpha * i / m: thr = i
     return set(k for i, (k, p) in enumerate(items, start=1) if i <= thr)
 
+def clean_prices(px):
+    # Битые бары FMP порождают невозможные доходности (+600% и т.п.). Чистим валюто-независимо:
+    #  1) неположительные цены (0/отрицательные) → NaN;
+    #  2) однобарные «иглы» — бар, скакнувший к ОБОИМ соседям в ≥SPIKE раз в одну сторону и тут же
+    #     откатившийся (битый принт / нескорректированный сплит-возврат). Устойчивый скачок (реальное
+    #     событие) не трогаем — он не откатывается на следующем баре.
+    nonpos = int(np.asarray((px <= 0) & px.notna()).sum())
+    px = px.where(px > 0)
+    SPIKE = 2.5
+    prev = px.shift(1); nxt = px.shift(-1)
+    up = (px > prev * SPIKE) & (px > nxt * SPIKE)
+    dn = ((px * SPIKE) < prev) & ((px * SPIKE) < nxt)
+    bad = up | dn
+    n_bad = int(np.asarray(bad).sum()) + nonpos
+    return px.mask(bad), n_bad
+
+def _winsorize_targets(res, horizons, q=0.005):
+    # Гасим хвосты форвардных таргетов по перцентилям: единичные мусорные наблюдения не должны
+    # раздувать среднее ячейки (робастная оценка), при этом распределение в целом сохраняется.
+    for h in horizons:
+        col = 't_' + str(h)
+        if col not in res.columns: continue
+        s = res[col]
+        lo = s.quantile(q); hi = s.quantile(1.0 - q)
+        if lo == lo and hi == hi:
+            res[col] = s.clip(lo, hi)
+    return res
+
 def factor_series(c, bc, fid, param, has_b, skip=0):
     p = int(param); sk = int(skip)
     if sk < 0: sk = 0
@@ -129,7 +157,7 @@ def build_targets(px, bench, horizons, step):
         d['symbol'] = s; d['date'] = d.index
         frames.append(d)
     if not frames: return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True)
+    return _winsorize_targets(pd.concat(frames, ignore_index=True), horizons)
 
 def build_fval(px, bench, fid, param, step, skip=0):
     px = px.sort_index(); has_b = bench in px.columns; bc = px[bench] if has_b else None
@@ -225,21 +253,26 @@ def year_stats(sub, maincol, HZ):
         out.append({'y': int(y), 'n': int(len(g)), 'pos': int((g[maincol] > 0).sum()), 'Q': _f(Q), 'd': d})
     return out
 
-def meta_of(tgt, px, bench):
+def meta_of(tgt, px, bench, cleaned=0):
     dates = sorted(pd.to_datetime(px.index).unique())
     return {'symbols': int(tgt['symbol'].nunique()) if not tgt.empty else 0,
             'periods': int(tgt['date'].nunique()) if not tgt.empty else 0,
             'obs': int(len(tgt)),
             'first': str(pd.Timestamp(dates[0]).date()) if dates else '',
             'last': str(pd.Timestamp(dates[-1]).date()) if dates else '',
-            'benchmark': bench, 'has_bench': bool(bench in px.columns)}
+            'benchmark': bench, 'has_bench': bool(bench in px.columns), 'cleaned': int(cleaned)}
 
 async def main():
     mode = CFG['mode']; bench = str(CFG['benchmark']); syms = list(CFG['universe']); H = int(CFG['horizon'])
-    print('Загружаю цены:', len(syms), '+ бенчмарк', bench)
-    px = await get_prices(syms + [bench])
+    # Локальные бенчмарки групп тоже нужно загрузить — иначе forward считается СЫРЫМ (не excess),
+    # что раздувает доходности. Добавляем их в список загрузки (дедуп, порядок сохраняем).
+    gbenches = [str(g.get('benchmark')).upper() for g in (CFG.get('groups') or []) if g.get('benchmark')]
+    fetch_syms = list(dict.fromkeys([str(s).upper() for s in syms] + [bench.upper()] + gbenches))
+    print('Загружаю цены:', len(fetch_syms), '(вкл. бенчмарки групп)')
+    px = await get_prices(fetch_syms)
     if px is None or px.empty or px.shape[1] < 2:
         return {'error': 'Недостаточно данных: не загрузились цены.'}
+    px, n_cleaned = clean_prices(px)  # битые бары (невозможные доходности) → NaN
     # Окно анализа: годы от-до (чтобы отдельный год не искажал выборку).
     if CFG.get('start'):
         px = px[px.index >= pd.Timestamp(CFG['start'])]
@@ -256,7 +289,7 @@ async def main():
         tgt = build_targets(px, bench, HZ, H)
         if tgt.empty or tgt['date'].nunique() < 10:
             return {'error': 'Недостаточно истории для построения панели.'}
-        meta = meta_of(tgt, px, bench)
+        meta = meta_of(tgt, px, bench, n_cleaned)
 
     if mode == 'factor':
         fid = CFG['factor']; side = CFG['side']; bins = CFG.get('bins', 'cumulative')
@@ -355,7 +388,7 @@ async def main():
                 'periods': int(len(px.index[::max(1, H)])), 'obs': int(total_obs),
                 'first': str(pd.Timestamp(dts[0]).date()) if len(dts) else '',
                 'last': str(pd.Timestamp(dts[-1]).date()) if len(dts) else '',
-                'benchmark': bench, 'has_bench': True}
+                'benchmark': bench, 'has_bench': True, 'cleaned': int(n_cleaned)}
         return {'mode': 'factor', 'factor': fid, 'side': side, 'bins': bins, 'horizon': H, 'skip': skip,
                 'fdrAlpha': alpha, 'params': params, 'cols': col_labels, 'hz': HZ, 'groups': out_groups, 'meta': meta}
 
