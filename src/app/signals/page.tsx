@@ -102,6 +102,51 @@ function aggCell(years: any[], from: number, to: number, mainH: number) {
   return { mean, t, hit: n > 0 ? (pos / n) * 100 : 0, n, periods: P, decay, yearly };
 }
 
+// Совокупная статистика по НЕСКОЛЬКИМ ячейкам: достаточные статистики (n, pos, Q, по-горизонтные
+// [P,S]) аддитивны, поэтому пул = их сумма по выбранным ячейкам и окну лет — тот же расчёт, что в
+// aggCell. ВНИМАНИЕ: наблюдения НЕ дедуплицируются (вложенные пороги одного периода/перекрытия
+// учитываются по каждому срабатыванию) — это статистика «на срабатывание сигнала».
+function poolCells(cells: any[], from: number, to: number, mainH: number) {
+  let n = 0, pos = 0, Q = 0, any = false;
+  const perH: Record<string, [number, number]> = {};
+  const yearMap: Record<number, [number, number, number]> = {}; // год → [P_главн.гор, S_главн.гор, n]
+  const mh = String(mainH);
+  for (const c of cells) {
+    const years = Array.isArray(c?.years) ? c.years : [];
+    for (const y of years) {
+      if (y.y < from || y.y > to) continue;
+      any = true;
+      n += y.n || 0; pos += y.pos || 0; Q += y.Q || 0;
+      const d = y.d || {};
+      for (const h in d) {
+        const a = d[h] || [0, 0];
+        if (!perH[h]) perH[h] = [0, 0];
+        perH[h][0] += a[0] || 0; perH[h][1] += a[1] || 0;
+      }
+      const am = d[mh] || [0, 0];
+      if (!yearMap[y.y]) yearMap[y.y] = [0, 0, 0];
+      yearMap[y.y][0] += am[0] || 0; yearMap[y.y][1] += am[1] || 0; yearMap[y.y][2] += y.n || 0;
+    }
+  }
+  if (!any) return null;
+  const [P, S] = perH[mh] || [0, 0];
+  if (P < 5 || n < 10) return null;
+  const mean = S / P;
+  let t = 0;
+  if (P > 1) {
+    const v = (Q - (S * S) / P) / (P - 1);
+    const se = v > 0 ? Math.sqrt(v / P) : 0;
+    t = se > 0 ? mean / se : 0;
+  }
+  const decay = Object.keys(perH)
+    .map((h) => ({ h: Number(h), mean: perH[h][0] > 0 ? perH[h][1] / perH[h][0] : null }))
+    .sort((a, b) => a.h - b.h);
+  const yearly = Object.keys(yearMap)
+    .map((y) => { const a = yearMap[Number(y)]; return { year: Number(y), mean: a[0] > 0 ? a[1] / a[0] : null, n: a[2] }; })
+    .sort((a, b) => a.year - b.year);
+  return { mean, t, hit: n > 0 ? (pos / n) * 100 : 0, n, periods: P, decay, yearly };
+}
+
 function bhSig(items: { key: string; p: number }[], alpha: number): Set<string> {
   const arr = items.filter((x) => Number.isFinite(x.p)).sort((a, b) => a.p - b.p);
   const m = arr.length;
@@ -1425,12 +1470,16 @@ function FactorResult({ data, onSave }: { data: any; onSave: (d: SignalDef, name
 }
 
 function FactorGroup({ data, group, f, isRange, multi, onSave, winFrom, winTo, fullWindow }: { data: any; group: any; f: any; isRange: boolean; multi: boolean; onSave: (d: SignalDef, name?: string) => void; winFrom: number; winTo: number; fullWindow: boolean }) {
-  const [sel, setSel] = useState<HeatCell | null>(null);
+  const [picks, setPicks] = useState<Set<string>>(new Set());
   const mainH: number = data.horizon;
   const alpha: number = data.fdrAlpha || 0.1;
   const isQ: boolean = data.bins === 'quantile';
   const grid: any[] = group.grid || [];
   const useWin = grid.some((g: any) => Array.isArray(g.years));
+  const ck = (param: any, col: any) => `${param}|${col}`;
+
+  // Сброс выбора при новом прогоне (смена данных).
+  useEffect(() => setPicks(new Set()), [data, group]);
 
   // Пересчёт каждой ячейки под выбранное окно лет (из по-годовой агрегации).
   const recomputed = useMemo(
@@ -1450,9 +1499,19 @@ function FactorGroup({ data, group, f, isRange, multi, onSave, winFrom, winTo, f
     sig: useWin ? !!(sigSet && sigSet.has(`${g.param}:${g.col}`)) : g.sig,
   }));
 
-  const selRec = sel ? recomputed.find((r) => r.g.param === sel.row && r.g.col === sel.col) : null;
-  const cell = selRec?.g;
-  const agg = selRec?.agg;
+  const toggle = (c: HeatCell) =>
+    setPicks((prev) => {
+      const next = new Set(prev);
+      const k = ck(c.row, c.col);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+
+  const selectedRecs = recomputed.filter((r) => picks.has(ck(r.g.param, r.g.col)));
+  const single = selectedRecs.length === 1 ? selectedRecs[0] : null;
+  const cell = single?.g;
+  const agg = single?.agg;
   // Базовая доходность группы — за полное окно (по-годовой базы для неё не храним).
   const head = agg || (cell ? { mean: cell.mean, t: cell.t, hit: cell.hit, n: cell.n, periods: cell.periods, decay: null, yearly: cell.yearly } : null);
   const decayPoints = agg
@@ -1460,6 +1519,10 @@ function FactorGroup({ data, group, f, isRange, multi, onSave, winFrom, winTo, f
     : cell?.decay
       ? (data.hz || []).map((h: number) => ({ h, mean: cell.decay[String(h)] ?? null }))
       : [];
+
+  // Совокупность по ≥2 выбранным ячейкам — сумма достаточных статистик (пул по срабатываниям).
+  const pooled = selectedRecs.length >= 2 ? poolCells(selectedRecs.map((r) => r.g), winFrom, winTo, mainH) : null;
+  const pickLabels = selectedRecs.map((r) => `${r.g.param}д/${isQ ? 'хвост' : isRange ? 'диап.' : 'порог'} ${r.g.col}`);
 
   return (
     <div className={multi ? 'space-y-3 rounded-fk border border-line bg-surface-elev p-3' : 'space-y-3'}>
@@ -1480,18 +1543,27 @@ function FactorGroup({ data, group, f, isRange, multi, onSave, winFrom, winTo, f
         cols={data.cols}
         rowLabel="Параметр"
         colLabel={isQ ? 'Хвост' : isRange ? 'Диапазон' : 'Порог'}
-        selected={sel ? { row: sel.row, col: sel.col } : null}
-        onSelect={setSel}
+        picked={picks}
+        onSelect={toggle}
         fmt={(v) => (v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2))}
       />
-      {!sel && (
+      {picks.size === 0 ? (
         <p className="text-[11px] text-ink-3">
           {isRange ? 'Диапазоны не пересекаются — видно вклад каждой зоны отдельно. ' : ''}
           {isQ ? 'Хвосты кросс-секционные (на каждую дату) и накопительные: «дно 5%» включает «дно 2%». Сравните худшие↔лучшие. ' : ''}
-          Точка в углу ячейки = значимо (FDR). Клик по ячейке — детали.
+          Точка в углу ячейки = значимо (FDR). Клик по ячейке — детали; выберите несколько — совокупная статистика.
         </p>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2 text-[11px] text-ink-3">
+          <span>Выбрано ячеек: <b className="text-ink-2">{picks.size}</b></span>
+          <button type="button" onClick={() => setPicks(new Set())} className="font-medium text-brand hover:underline">
+            сбросить
+          </button>
+        </div>
       )}
-      {cell && (
+
+      {/* Одна ячейка — детали (как раньше) */}
+      {single && cell && (
         <Card>
           <CardHeader>
             <CardTitle>
@@ -1518,6 +1590,38 @@ function FactorGroup({ data, group, f, isRange, multi, onSave, winFrom, winTo, f
               <Button size="sm" variant="secondary" onClick={() => onSave({ factor: data.factor, param: cell.param, ...cell.region, skip: data.skip || 0 })}>
                 Сохранить как сигнал
               </Button>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ≥2 ячеек — совокупная статистика (пул достаточных статистик) */}
+      {selectedRecs.length >= 2 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>
+              Совокупно · {selectedRecs.length} ячеек
+              {!fullWindow && <span className="text-[12px] font-normal text-ink-3"> · {winFrom}–{winTo}</span>}
+            </CardTitle>
+            <CardDescription>
+              Пул выбранных условий: {pickLabels.join(' · ')}. Наблюдения суммируются по каждому срабатыванию
+              (вложенные пороги одного периода/перекрытия не дедуплицируются) — это статистика «на сигнал».
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {pooled ? (
+              <>
+                <div className="flex flex-wrap gap-3">
+                  <Stat label="Ср. изб. дох." value={fpct(pooled.mean)} tone={pooled.mean >= 0 ? 'up' : 'down'} />
+                  <Stat label="t-стат" value={fnum(pooled.t)} />
+                  <Stat label="Доля плюс" value={fnum(pooled.hit, 1) + '%'} />
+                  <Stat label="Наблюдений" value={String(pooled.n)} hint={`${pooled.periods} периодов`} />
+                </div>
+                {pooled.decay.length > 0 && <DecayBlock points={pooled.decay} mainH={mainH} />}
+                <YearlyBars yearly={pooled.yearly} />
+              </>
+            ) : (
+              <p className="text-[13px] text-ink-3">В выбранном окне лет слишком мало наблюдений по выбранным ячейкам — расширьте окно или выберите другие.</p>
             )}
           </CardContent>
         </Card>
