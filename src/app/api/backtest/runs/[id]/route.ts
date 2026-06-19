@@ -5,9 +5,11 @@ export const dynamic = 'force-dynamic';
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const body = await req.json().catch(() => ({}));
-  const patch: { title?: string | null; description?: string | null } = {};
+  const patch: { title?: string | null; description?: string | null; strategyId?: number | null } = {};
   if (typeof body?.title === 'string') patch.title = body.title.trim() || null;
   if (typeof body?.description === 'string') patch.description = body.description;
+  if (body?.strategyId !== undefined)
+    patch.strategyId = body.strategyId == null ? null : Number.isFinite(Number(body.strategyId)) ? Number(body.strategyId) : null;
   try {
     await updateBacktestRun(Number(id), patch);
     return Response.json({ ok: true });
