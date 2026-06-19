@@ -11,8 +11,10 @@ test.describe('Backtest EODHD integration', () => {
 
   test('QQQ на реальных данных EODHD — без синтетики, отчёт наполнен', async ({ page }) => {
     await page.goto('/backtest');
-    await page.getByRole('button', { name: 'Крупные акции США' }).click(); // снять дефолтный пресет
-    await page.getByPlaceholder(/CDR\.WA/).fill('QQQ');
+    // Тикеры задаются в скрипте (UNIVERSE): торгуем QQQ на реальных данных EODHD.
+    await page.getByTestId('strategy-code').fill(
+      ['UNIVERSE = ["QQQ"]', '', 'def on_bar(ctx):', '    ctx.order_target_percent("QQQ", 1.0)'].join('\n'),
+    );
     await page.getByTestId('run-backtest').click();
 
     // Кривая капитала (итеративный SVG) и метрики появляются.

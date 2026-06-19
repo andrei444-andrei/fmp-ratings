@@ -28,6 +28,25 @@ type SavedRunItem = { id: number; title: string | null; created_at: string };
 
 const SYMBOL_RE = /^[A-Z0-9][A-Z0-9.\-]{0,11}$/;
 
+// Тикеры стратегии задаются в самом скрипте: переменная верхнего уровня UNIVERSE = [...] (или SYMBOLS).
+// Парсим её на клиенте — чтобы показать состав и не блокировать запуск, когда вселенная задана в коде.
+function parseScriptUniverse(code: string): string[] {
+  const m = code.match(/\b(?:UNIVERSE|SYMBOLS)\s*=\s*\[([^\]]*)\]/);
+  if (!m) return [];
+  const out = new Set<string>();
+  const re = /["']([A-Za-z0-9.\-]{1,12})["']/g;
+  let g: RegExpExecArray | null;
+  while ((g = re.exec(m[1]))) {
+    const s = g[1].toUpperCase().trim();
+    if (SYMBOL_RE.test(s)) out.add(s);
+  }
+  return [...out];
+}
+// Скрипт объявляет вселенную (пусть даже вычисляемую) — тогда поля вселенной в UI лишь запасные.
+function hasScriptUniverse(code: string): boolean {
+  return /\b(?:UNIVERSE|SYMBOLS)\s*=/.test(code);
+}
+
 function esc(s: string): string {
   return s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!));
 }
@@ -152,7 +171,8 @@ function Backtest() {
   const { toast } = useToast();
 
   // ── Конфиг ──
-  const [presets, setPresets] = useState<Set<string>>(new Set(['mega']));
+  // По умолчанию пресеты не выбраны: вселенная задаётся в скрипте (UNIVERSE), пресеты/свои тикеры — запасной путь.
+  const [presets, setPresets] = useState<Set<string>>(new Set());
   const [custom, setCustom] = useState('');
   const [benchmark, setBenchmark] = useState('SPY');
   const [initialCapital, setInitialCapital] = useState(100000);
@@ -192,7 +212,9 @@ function Backtest() {
 
   const outRef = useRef<HTMLDivElement>(null);
 
-  const universe = useMemo(() => {
+  // Вселенная из UI (пресеты + свои тикеры) — запасной вариант, если в скрипте нет UNIVERSE.
+  // Бенчмарк НЕ вырезаем: его можно одновременно торговать и сравнивать (таймер на QQQ vs buy & hold QQQ).
+  const uiUniverse = useMemo(() => {
     const set = new Set<string>();
     for (const p of UNIVERSE_PRESETS) {
       if (presets.has(p.id)) for (const t of p.tickers) set.add(t);
@@ -201,9 +223,15 @@ function Backtest() {
       const s = t.toUpperCase().trim();
       if (SYMBOL_RE.test(s)) set.add(s);
     }
-    set.delete(benchmark.toUpperCase().trim());
     return [...set];
-  }, [presets, custom, benchmark]);
+  }, [presets, custom]);
+
+  // Источник правды по тикерам — скрипт. UI-вселенная используется, только если в коде нет UNIVERSE.
+  const scriptUniverse = useMemo(() => parseScriptUniverse(strategy), [strategy]);
+  const scriptDriven = useMemo(() => hasScriptUniverse(strategy), [strategy]);
+  const universe = scriptUniverse.length ? scriptUniverse : uiUniverse;
+  // Кнопку запуска не блокируем, если вселенная объявлена в скрипте (даже вычисляемая).
+  const canRun = universe.length >= 1 || scriptDriven;
 
   async function loadRuns() {
     try {
@@ -264,22 +292,33 @@ function Backtest() {
       if (!r.ok) throw new Error(d?.error || 'Не удалось сгенерировать');
       if (d?.code) {
         setStrategy(d.code);
-        // Тикеры, прописанные в коде, добавляем во вселенную — иначе стратегия их не торгует
-        // (движок торгует только то, что в ctx.symbols = вселенная из конфига).
-        const codeTickers: string[] = Array.isArray(d?.tickers) ? d.tickers : [];
-        const bm = benchmark.toUpperCase().trim();
-        const have = new Set(
-          custom.split(/[\s,;]+/).map((s) => s.toUpperCase().trim()).filter(Boolean),
-        );
-        const add = codeTickers.filter((t) => {
-          const u = String(t).toUpperCase();
-          return u !== bm && SYMBOL_RE.test(u) && !have.has(u);
-        });
-        if (add.length) {
-          setCustom((prev) => (prev.trim() ? prev.trim() + ', ' : '') + add.join(', '));
-          toast({ variant: 'success', title: 'Черновик готов', description: 'Во вселенную добавлены: ' + add.join(', ') + '. Проверьте код перед запуском.' });
+        // Новая модель: тикеры задаются в скрипте (UNIVERSE). Если код уже объявил вселенную —
+        // ничего добавлять не нужно (UI подхватит её из кода). Иначе откатываемся на старое
+        // поведение: дописываем извлечённые тикеры в «свои тикеры» как запасную вселенную.
+        if (hasScriptUniverse(d.code)) {
+          const parsed = parseScriptUniverse(d.code);
+          toast({
+            variant: 'success',
+            title: 'Черновик готов',
+            description: parsed.length
+              ? 'Вселенная в скрипте (UNIVERSE): ' + parsed.join(', ') + '. Проверьте код перед запуском.'
+              : 'Вселенная задана в скрипте (UNIVERSE). Проверьте код перед запуском.',
+          });
         } else {
-          toast({ variant: 'success', title: 'Черновик готов', description: 'Проверьте код перед запуском.' });
+          const codeTickers: string[] = Array.isArray(d?.tickers) ? d.tickers : [];
+          const have = new Set(
+            custom.split(/[\s,;]+/).map((s) => s.toUpperCase().trim()).filter(Boolean),
+          );
+          const add = codeTickers.filter((t) => {
+            const u = String(t).toUpperCase();
+            return SYMBOL_RE.test(u) && !have.has(u);
+          });
+          if (add.length) {
+            setCustom((prev) => (prev.trim() ? prev.trim() + ', ' : '') + add.join(', '));
+            toast({ variant: 'success', title: 'Черновик готов', description: 'Во вселенную добавлены: ' + add.join(', ') + '. Проверьте код перед запуском.' });
+          } else {
+            toast({ variant: 'success', title: 'Черновик готов', description: 'Проверьте код перед запуском.' });
+          }
         }
       }
     } catch (e: any) {
@@ -291,8 +330,8 @@ function Backtest() {
 
   async function execute() {
     if (running) return;
-    if (universe.length < 1) {
-      toast({ variant: 'error', title: 'Пустая вселенная', description: 'Выберите пресет или добавьте тикеры.' });
+    if (!canRun) {
+      toast({ variant: 'error', title: 'Пустая вселенная', description: 'Задайте UNIVERSE = [...] в скрипте или добавьте тикеры в полях слева.' });
       return;
     }
     if (!strategy.trim()) {
@@ -474,13 +513,17 @@ function Backtest() {
             <CardHeader>
               <CardTitle>Параметры теста</CardTitle>
               <CardDescription>
-                Вселенная, бенчмарк, капитал и риск-лимиты. Издержки выбираются автоматически по рынку инструмента
-                (US, Польша .WA, Япония .T и т.д.) и показываются в отчёте.
+                Бенчмарк, капитал и риск-лимиты. Тикеры стратегии задаются в самом скрипте — список{' '}
+                <code>UNIVERSE = [...]</code> (любые тикеры EODHD). Издержки выбираются автоматически по рынку
+                инструмента (US, Польша .WA, Япония .T и т.д.) и показываются в отчёте.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <Field>
-                <Label>Вселенная инструментов</Label>
+                <Label>Вселенная инструментов (запасная)</Label>
+                <FieldHint>
+                  Используется, только если в скрипте не задан <code>UNIVERSE</code>. Пресеты/свои тикеры — быстрый старт без кода.
+                </FieldHint>
                 <div className="flex flex-wrap gap-2" data-testid="universe-presets">
                   {UNIVERSE_PRESETS.map((p) => {
                     const on = presets.has(p.id);
@@ -500,7 +543,13 @@ function Backtest() {
                     );
                   })}
                 </div>
-                <p className="text-xs text-ink-3">Выбрано инструментов: {universe.length}</p>
+                <p className="text-xs text-ink-3">
+                  {scriptUniverse.length
+                    ? `Из скрипта (UNIVERSE): ${scriptUniverse.length} — ${scriptUniverse.slice(0, 12).join(', ')}${scriptUniverse.length > 12 ? '…' : ''}`
+                    : scriptDriven
+                      ? 'Вселенная задаётся в скрипте (UNIVERSE)'
+                      : `Запасная вселенная из полей: ${uiUniverse.length}`}
+                </p>
               </Field>
 
               <Field>
@@ -677,7 +726,7 @@ function Backtest() {
                 />
               </Field>
 
-              <Button onClick={execute} loading={running} disabled={universe.length < 1} fullWidth data-testid="run-backtest">
+              <Button onClick={execute} loading={running} disabled={!canRun} fullWidth data-testid="run-backtest">
                 {running ? 'Прогоняю бэктест…' : 'Запустить бэктест'}
               </Button>
             </CardContent>

@@ -8,11 +8,24 @@ import { test, expect } from '@playwright/test';
 type Page = import('@playwright/test').Page;
 
 // Сужаем вселенную до 3 синтетических тикеров — чтобы прогон уложился в таймаут.
+// Новая модель: тикеры задаются ПРЯМО В СКРИПТЕ переменной UNIVERSE, движок торгует именно их.
 async function runSmallBacktest(page: Page) {
   await page.goto('/backtest');
-  // Снимаем дефолтный пресет крупных акций → останутся только наши кастомные тикеры.
-  await page.getByRole('button', { name: 'Крупные акции США' }).click();
-  await page.getByPlaceholder(/CDR\.WA/).fill('AAA, BBB, CCC');
+  await page.getByTestId('strategy-code').fill(
+    [
+      'UNIVERSE = ["AAA", "BBB", "CCC"]',
+      '',
+      'def on_bar(ctx):',
+      '    for s in ctx.symbols:',
+      '        h = ctx.history(s, 20)',
+      '        if len(h) < 20:',
+      '            continue',
+      '        if h[-1] > h[:-1].mean():',
+      '            ctx.order_target_percent(s, 1.0 / len(ctx.symbols))',
+      '        else:',
+      '            ctx.order_target_percent(s, 0.0)',
+    ].join('\n'),
+  );
   await page.getByTestId('run-backtest').click();
 }
 
