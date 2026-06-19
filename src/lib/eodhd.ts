@@ -15,11 +15,20 @@ export const COUNTRY_EXCHANGE: Record<string, string> = {
   BR: 'SA', CA: 'TO', AU: 'AU', CH: 'SW', TW: 'TW', MX: 'MX', NL: 'AS', JP: 'TSE',
 };
 
-// Тикер вселенной → символ EODHD: без точки = US-листинг (.US); с суффиксом — как есть (уже EODHD-форма).
+// Суффиксы, где FMP-форма ≠ EODHD-форма (проверено живым ключом через /api/admin/eodhd-check):
+// Лондон FMP .L → EODHD .LSE; Корея FMP .KS → EODHD .KO. Прочие расхождения (Индия .NS, Япония .T)
+// в плане отсутствуют (404) — оставляем как есть, их подхватит FMP (добор в getPrices).
+const FMP_TO_EODHD_SUFFIX: Record<string, string> = { L: 'LSE', KS: 'KO' };
+
+// Тикер вселенной → символ EODHD: без точки = US-листинг (.US); с суффиксом — ремап там, где формы
+// расходятся, иначе как есть.
 export function toEodhdSymbol(sym: string): string {
   const s = String(sym || '').toUpperCase().trim();
   if (!s) return '';
-  return s.includes('.') ? s : `${s}.US`;
+  if (!s.includes('.')) return `${s}.US`;
+  const i = s.lastIndexOf('.');
+  const mapped = FMP_TO_EODHD_SUFFIX[s.slice(i + 1)];
+  return mapped ? `${s.slice(0, i)}.${mapped}` : s;
 }
 
 // Code + биржа → полный символ EODHD (Code уже может содержать суффикс).
@@ -107,7 +116,9 @@ export async function eodhdEod(symbol: string, from: string, to: string): Promis
   return parseEodBars(await r.json());
 }
 
-/** Состав биржи: топ-N по капитализации через screener; иначе общий список обыкновенных акций. */
+/** Состав биржи: топ-N по капитализации через screener. Если screener вне тарифа (403) — возвращаем
+ *  пусто: exchange-symbol-list НЕ ранжирован по ликвидности (топ-N был бы алфавитным мусором/BDR),
+ *  поэтому состав берёт FMP (по капитализации) — см. universe route. */
 export async function eodhdConstituents(exchange: string, topN: number): Promise<string[]> {
   const key = process.env.EODHD_API_KEY;
   if (!key || !exchange) return [];
@@ -120,9 +131,7 @@ export async function eodhdConstituents(exchange: string, topN: number): Promise
       if (syms.length >= 5) return syms.slice(0, topN);
     }
   } catch {
-    /* screener недоступен на тарифе — падаем на полный список */
+    /* screener недоступен — состав возьмёт FMP */
   }
-  const r = await fetch(`${BASE}/exchange-symbol-list/${exchange}?api_token=${key}&fmt=json`);
-  if (!r.ok) throw new Error('eodhd exch ' + r.status);
-  return parseExchangeList(await r.json(), exchange).slice(0, topN);
+  return [];
 }
