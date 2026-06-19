@@ -367,7 +367,10 @@ if ok:
             side = "покупка" if delta > 0 else "продажа"
             trades.append({"Дата": str(pd.Timestamp(DATES[i + 1]).date()), "Тикер": TRADE_SYMS[j],
                            "Сторона": side, "Кол-во": round(abs(delta), 3), "Цена": round(pj, 2),
-                           "Объём": round(notional, 2), "Издержки": round(cost, 2)})
+                           "Объём": round(notional, 2),
+                           "% экв": round((notional / eq_fill * 100.0) if eq_fill > 0 else 0.0, 2),
+                           "Издержки": round(cost, 2),
+                           "Ставка, бп": round(cost / notional * 1e4, 1)})
 
     if err is not None:
         emit(callout(err, tone="bad", title="Ошибка выполнения стратегии"))
@@ -506,8 +509,13 @@ if ok:
             turnover = (traded_notional_total / avg_eq / years) if (avg_eq > 0 and years > 0) else 0.0
             avg_gross = (gross_sum / exp_cnt) if exp_cnt else 0.0
             avg_net = (net_sum / exp_cnt) if exp_cnt else 0.0
+            # Тяга издержек: сколько в год они «съедают» от среднего капитала (бп/год) и сколько от итогового.
+            drag_bp_yr = (total_costs / avg_eq / years * 1e4) if (avg_eq > 0 and years > 0) else 0.0
+            cost_pct_cap = (total_costs / e1 * 100.0) if e1 > 0 else 0.0
             emit(cards(
                 kpi("Издержки всего", str(round(total_costs, 0)), hint="в валюте счёта"),
+                kpi("Издержки, бп/год", str(round(drag_bp_yr, 0)), hint="тяга на капитал"),
+                kpi("Издержки, % капитала", str(round(cost_pct_cap, 1)) + "%", hint="от итогового"),
                 kpi("Оборот/год", str(round(turnover, 2)) + "x"),
                 kpi("Ср. валовая экспозиция", str(round(avg_gross * 100, 0)) + "%"),
                 kpi("Ср. чистая экспозиция", str(round(avg_net * 100, 0)) + "%"),
@@ -518,6 +526,49 @@ if ok:
                       title="Издержки по типам (валюта счёта)"))
         except Exception as e:
             _warn("Не удалось посчитать сводку издержек: " + str(e))
+
+        # --- Диагностика размера сделок (мелочь/переподгонка): где набегают издержки ---
+        try:
+            if trades:
+                pcts = np.array([t["% экв"] for t in trades], dtype=float)
+                nots = np.array([t["Объём"] for t in trades], dtype=float)
+                csts = np.array([t["Издержки"] for t in trades], dtype=float)
+                tot_not = float(nots.sum()) or 1.0
+                tot_cst = float(csts.sum()) or 1.0
+                brows = []
+                for lo, hi, lab in [(0.0, 0.1, "< 0.1%"), (0.1, 0.5, "0.1–0.5%"), (0.5, 2.0, "0.5–2%"), (2.0, 1e9, "≥ 2%")]:
+                    mask = (pcts >= lo) & (pcts < hi)
+                    cnt = int(mask.sum())
+                    if cnt == 0:
+                        continue
+                    brows.append({"Размер сделки (% портфеля)": lab, "Сделок": cnt,
+                                  "Оборот": round(float(nots[mask].sum()), 0),
+                                  "Издержки": round(float(csts[mask].sum()), 0),
+                                  "Доля издержек, %": round(float(csts[mask].sum()) / tot_cst * 100.0, 1)})
+                if brows:
+                    emit(table(pd.DataFrame(brows),
+                               formats={"Размер сделки (% портфеля)": "text", "Сделок": "int",
+                                        "Оборот": "money", "Издержки": "money", "Доля издержек, %": "num"},
+                               title="Размер сделок: где набегают издержки (диагностика переподгонки)"))
+                tiny = pcts < 0.25
+                tiny_cnt = int(tiny.sum())
+                if tiny_cnt:
+                    share_n = tiny_cnt / len(trades) * 100.0
+                    share_c = float(csts[tiny].sum()) / tot_cst * 100.0
+                    share_t = float(nots[tiny].sum()) / tot_not * 100.0
+                    med = float(np.median(pcts))
+                    tone = "warn" if (share_n > 40.0 and share_c > 15.0) else "info"
+                    emit(callout(
+                        "Мелких сделок (< 0.25% портфеля): " + str(tiny_cnt) + " из " + str(len(trades)) +
+                        " (" + ("%.0f" % share_n) + "%). На них приходится " + ("%.0f" % share_c) +
+                        "% всех издержек и " + ("%.0f" % share_t) + "% оборота. Медианный размер сделки — " +
+                        ("%.2f" % med) + "% портфеля. Много мелких подгонок = вероятная переподгонка позиций "
+                        "(движок ежедневно ребалансирует дрейф цены); в реальной торговле их отсекают полосой "
+                        "нечувствительности. «Ставка, бп» в логе сделок ниже показывает фактическую цену каждой "
+                        "сделки в б.п. — резкий скачок на мелком объёме означает, что сработал минимум комиссии.",
+                        tone=tone, title="Диагностика: мелкие сделки / переподгонка"))
+        except Exception as e:
+            _warn("Не удалось посчитать диагностику сделок: " + str(e))
 
         # --- Помесячная доходность (heatmap) ---
         try:
@@ -544,7 +595,8 @@ if ok:
                 tdf = pd.DataFrame(trades[-200:])
                 emit(table(tdf,
                            formats={"Дата": "date", "Тикер": "ticker", "Сторона": "text",
-                                    "Кол-во": "num", "Цена": "money", "Объём": "money", "Издержки": "money"},
+                                    "Кол-во": "num", "Цена": "money", "Объём": "money",
+                                    "% экв": "num", "Издержки": "money", "Ставка, бп": "num"},
                            title="Сделки (последние " + str(min(200, len(trades))) + " из " + str(len(trades)) + ")"))
             else:
                 _warn("Стратегия не совершила ни одной сделки. Торгуемая вселенная (ctx.symbols): "
