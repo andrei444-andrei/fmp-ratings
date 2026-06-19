@@ -4,14 +4,16 @@ import { logAppError } from '@/lib/app-errors';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
-// Снимаем markdown-ограждения, если модель их добавила.
-function stripFences(code: string): string {
-  const m = code.match(/```(?:python|py)?\s*([\s\S]*?)```/i);
-  return (m ? m[1] : code).trim();
+// Последний блок ```python ...``` (или просто ```...```) в тексте ответа — это полный актуальный код.
+function extractCodeBlock(text: string): string | null {
+  const re = /```(?:python|py)?\s*([\s\S]*?)```/gi;
+  let m: RegExpExecArray | null;
+  let last: string | null = null;
+  while ((m = re.exec(text))) last = m[1];
+  return last ? last.trim() : null;
 }
 
-// Достаём тикеры, жёстко прописанные в коде строковыми литералами ("QQQ", "CDR.WA"),
-// чтобы UI мог сам добавить их во вселенную — иначе стратегия про QQQ ничего не торгует.
+// Достаём тикеры, жёстко прописанные в коде строковыми литералами ("QQQ", "CDR.WA").
 function extractTickers(code: string): string[] {
   const out = new Set<string>();
   const re = /["']([A-Z][A-Z0-9.]{0,9})["']/g;
@@ -26,62 +28,81 @@ function pickCodeModel(body: any): string {
   return process.env.AIMLAPI_CODE_MODEL?.trim() || 'claude-opus-4-7';
 }
 
+// Нормализуем историю чата с клиента: только user/assistant, строки, с лимитами на длину/количество.
+function sanitizeMessages(body: any): { role: 'user' | 'assistant'; content: string }[] {
+  let raw: any[] = Array.isArray(body?.messages) ? body.messages : [];
+  // Обратная совместимость: одиночный prompt → одно сообщение пользователя.
+  if (!raw.length && typeof body?.prompt === 'string' && body.prompt.trim()) {
+    raw = [{ role: 'user', content: body.prompt }];
+  }
+  const out: { role: 'user' | 'assistant'; content: string }[] = [];
+  for (const m of raw.slice(-24)) {
+    const role = m?.role === 'assistant' ? 'assistant' : 'user';
+    const content = typeof m?.content === 'string' ? m.content.slice(0, 16000) : '';
+    if (content.trim()) out.push({ role, content });
+  }
+  return out;
+}
+
 const SYS_PROMPT =
-  'Ты пишешь стратегию для детерминированного событийного бэктест-движка (дневные бары). ' +
-  'Выдай ТОЛЬКО Python-код, без markdown-ограждений и пояснений. ' +
-  'ОБЯЗАТЕЛЬНО объяви список тикеров стратегии в переменной верхнего уровня `UNIVERSE = ["TICKER", ...]` ' +
-  '(любые тикеры, доступные в EODHD: US без суффикса, Польша .WA/.WAR, Токио .T, Лондон .L и т.д.). ' +
-  'Движок торгует ИМЕННО этот список; ctx.symbols == UNIVERSE. Не используй тикеры, которых нет в UNIVERSE. ' +
-  'ОБЯЗАТЕЛЬНО объяви `def on_bar(ctx):` — он вызывается на каждом баре. Опционально `def initialize(ctx):` — один раз в начале ' +
-  '(удобно класть параметры на ctx, например ctx.lookback = 100). ' +
-  'В стратегии доступны `pd` (pandas) и `np` (numpy). НЕ импортируй данные и НЕ обращайся к сети — движок сам загрузил цены. ' +
-  'КРИТИЧНО про отсутствие заглядывания в будущее: ctx отдаёт ТОЛЬКО прошлое (по текущий бар включительно); ордера ставятся ' +
-  'на close текущего бара, а исполняются по close СЛЕДУЮЩЕГО бара — об этом заботится движок, тебе ничего делать не нужно. ' +
-  'API контекста ctx:\n' +
-  '- ctx.symbols — список торгуемых тикеров (строки); ctx.benchmark — тикер бенчмарка (НЕ торгуется);\n' +
-  '- ctx.date — дата текущего бара; ctx.i — индекс бара; ctx.cash — кэш; ctx.equity — стоимость портфеля;\n' +
-  '- ctx.price(sym) -> float: close на текущем баре;\n' +
-  '- ctx.history(sym, n=None) -> np.ndarray прошлых close по текущий бар включительно (последние n, без NaN);\n' +
-  '- ctx.prices(n=None) -> pandas.DataFrame (индекс=дата, колонки=тикеры) истории close по текущий бар;\n' +
-  '- ctx.position(sym) -> float (шт., может быть отрицательной у шорта); ctx.weight(sym) -> доля капитала;\n' +
-  '- ОРДЕРА (целевые): ctx.order_target_percent(sym, w) — задать целевой вес w (доля капитала; отрицательный = шорт; ' +
-  'сумма |весов| ограничена плечом из конфига); ctx.order_target_value(sym, v); ctx.order_target_shares(sym, n); ' +
-  'ctx.order_shares(sym, n) — докупить/продать n штук; ctx.close(sym) — закрыть позицию; ctx.close_all().\n' +
-  'Всегда проверяй длину истории перед расчётом индикатора (if len(hist) < N: continue). ' +
-  'Пиши читаемый код, строки не длиннее ~90 символов. Верни только определения функций (и при необходимости вспомогательные).';
+  'Ты — ассистент-квант в чате: помогаешь писать и ИТЕРАТИВНО дорабатывать стратегию для детерминированного ' +
+  'событийного бэктест-движка (дневные бары). Веди диалог: можешь задать короткий уточняющий вопрос, объяснить ' +
+  'идею, учесть правки пользователя. ' +
+  'КОГДА выдаёшь или меняешь стратегию — приводи ПОЛНЫЙ актуальный код целиком в ОДНОМ блоке ```python ...``` ' +
+  '(не диффы, не куски), плюс 1–3 предложения пояснения простыми словами. Если только уточняешь — можно без кода. ' +
+  'ОБЯЗАТЕЛЬНО в коде объяви список тикеров стратегии в переменной верхнего уровня `UNIVERSE = ["TICKER", ...]` ' +
+  '(любые тикеры EODHD: US без суффикса, Польша .WA/.WAR, Токио .T, Лондон .L и т.д.). Движок торгует ИМЕННО этот список; ' +
+  'ctx.symbols == UNIVERSE. ' +
+  'ОБЯЗАТЕЛЬНО объяви `def on_bar(ctx):` (вызывается на каждом баре). Опционально `def initialize(ctx):` — один раз в начале ' +
+  '(удобно класть параметры на ctx, напр. ctx.lookback = 100). Доступны `pd` (pandas) и `np` (numpy). НЕ импортируй данные и ' +
+  'НЕ ходи в сеть — движок сам загрузил цены. ' +
+  'Без заглядывания в будущее: ctx отдаёт ТОЛЬКО прошлое (по текущий бар включительно); ордер ставится на close текущего бара, ' +
+  'исполняется по close СЛЕДУЮЩЕГО — об этом заботится движок. ' +
+  'API ctx:\n' +
+  '- ctx.symbols — торгуемые тикеры; ctx.benchmark — тикер бенчмарка (НЕ торгуется);\n' +
+  '- ctx.date — дата бара; ctx.i — индекс; ctx.cash; ctx.equity;\n' +
+  '- ctx.price(sym) -> float (close текущего бара);\n' +
+  '- ctx.history(sym, n=None) -> np.ndarray прошлых close по текущий бар (последние n, без NaN);\n' +
+  '- ctx.prices(n=None) -> pandas.DataFrame истории close;\n' +
+  '- ctx.position(sym) -> шт. (может быть < 0 у шорта); ctx.weight(sym) -> доля капитала;\n' +
+  '- ОРДЕРА: ctx.order_target_percent(sym, w) — целевой вес (доля капитала; отрицательный = шорт); ' +
+  'ctx.order_target_value(sym, v); ctx.order_target_shares(sym, n); ctx.order_shares(sym, n); ctx.close(sym); ctx.close_all().\n' +
+  'Всегда проверяй длину истории перед расчётом индикатора (if len(hist) < N: continue). Строки ≤ ~90 символов.';
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
-  const prompt: string = (body?.prompt ?? '').toString().trim();
+  const messages = sanitizeMessages(body);
   const model = pickCodeModel(body);
   const ua = req.headers.get('user-agent');
 
-  if (!prompt) {
+  if (!messages.length) {
     return Response.json({ error: 'Опишите стратегию словами.' }, { status: 400 });
   }
   if (!process.env.AIMLAPI_KEY) {
-    return Response.json({ error: 'AI-черновик недоступен — не настроен AIMLAPI_KEY.' }, { status: 503 });
+    return Response.json({ error: 'AI-чат недоступен — не настроен AIMLAPI_KEY.' }, { status: 503 });
   }
 
   try {
     const { content, finishReason } = await aimlChatMeta({
       model,
-      temperature: 0.1,
-      max_tokens: 2500,
-      messages: [
-        { role: 'system', content: SYS_PROMPT },
-        { role: 'user', content: `Стратегия: «${prompt}». Напиши on_bar (и при необходимости initialize).` },
-      ],
+      temperature: 0.2,
+      max_tokens: 3000,
+      messages: [{ role: 'system', content: SYS_PROMPT }, ...messages],
     });
-    if (finishReason === 'length') {
-      return Response.json({ error: 'Модель обрезала код по лимиту — упростите описание.' }, { status: 502 });
+    if (!content || !content.trim()) {
+      return Response.json({ error: 'Пустой ответ модели.' }, { status: 502 });
     }
-    const code = stripFences(content);
-    if (!code) return Response.json({ error: 'Пустой ответ модели.' }, { status: 502 });
-    return Response.json({ code, tickers: extractTickers(code) });
+    const truncated = finishReason === 'length';
+    const code = extractCodeBlock(content);
+    return Response.json({
+      reply: content,
+      code,
+      tickers: code ? extractTickers(code) : [],
+      truncated,
+    });
   } catch (e: any) {
     const msg = e?.message || 'ошибка генерации';
-    logAppError({ route: '/api/backtest/draft', message: msg, stack: e?.stack, user_agent: ua, meta: { model, prompt } }).catch(() => {});
+    logAppError({ route: '/api/backtest/draft', message: msg, stack: e?.stack, user_agent: ua, meta: { model } }).catch(() => {});
     return Response.json({ error: msg }, { status: 502 });
   }
 }

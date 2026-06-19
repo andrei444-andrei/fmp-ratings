@@ -24,7 +24,8 @@ export async function POST(req: Request) {
   try {
     const title = (body?.title ?? '').toString().trim() || autoTitle();
     const config = body?.config != null ? JSON.stringify(body.config) : null;
-    const id = await saveStrategy({ title, code, config });
+    const chat = body?.chat != null ? JSON.stringify(body.chat) : null;
+    const id = await saveStrategy({ title, code, config, chat });
     return Response.json({ id, title });
   } catch (e: any) {
     return Response.json({ error: e?.message || 'db error' }, { status: 500 });

@@ -17,6 +17,7 @@ export async function ensureBacktestTables(): Promise<void> {
     title TEXT,
     code TEXT NOT NULL,
     config TEXT,
+    chat TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT
   )`);
@@ -40,6 +41,11 @@ export async function ensureBacktestTables(): Promise<void> {
     } catch {
       /* колонка уже есть */
     }
+  }
+  try {
+    await libsqlClient.execute(`ALTER TABLE backtest_strategies ADD COLUMN chat TEXT`);
+  } catch {
+    /* колонка уже есть */
   }
   ensured = true;
 }
@@ -65,13 +71,14 @@ export type SavedStrategy = {
   title: string | null;
   code: string;
   config: string | null;
+  chat: string | null;
   created_at: string;
 };
 
 export async function getStrategy(id: number): Promise<SavedStrategy | null> {
   await ensureBacktestTables();
   const r = await libsqlClient.execute({
-    sql: `SELECT id, title, code, config, created_at FROM backtest_strategies WHERE id = ?`,
+    sql: `SELECT id, title, code, config, chat, created_at FROM backtest_strategies WHERE id = ?`,
     args: [id],
   });
   const x = r.rows[0];
@@ -81,23 +88,29 @@ export async function getStrategy(id: number): Promise<SavedStrategy | null> {
     title: x.title != null ? String(x.title) : null,
     code: String(x.code),
     config: x.config != null ? String(x.config) : null,
+    chat: x.chat != null ? String(x.chat) : null,
     created_at: String(x.created_at),
   };
 }
 
-export async function saveStrategy(o: { title: string; code: string; config?: string | null }): Promise<number> {
+export async function saveStrategy(o: {
+  title: string;
+  code: string;
+  config?: string | null;
+  chat?: string | null;
+}): Promise<number> {
   await ensureBacktestTables();
   const now = new Date().toISOString();
   const r = await libsqlClient.execute({
-    sql: `INSERT INTO backtest_strategies (title, code, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-    args: [o.title, o.code, o.config ?? null, now, now],
+    sql: `INSERT INTO backtest_strategies (title, code, config, chat, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    args: [o.title, o.code, o.config ?? null, o.chat ?? null, now, now],
   });
   return Number(r.lastInsertRowid ?? 0);
 }
 
 export async function updateStrategy(
   id: number,
-  o: { title?: string | null; code?: string | null; config?: string | null },
+  o: { title?: string | null; code?: string | null; config?: string | null; chat?: string | null },
 ): Promise<void> {
   await ensureBacktestTables();
   const sets: string[] = [];
@@ -113,6 +126,10 @@ export async function updateStrategy(
   if (o.config !== undefined) {
     sets.push('config = ?');
     args.push(o.config);
+  }
+  if (o.chat !== undefined) {
+    sets.push('chat = ?');
+    args.push(o.chat);
   }
   if (!sets.length) return;
   sets.push('updated_at = ?');

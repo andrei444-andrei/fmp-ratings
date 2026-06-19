@@ -43,9 +43,9 @@ test.describe('Backtest /backtest', () => {
     // Дефолтная стратегия предзаполнена, есть кнопка сохранения стратегии.
     await expect(page.getByTestId('strategy-code')).toContainText('def on_bar(ctx):');
     await expect(page.getByTestId('save-strategy')).toBeVisible();
-    // AI-панель: поле описания задачи + кнопка генерации.
-    await expect(page.getByTestId('draft-prompt')).toBeVisible();
-    await expect(page.getByTestId('draft-btn')).toBeVisible();
+    // AI-чат: поле сообщения + кнопка отправки.
+    await expect(page.getByTestId('chat-input')).toBeVisible();
+    await expect(page.getByTestId('chat-send')).toBeVisible();
   });
 
   test('прогоняет стратегию, рендерит отчёт без ошибок и автосохраняет', async ({ page }) => {
@@ -109,5 +109,20 @@ test.describe('Backtest /backtest', () => {
     await li.getByRole('button', { name: 'Удалить стратегию' }).first().click();
     await expect(page.getByText('Стратегия удалена')).toBeVisible({ timeout: 15000 });
     await expect(page.getByTestId('saved-strategies').locator('[data-testid="strategy-open"]').filter({ hasText: title })).toHaveCount(0);
+  });
+
+  test('AI-чат: сообщение появляется в логе, очистка работает', async ({ page }) => {
+    await page.goto('/backtest');
+    // Лога ещё нет, пока не отправлено сообщение.
+    await expect(page.getByTestId('chat-log')).toHaveCount(0);
+    await page.getByTestId('chat-input').fill('сделай моментум на QQQ');
+    await page.getByTestId('chat-send').click();
+    // Сообщение пользователя сразу появляется в логе чата (оптимистично).
+    await expect(page.getByTestId('chat-log')).toContainText('сделай моментум на QQQ');
+    // В e2e нет ключа AIMLAPI → понятная ошибка (диалог при этом уже виден).
+    await expect(page.getByText('AI-чат недоступен')).toBeVisible({ timeout: 15000 });
+    // Очистка убирает историю чата.
+    await page.getByTestId('chat-clear').click();
+    await expect(page.getByTestId('chat-log')).toHaveCount(0);
   });
 });
