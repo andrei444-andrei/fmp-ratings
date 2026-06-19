@@ -34,8 +34,11 @@ export const MARKET_COSTS: Record<string, MarketCost> = {
 
 // Суффикс тикера → код рынка (для автоматического выбора модели издержек).
 // Зеркалится в движке (engine.ts) — держать синхронным.
+// FMP-стиль (WA/T/L/...) и EODHD-стиль (WAR/TSE/LSE/XETRA) суффиксы. Должно быть в синхроне с
+// картой SUFFIX в src/lib/backtest/engine.ts.
 export const SUFFIX_TO_MARKET: Record<string, string> = {
-  WA: 'PL', T: 'JP', L: 'UK', HK: 'HK', DE: 'DE', F: 'DE', PA: 'FR', TO: 'CA', V: 'CA',
+  WA: 'PL', WAR: 'PL', T: 'JP', TSE: 'JP', L: 'UK', LSE: 'UK',
+  HK: 'HK', DE: 'DE', XETRA: 'DE', F: 'DE', PA: 'FR', TO: 'CA', V: 'CA',
 };
 
 export type BacktestConfig = {
@@ -55,7 +58,11 @@ export type BacktestConfig = {
 // Пример стратегии по умолчанию (лонг/шорт по пересечению цены и SMA). Демонстрирует
 // событийный API on_bar(ctx) и шорты. Это обычная строка — её правит пользователь.
 export const DEFAULT_STRATEGY = `# Лонг/шорт по тренду: выше SMA — лонг, ниже — шорт.
+# Тикеры стратегии задаются ПРЯМО ЗДЕСЬ, в списке UNIVERSE (любые тикеры, доступные в EODHD:
+# US без суффикса, Польша .WA/.WAR, Токио .T и т.д.). Движок торгует ИМЕННО этот список.
 # ctx даёт ТОЛЬКО прошлое (до текущего бара) — заглянуть в будущее нельзя.
+UNIVERSE = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "JPM", "XOM"]
+
 def initialize(ctx):
     ctx.lookback = 100          # окно SMA (торговые дни)
 
@@ -136,11 +143,12 @@ export function normalizeBacktestConfig(input: unknown): BacktestConfig {
     .toUpperCase()
     .trim();
 
+  // Бенчмарк НЕ исключаем из вселенной: стратегия-таймер может торговать тот же тикер, что и бенчмарк
+  // (напр. вход/выход из QQQ vs buy & hold QQQ). Вселенную из конфига движок использует как запасную —
+  // если в скрипте задан UNIVERSE, приоритет у него.
   const rawUniverse = Array.isArray(c.universe) ? c.universe : d.universe;
   const universe = [
-    ...new Set(
-      rawUniverse.map(cleanSymbol).filter((s) => SYMBOL_RE.test(s) && s !== benchmark),
-    ),
+    ...new Set(rawUniverse.map(cleanSymbol).filter((s) => SYMBOL_RE.test(s))),
   ].slice(0, 60);
 
   // Таблица издержек: дефолтные пресеты + точечные переопределения с клиента.

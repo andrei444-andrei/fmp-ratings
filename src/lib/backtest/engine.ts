@@ -23,7 +23,9 @@ MARGIN_DAILY = float(CFG["marginRateAnnual"]) / 252.0
 COSTS = CFG["costs"]
 OVR = CFG.get("marketOverrides", {})
 DEFM = CFG.get("defaultMarket", "US")
-SUFFIX = {"WA": "PL", "T": "JP", "L": "UK", "HK": "HK", "DE": "DE", "F": "DE", "PA": "FR", "TO": "CA", "V": "CA"}
+# Суффиксы FMP-стиля И EODHD-стиля (WAR/TSE/LSE/XETRA) → код рынка для модели издержек.
+SUFFIX = {"WA": "PL", "WAR": "PL", "T": "JP", "TSE": "JP", "L": "UK", "LSE": "UK",
+          "HK": "HK", "DE": "DE", "XETRA": "DE", "F": "DE", "PA": "FR", "TO": "CA", "V": "CA"}
 
 def _warn(msg, title=None):
     try:
@@ -39,6 +41,9 @@ def market_of(sym):
         suf = s.rsplit(".", 1)[1]
         if suf in SUFFIX:
             return SUFFIX[suf]
+        if suf == "US":
+            return "US"
+        return "generic"  # неизвестная биржа: консервативные издержки, а не дефолт US
     return DEFM
 
 def cost_for(mk):
@@ -48,11 +53,17 @@ def cost_for(mk):
 ok = True
 on_bar = None
 initialize = None
+strat_uni = None
 strat_ns = {"pd": pd, "np": np}
 try:
     exec(STRATEGY_SRC, strat_ns)
     on_bar = strat_ns.get("on_bar")
     initialize = strat_ns.get("initialize")
+    # Тикеры стратегии задаются ПРЯМО В СКРИПТЕ переменной верхнего уровня UNIVERSE (или SYMBOLS) —
+    # это и есть торгуемая вселенная. Поля вселенной в UI остаются запасным вариантом.
+    strat_uni = strat_ns.get("UNIVERSE")
+    if strat_uni is None:
+        strat_uni = strat_ns.get("SYMBOLS")
 except Exception as e:
     emit(callout("Не удалось скомпилировать стратегию: " + str(e), tone="bad", title="Ошибка стратегии"))
     ok = False
@@ -63,7 +74,18 @@ if ok and not callable(on_bar):
 
 # ===== Данные =====
 bench = str(CFG["benchmark"]).upper()
-universe = [str(s).upper() for s in CFG["universe"]]
+# Источник вселенной: если скрипт объявил UNIVERSE/SYMBOLS — берём ИХ (тикеры в скрипте);
+# иначе откатываемся на вселенную из конфига (пресеты/свои тикеры из UI). Бенчмарк НЕ исключаем —
+# его можно и торговать (стратегия-таймер на QQQ vs buy&hold QQQ), и сравнивать одновременно.
+if isinstance(strat_uni, (list, tuple)) and len(strat_uni) > 0:
+    _src_uni = [str(s).upper().strip() for s in strat_uni]
+else:
+    _src_uni = [str(s).upper().strip() for s in CFG["universe"]]
+universe = []
+_seen_u = set()
+for _s in _src_uni:
+    if _s and _s not in _seen_u:
+        _seen_u.add(_s); universe.append(_s)
 PXFF_DF = pd.DataFrame()
 TRADE_SYMS = []
 bench_present = False
@@ -94,16 +116,16 @@ if ok:
     SYM_IDX = {s: j for j, s in enumerate(TRADE_SYMS)}
     PFF = PXFF_DF[TRADE_SYMS].values.astype(float)
 
-    # Детект синтетики: без ключа FMP цены генерятся по КАЛЕНДАРНЫМ дням (вкл. выходные),
+    # Детект синтетики: без ключей данных цены генерятся по КАЛЕНДАРНЫМ дням (вкл. выходные),
     # а реальный EOD — только торговые дни. Высокая доля выходных => демо-ряд, не котировки.
     try:
         _wk = float((PXFF_DF.index.dayofweek >= 5).mean())
     except Exception:
         _wk = 0.0
     if _wk > 0.10:
-        emit(callout("На сервере НЕТ ключа FMP — цены синтетические (демо, случайный ряд), это НЕ настоящий "
+        emit(callout("На сервере НЕТ ключей данных (EODHD/FMP) — цены синтетические (демо, случайный ряд), это НЕ настоящий "
                      + (TRADE_SYMS[0] if TRADE_SYMS else "тикер") + ". Кривая капитала и метрики бессмысленны. "
-                     "Чтобы тестировать на реальных данных, задайте FMP_API_KEY на сервере.",
+                     "Чтобы тестировать на реальных данных, задайте EODHD_API_KEY (или FMP_API_KEY) на сервере.",
                      tone="bad", title="Внимание: данные синтетические (демо)"))
 
     # Per-symbol модели издержек (массивы по индексу инструмента).
@@ -202,6 +224,11 @@ if ok:
     traded_notional_total = 0.0
     trades = []
     gross_sum = 0.0; net_sum = 0.0; exp_cnt = 0
+    avgcost = np.zeros(K)       # средняя цена входа текущей позиции — для реализованного PnL
+    realized = []               # реализованный PnL по закрытым/сокращённым позициям (вал. счёта)
+    load_sum = 0.0              # загрузка портфеля без кэш-эквивалентов — для средней загрузки
+    CASH_EQUIV = set(["BIL"])   # кэш-эквиваленты (паркинг ликвидности): НЕ считаем рыночной нагрузкой
+    cash_idx = [j for j, s in enumerate(TRADE_SYMS) if s in CASH_EQUIV]
     lev_warned = [False]
     err = None
 
@@ -246,10 +273,16 @@ if ok:
         prow0 = np.where(np.isnan(prow), 0.0, prow)
         equity_i = cash + float(pos.dot(prow0))
         eq[i] = equity_i
-        gross = float(np.sum(np.abs(pos * prow0)))
+        absexp = np.abs(pos * prow0)
+        gross = float(np.sum(absexp))
         net = float(np.sum(pos * prow0))
+        # Загрузка портфеля = валовая экспозиция БЕЗ кэш-эквивалентов (BIL) — паркинг не считаем нагрузкой.
+        load = gross
+        for j in cash_idx:
+            load -= float(absexp[j])
         if equity_i > 0:
-            gross_sum += gross / equity_i; net_sum += net / equity_i; exp_cnt += 1
+            gross_sum += gross / equity_i; net_sum += net / equity_i
+            load_sum += load / equity_i; exp_cnt += 1
         # Издержки удержания за день: заём под шорт + процент по дебету маржи.
         day_borrow = 0.0
         for j in range(K):
@@ -313,6 +346,19 @@ if ok:
             slp = notional * SLIP_BPS[j] / 1e4
             tax = notional * ((BUYTAX_BPS[j] if delta > 0 else SELLTAX_BPS[j]) / 1e4)
             cost = comm + spr + slp + tax
+            # Реализованный PnL по средней цене входа: фиксируем на сокращении/закрытии/перевороте.
+            p0 = pos[j]; ac = avgcost[j]
+            if p0 == 0:
+                avgcost[j] = pj
+            elif (p0 > 0) == (delta > 0):
+                avgcost[j] = (ac * abs(p0) + pj * abs(delta)) / (abs(p0) + abs(delta))
+            else:
+                closed = min(abs(delta), abs(p0))
+                realized.append((pj - ac) * closed if p0 > 0 else (ac - pj) * closed)
+                if abs(delta) > abs(p0):
+                    avgcost[j] = pj
+                elif abs(delta) == abs(p0):
+                    avgcost[j] = 0.0
             cash -= delta * pj
             cash -= cost
             pos[j] = tgt[j]
@@ -346,6 +392,26 @@ if ok:
         maxdd = float(dd_series.min())
         calmar = (cagr / abs(maxdd)) if maxdd < 0 else 0.0
 
+        # Те же метрики для произвольной кривой капитала (нужно для бенчмарка) — единая формула.
+        def _series_metrics(s):
+            r = s.pct_change().dropna()
+            if len(r) < 2:
+                return None
+            sd2 = float(r.std())
+            ng = r[r < 0]
+            dd2 = float(ng.std()) * math.sqrt(252.0) if len(ng) > 1 else 0.0
+            dser = s / s.cummax() - 1.0
+            a0 = float(s.iloc[0]); a1 = float(s.iloc[-1]); yr = len(s) / 252.0
+            return {
+                "vol": sd2 * math.sqrt(252.0),
+                "sharpe": (float(r.mean()) / sd2 * math.sqrt(252.0)) if sd2 > 0 else 0.0,
+                "sortino": (float(r.mean()) * 252.0 / dd2) if dd2 > 0 else 0.0,
+                "maxdd": float(dser.min()),
+                "tot": (a1 / a0 - 1.0) if a0 > 0 else -1.0,
+                "cagr": ((a1 / a0) ** (1.0 / yr) - 1.0) if (a1 > 0 and a0 > 0 and yr > 0) else -1.0,
+                "calmar": 0.0,
+            }
+
         # Бенчмарк buy & hold.
         b_tot = None; bench_eq = None
         if bench_present:
@@ -355,22 +421,64 @@ if ok:
                 b0 = float(bvalid.iloc[0])
                 bench_eq = INIT_CAP * (b / b0)
                 b_tot = float(bvalid.iloc[-1] / b0 - 1.0)
+        bm = _series_metrics(bench_eq.dropna()) if bench_eq is not None else None
+        if bm is not None:
+            bm["calmar"] = (bm["cagr"] / abs(bm["maxdd"])) if bm["maxdd"] < 0 else 0.0
 
-        # --- KPI: результат ---
-        delta_bm = (str(round((tot - b_tot) * 100, 1)) + " пп к БМ") if b_tot is not None else None
+        # Сделочная статистика по реализованному PnL (винрейт / средняя прибыль / средний убыток).
+        wins = [p for p in realized if p > 0]
+        losses = [p for p in realized if p < 0]
+        n_closed = len(wins) + len(losses)
+        winrate = (len(wins) / n_closed * 100.0) if n_closed else 0.0
+        avg_win = (sum(wins) / len(wins)) if wins else 0.0
+        avg_loss = (sum(losses) / len(losses)) if losses else 0.0
+        avg_load = (load_sum / exp_cnt) if exp_cnt else 0.0
+        ret_on_load = (tot / avg_load) if avg_load > 0 else 0.0
+
+        # Форматтеры значений для таблицы метрик (число / процент / деньги со знаком).
+        def _f2(x):
+            try: return "%.2f" % float(x)
+            except Exception: return "—"
+        def _fp1(x):
+            try: return "%.1f%%" % float(x)
+            except Exception: return "—"
+        def _fm(x):
+            try: v = int(round(float(x)))
+            except Exception: return "—"
+            s = format(abs(v), ",").replace(",", " ")
+            return ("+" if v > 0 else ("-" if v < 0 else "")) + s
+
+        # --- Ключевые метрики (карточки): доходность, CAGR, макс. просадка — с бенчмарком ПОД каждой. ---
+        delta_bm = ("%.1f пп к БМ" % ((tot - b_tot) * 100.0)) if b_tot is not None else None
+        h_tot = (bench + " " + ("%+.1f%%" % (b_tot * 100.0))) if b_tot is not None else None
+        h_cagr = (bench + " " + ("%+.1f%%" % (bm["cagr"] * 100.0))) if bm is not None else None
+        h_mdd = (bench + " " + ("%.1f%%" % (bm["maxdd"] * 100.0))) if bm is not None else None
         emit(cards(
-            kpi("CAGR", str(round(cagr * 100, 1)) + "%"),
-            kpi("Итог. доходность", str(round(tot * 100, 1)) + "%", delta=delta_bm),
-            kpi("Sharpe", round(sharpe, 2)),
-            kpi("Макс. просадка", str(round(maxdd * 100, 1)) + "%"),
-            kpi("Calmar", round(calmar, 2)),
+            kpi("Итог. доходность", "%.1f%%" % (tot * 100.0), delta=delta_bm, hint=h_tot),
+            kpi("CAGR", "%.1f%%" % (cagr * 100.0), hint=h_cagr),
+            kpi("Макс. просадка", "%.1f%%" % (maxdd * 100.0), hint=h_mdd),
         ))
-        emit(cards(
-            kpi("Волатильность", str(round(vol * 100, 1)) + "%"),
-            kpi("Sortino", round(sortino, 2)),
-            kpi("Сделок", len(trades)),
-            kpi("Бенчмарк", (str(round(b_tot * 100, 1)) + "%") if b_tot is not None else "—", hint=bench),
-        ))
+
+        # --- Прочие метрики — таблицей, с колонкой бенчмарка (— там, где для buy & hold неприменимо). ---
+        def _bm2(k): return _f2(bm[k]) if bm is not None else "—"
+        def _bmp(k): return (_fp1(bm[k] * 100.0) if bm is not None else "—")
+        mrows = [
+            {"Метрика": "Sharpe", "Стратегия": _f2(sharpe), "Бенчмарк": _bm2("sharpe")},
+            {"Метрика": "Sortino", "Стратегия": _f2(sortino), "Бенчмарк": _bm2("sortino")},
+            {"Метрика": "Calmar", "Стратегия": _f2(calmar), "Бенчмарк": _bm2("calmar")},
+            {"Метрика": "Волатильность", "Стратегия": _fp1(vol * 100.0), "Бенчмарк": _bmp("vol")},
+            {"Метрика": "Сделок", "Стратегия": str(len(trades)), "Бенчмарк": "—"},
+            {"Метрика": "Винрейт", "Стратегия": (_fp1(winrate) if n_closed else "—"), "Бенчмарк": "—"},
+            {"Метрика": "Ср. прибыль/сделку", "Стратегия": (_fm(avg_win) if wins else "—"), "Бенчмарк": "—"},
+            {"Метрика": "Ср. убыток/сделку", "Стратегия": (_fm(avg_loss) if losses else "—"), "Бенчмарк": "—"},
+            {"Метрика": "Ср. загрузка", "Стратегия": _fp1(avg_load * 100.0), "Бенчмарк": "100.0%"},
+            {"Метрика": "Доходность/загрузка",
+             "Стратегия": (_fp1(ret_on_load * 100.0) if avg_load > 0 else "—"),
+             "Бенчмарк": (_fp1(b_tot * 100.0) if b_tot is not None else "—")},
+        ]
+        emit(table(pd.DataFrame(mrows, columns=["Метрика", "Стратегия", "Бенчмарк"]),
+                   formats={"Метрика": "text", "Стратегия": "text", "Бенчмарк": "text"},
+                   title="Метрики · стратегия vs " + bench))
 
         # (Кривая капитала рисуется итеративно по ходу прогона — клиентский SVG, см. data-bt-equity.)
 
@@ -441,15 +549,18 @@ if ok:
                            title="Сделки (последние " + str(min(200, len(trades))) + " из " + str(len(trades)) + ")"))
             else:
                 _warn("Стратегия не совершила ни одной сделки. Торгуемая вселенная (ctx.symbols): "
-                      + ", ".join(TRADE_SYMS[:25]) + ". Стратегия торгует ТОЛЬКО то, что во вселенной — "
-                      "если нужного тикера тут нет (например QQQ), добавьте его в поле «Свои тикеры». "
+                      + ", ".join(TRADE_SYMS[:25]) + ". Тикеры задаются в скрипте переменной UNIVERSE = [...] "
+                      "(торгуется ИМЕННО этот список). Если нужного тикера тут нет — добавьте его в UNIVERSE. "
                       "Иначе проверьте условия входа и длину истории.", "Нет сделок")
         except Exception as e:
             _warn("Не удалось отрисовать лог сделок: " + str(e))
 
         emit(callout("Исполнение: решение на close бара t, заявка исполняется по close бара t+1 (без заглядывания вперёд). "
                      "Издержки (комиссия, полу-спред, слиппедж, налоги) удерживаются с каждой сделки по модели рынка инструмента; "
-                     "заём под шорт и процент по дебету маржи начисляются ежедневно. Без ключа FMP данные синтетические (демо). "
+                     "заём под шорт и процент по дебету маржи начисляются ежедневно. "
+                     "Винрейт / ср. прибыль / ср. убыток — по реализованным сделкам (средняя цена входа). "
+                     "Ср. загрузка = валовая экспозиция без кэш-эквивалентов (BIL); доходность/загрузка = итог. доходность ÷ ср. загрузку. "
+                     "Данные берутся из EODHD (adjusted), FMP — резерв; без ключей ряд заменяется демонстрационной синтетикой. "
                      "Это исследовательский инструмент, не инвестсовет.", tone="good", title="Готово — допущения теста"))
         print("Готово.")
     result = None
