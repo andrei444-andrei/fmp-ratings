@@ -34,8 +34,11 @@ export const MARKET_COSTS: Record<string, MarketCost> = {
 
 // Суффикс тикера → код рынка (для автоматического выбора модели издержек).
 // Зеркалится в движке (engine.ts) — держать синхронным.
+// FMP-стиль (WA/T/L/...) и EODHD-стиль (WAR/TSE/LSE/XETRA) суффиксы. Должно быть в синхроне с
+// картой SUFFIX в src/lib/backtest/engine.ts.
 export const SUFFIX_TO_MARKET: Record<string, string> = {
-  WA: 'PL', T: 'JP', L: 'UK', HK: 'HK', DE: 'DE', F: 'DE', PA: 'FR', TO: 'CA', V: 'CA',
+  WA: 'PL', WAR: 'PL', T: 'JP', TSE: 'JP', L: 'UK', LSE: 'UK',
+  HK: 'HK', DE: 'DE', XETRA: 'DE', F: 'DE', PA: 'FR', TO: 'CA', V: 'CA',
 };
 
 export type BacktestConfig = {

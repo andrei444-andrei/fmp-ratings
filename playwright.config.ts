@@ -31,6 +31,14 @@ export default defineConfig({
     // Локальная SQLite + детерминизм: без ключей AIMLAPI/FMP. Дефолтного скрипта в
     // продукте нет — под флагом E2E_ALLOW_CODE сервер принимает Python из тела запроса
     // (его подкладывает сам тест), Python исполняется по-настоящему на синтетических ценах.
-    env: { LOCAL_SQLITE_PATH: 'local.db', AIMLAPI_KEY: '', FMP_API_KEY: '', E2E_ALLOW_CODE: '1' },
+    // EODHD_API_KEY проброшен из окружения (если задан) — для интеграционного прогона бэктеста на
+    // РЕАЛЬНЫХ данных; по умолчанию пуст → синтетика (детерминированные e2e без ключей).
+    env: {
+      LOCAL_SQLITE_PATH: 'local.db',
+      AIMLAPI_KEY: '',
+      FMP_API_KEY: process.env.FMP_API_KEY ?? '',
+      EODHD_API_KEY: process.env.EODHD_API_KEY ?? '',
+      E2E_ALLOW_CODE: '1',
+    },
   },
 });

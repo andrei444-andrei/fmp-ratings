@@ -23,7 +23,9 @@ MARGIN_DAILY = float(CFG["marginRateAnnual"]) / 252.0
 COSTS = CFG["costs"]
 OVR = CFG.get("marketOverrides", {})
 DEFM = CFG.get("defaultMarket", "US")
-SUFFIX = {"WA": "PL", "T": "JP", "L": "UK", "HK": "HK", "DE": "DE", "F": "DE", "PA": "FR", "TO": "CA", "V": "CA"}
+# Суффиксы FMP-стиля И EODHD-стиля (WAR/TSE/LSE/XETRA) → код рынка для модели издержек.
+SUFFIX = {"WA": "PL", "WAR": "PL", "T": "JP", "TSE": "JP", "L": "UK", "LSE": "UK",
+          "HK": "HK", "DE": "DE", "XETRA": "DE", "F": "DE", "PA": "FR", "TO": "CA", "V": "CA"}
 
 def _warn(msg, title=None):
     try:
@@ -39,6 +41,9 @@ def market_of(sym):
         suf = s.rsplit(".", 1)[1]
         if suf in SUFFIX:
             return SUFFIX[suf]
+        if suf == "US":
+            return "US"
+        return "generic"  # неизвестная биржа: консервативные издержки, а не дефолт US
     return DEFM
 
 def cost_for(mk):
