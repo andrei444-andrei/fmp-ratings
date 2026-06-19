@@ -25,6 +25,7 @@ import {
 import { DEFAULT_STRATEGY, UNIVERSE_PRESETS } from '@/lib/backtest/presets';
 
 // Сохранённые сущности бэктеста: стратегии (переиспользуемый код) и прогоны (результаты).
+type ChatMsg = { role: 'user' | 'assistant'; content: string };
 type SavedStrategyItem = { id: number; title: string | null; created_at: string };
 type SavedRunItem = {
   id: number;
@@ -218,9 +219,12 @@ function Backtest() {
 
   // ── Стратегия ──
   const [strategy, setStrategy] = useState(DEFAULT_STRATEGY);
-  const [draftPrompt, setDraftPrompt] = useState('');
-  const [drafting, setDrafting] = useState(false);
   const [draftRestored, setDraftRestored] = useState(false);
+  // AI-чат: многошаговый диалог о стратегии. Код из ответа применяется в редактор; история сохраняется со стратегией.
+  const [chatMessages, setChatMessages] = useState<ChatMsg[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatBusy, setChatBusy] = useState(false);
+  const chatRef = useRef<HTMLDivElement>(null);
   // Активная (открытая) сохранённая стратегия — к ней привязываются результаты прогонов.
   const [activeStrategyId, setActiveStrategyId] = useState<number | null>(null);
   const [activeStrategyTitle, setActiveStrategyTitle] = useState<string | null>(null);
@@ -335,6 +339,9 @@ function Backtest() {
   useEffect(() => {
     outRef.current?.scrollTo({ top: outRef.current.scrollHeight, behavior: 'smooth' });
   }, [blocks, log, status]);
+  useEffect(() => {
+    chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight, behavior: 'smooth' });
+  }, [chatMessages, chatBusy]);
 
   function togglePreset(id: string) {
     setPresets((prev) => {
@@ -376,57 +383,43 @@ function Backtest() {
     }
   }
 
-  async function draft() {
-    if (drafting) return;
-    if (!draftPrompt.trim()) {
-      toast({ variant: 'error', title: 'Опишите стратегию', description: 'Например: «лонг при пробое 50-дневного максимума, шорт при пробое минимума».' });
-      return;
-    }
-    setDrafting(true);
+  // AI-чат: отправляем всю историю, ответ кладём в чат, извлечённый код применяем в редактор.
+  async function sendChat() {
+    const text = chatInput.trim();
+    if (!text || chatBusy) return;
+    const next: ChatMsg[] = [...chatMessages, { role: 'user', content: text }];
+    setChatMessages(next);
+    setChatInput('');
+    setChatBusy(true);
     try {
       const r = await fetch('/api/backtest/draft', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ prompt: draftPrompt }),
+        body: JSON.stringify({ messages: next }),
       });
       const d = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(d?.error || 'Не удалось сгенерировать');
-      if (d?.code) {
+      if (!r.ok) throw new Error(d?.error || 'Не удалось получить ответ');
+      const reply = typeof d?.reply === 'string' && d.reply.trim() ? d.reply : '(пустой ответ)';
+      setChatMessages([...next, { role: 'assistant', content: reply }]);
+      if (typeof d?.code === 'string' && d.code.trim()) {
         setStrategy(d.code);
-        // Новая модель: тикеры задаются в скрипте (UNIVERSE). Если код уже объявил вселенную —
-        // ничего добавлять не нужно (UI подхватит её из кода). Иначе откатываемся на старое
-        // поведение: дописываем извлечённые тикеры в «свои тикеры» как запасную вселенную.
-        if (hasScriptUniverse(d.code)) {
-          const parsed = parseScriptUniverse(d.code);
-          toast({
-            variant: 'success',
-            title: 'Черновик готов',
-            description: parsed.length
-              ? 'Вселенная в скрипте (UNIVERSE): ' + parsed.join(', ') + '. Проверьте код перед запуском.'
-              : 'Вселенная задана в скрипте (UNIVERSE). Проверьте код перед запуском.',
-          });
-        } else {
-          const codeTickers: string[] = Array.isArray(d?.tickers) ? d.tickers : [];
-          const have = new Set(
-            custom.split(/[\s,;]+/).map((s) => s.toUpperCase().trim()).filter(Boolean),
-          );
-          const add = codeTickers.filter((t) => {
-            const u = String(t).toUpperCase();
-            return SYMBOL_RE.test(u) && !have.has(u);
-          });
-          if (add.length) {
-            setCustom((prev) => (prev.trim() ? prev.trim() + ', ' : '') + add.join(', '));
-            toast({ variant: 'success', title: 'Черновик готов', description: 'Во вселенную добавлены: ' + add.join(', ') + '. Проверьте код перед запуском.' });
-          } else {
-            toast({ variant: 'success', title: 'Черновик готов', description: 'Проверьте код перед запуском.' });
-          }
-        }
+        toast({
+          variant: 'success',
+          title: 'Код обновлён из чата',
+          description: d?.truncated ? 'Ответ обрезан по лимиту — попросите вариант покороче.' : 'Проверьте код перед запуском.',
+        });
+      } else if (d?.truncated) {
+        toast({ variant: 'error', title: 'Ответ обрезан', description: 'Слишком длинный ответ — упростите запрос.' });
       }
     } catch (e: any) {
-      toast({ variant: 'error', title: 'Ошибка AI-черновика', description: e?.message });
+      toast({ variant: 'error', title: 'Ошибка AI-чата', description: e?.message });
     } finally {
-      setDrafting(false);
+      setChatBusy(false);
     }
+  }
+  function clearChat() {
+    setChatMessages([]);
+    setChatInput('');
   }
 
   // Автосохранение результата прогона: после удачного прогона снимок уходит в «Автосохранения».
@@ -556,7 +549,7 @@ function Backtest() {
         const r = await fetch('/api/backtest/strategies', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ title: strategyModal.title.trim(), code: strategy, config: buildConfig() }),
+          body: JSON.stringify({ title: strategyModal.title.trim(), code: strategy, config: buildConfig(), chat: chatMessages.slice(-40) }),
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d?.error || 'Не удалось сохранить стратегию');
@@ -588,7 +581,7 @@ function Backtest() {
       const r = await fetch(`/api/backtest/strategies/${activeStrategyId}`, {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ code: strategy, config: buildConfig() }),
+        body: JSON.stringify({ code: strategy, config: buildConfig(), chat: chatMessages.slice(-40) }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d?.error || 'Не удалось обновить');
@@ -610,6 +603,13 @@ function Backtest() {
           /* битый конфиг — игнорируем */
         }
       }
+      // Восстанавливаем историю AI-чата стратегии.
+      try {
+        const arr = s.chat ? JSON.parse(s.chat) : [];
+        setChatMessages(Array.isArray(arr) ? arr.filter((m: any) => m && typeof m.content === 'string') : []);
+      } catch {
+        setChatMessages([]);
+      }
       setActiveStrategyId(s.id);
       setActiveStrategyTitle(s.title || null);
       // Сбрасываем область результата (открыли стратегию, а не результат).
@@ -630,7 +630,9 @@ function Backtest() {
     setActiveStrategyId(null);
     setActiveStrategyTitle(null);
     setDraftRestored(false);
-    toast({ variant: 'success', title: 'Новая стратегия', description: 'Редактор сброшен к примеру.' });
+    setChatMessages([]);
+    setChatInput('');
+    toast({ variant: 'success', title: 'Новая стратегия', description: 'Редактор и чат сброшены.' });
   }
   async function onDeleteStrategy(id: number) {
     try {
@@ -1040,40 +1042,81 @@ function Backtest() {
                 <p className="text-[11px] text-ink-3">Восстановлен несохранённый черновик кода (автосохранение).</p>
               )}
 
-              {/* AI-помощник: описание задачи словами → готовый код стратегии */}
+              {/* AI-чат: диалог о стратегии. Код из ответа применяется в редактор; история сохраняется со стратегией. */}
               <div className="space-y-2 rounded-fk border border-line bg-surface-2 p-3">
                 <div className="flex items-center gap-2">
                   <span className="flex h-5 w-5 items-center justify-center rounded-fk-pill bg-brand-50 text-[10px] font-bold text-brand">AI</span>
-                  <span className="text-[13px] font-semibold text-ink">Сгенерировать стратегию по описанию</span>
+                  <span className="text-[13px] font-semibold text-ink">AI-чат: опишите и дорабатывайте стратегию</span>
+                  {chatMessages.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={clearChat}
+                      data-testid="chat-clear"
+                      className="ml-auto text-[11px] text-ink-3 transition-colors hover:text-ink"
+                    >
+                      Очистить чат
+                    </button>
+                  )}
                 </div>
+
+                {chatMessages.length > 0 && (
+                  <div
+                    ref={chatRef}
+                    data-testid="chat-log"
+                    className="max-h-[300px] space-y-2 overflow-auto rounded-fk border border-line bg-surface-elev p-2"
+                  >
+                    {chatMessages.map((m, i) => (
+                      <div key={i} className={m.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
+                        <div
+                          className={`max-w-[88%] rounded-fk px-2.5 py-1.5 text-[12.5px] ${
+                            m.role === 'user' ? 'bg-brand-50 text-ink' : 'bg-surface-2 text-ink-2'
+                          }`}
+                        >
+                          {m.role === 'assistant' ? (
+                            <div className="rdesc" dangerouslySetInnerHTML={{ __html: renderMd(m.content) }} />
+                          ) : (
+                            <span className="whitespace-pre-wrap">{m.content}</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                    {chatBusy && (
+                      <div className="flex justify-start">
+                        <div className="inline-flex items-center gap-2 rounded-fk bg-surface-2 px-2.5 py-1.5 text-[12.5px] text-ink-3">
+                          <Spinner className="text-brand" /> думаю…
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <Textarea
-                  aria-label="Описание задачи для AI"
-                  value={draftPrompt}
-                  onChange={(e) => setDraftPrompt(e.target.value)}
-                  data-testid="draft-prompt"
+                  aria-label="Сообщение AI-чату"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  data-testid="chat-input"
                   placeholder={
-                    'Опишите словами, что должна делать стратегия. Например:\n' +
-                    '• Лонг, пока цена выше 200-дневной SMA, иначе уходим в кэш.\n' +
-                    '• Раз в месяц держим топ-5 по 6-месячному моментуму, шортим худшие 5.\n' +
-                    '• Покупка при пробое 50-дневного максимума, выход ниже 20-дневного минимума.'
+                    chatMessages.length
+                      ? 'Доработка: «добавь стоп 5%», «торгуй только QQQ», «ребаланс раз в месяц», «объясни, почему так»…'
+                      : 'Опишите стратегию словами. Напр.: «Лонг, пока цена выше 200-дневной SMA, иначе в кэш».'
                   }
-                  className="min-h-[110px] text-[13px]"
+                  className="min-h-[80px] text-[13px]"
                   onKeyDown={(e) => {
-                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') draft();
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') sendChat();
                   }}
                 />
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-[11px] text-ink-3">Код подставится в редактор ниже — проверьте перед запуском. ⌘/Ctrl+Enter</span>
+                  <span className="text-[11px] text-ink-3">Код из ответа применяется в редактор ниже. ⌘/Ctrl+Enter — отправить.</span>
                   <Button
                     variant="secondary"
                     size="sm"
-                    onClick={draft}
-                    loading={drafting}
-                    disabled={!draftPrompt.trim()}
-                    data-testid="draft-btn"
+                    onClick={sendChat}
+                    loading={chatBusy}
+                    disabled={!chatInput.trim()}
+                    data-testid="chat-send"
                     className="shrink-0"
                   >
-                    {drafting ? 'Генерирую…' : 'Сгенерировать код'}
+                    {chatBusy ? 'Думаю…' : 'Отправить'}
                   </Button>
                 </div>
               </div>
