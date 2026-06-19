@@ -29,6 +29,7 @@ export function Heatmap({
   rowLabel,
   colLabel,
   selected,
+  picked,
   onSelect,
   fmt = (v) => (v == null ? '—' : v.toFixed(2)),
 }: {
@@ -38,6 +39,7 @@ export function Heatmap({
   rowLabel: string;
   colLabel: string;
   selected?: { row: number | string; col: number | string } | null;
+  picked?: Set<string>; // ключи `${row}|${col}` для мультивыбора (совокупная статистика)
   onSelect?: (cell: HeatCell) => void;
   fmt?: (v: number | null) => string;
 }) {
@@ -68,7 +70,8 @@ export function Heatmap({
               {cols.map((c) => {
                 const cell = lookup.get(`${r}|${c}`);
                 const v = cell?.value ?? null;
-                const isSel = selected && selected.row === r && selected.col === c;
+                const isSel =
+                  (picked && picked.has(`${r}|${c}`)) || (selected && selected.row === r && selected.col === c);
                 return (
                   <td key={String(c)} className="p-0">
                     <button
@@ -84,6 +87,9 @@ export function Heatmap({
                       <span className="font-semibold text-ink">{fmt(v)}</span>
                       {cell?.n != null && <span className="text-[9px] text-ink-3">n={cell.n}</span>}
                       {cell?.sig && <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-fk-pill bg-brand" title="значимо (FDR)" />}
+                      {picked && picked.has(`${r}|${c}`) && (
+                        <span className="absolute left-1 top-1 h-1.5 w-1.5 rounded-fk-pill bg-brand" title="в совокупности" />
+                      )}
                     </button>
                   </td>
                 );
