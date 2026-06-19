@@ -346,15 +346,15 @@ if ok:
             slp = notional * SLIP_BPS[j] / 1e4
             tax = notional * ((BUYTAX_BPS[j] if delta > 0 else SELLTAX_BPS[j]) / 1e4)
             cost = comm + spr + slp + tax
-            # Реализованный PnL по средней цене входа: фиксируем на сокращении/закрытии/перевороте.
+            # Реализованный результат сделки в ПРОЦЕНТАХ к цене входа (фиксация на сокращении/закрытии/перевороте).
             p0 = pos[j]; ac = avgcost[j]
             if p0 == 0:
                 avgcost[j] = pj
             elif (p0 > 0) == (delta > 0):
                 avgcost[j] = (ac * abs(p0) + pj * abs(delta)) / (abs(p0) + abs(delta))
             else:
-                closed = min(abs(delta), abs(p0))
-                realized.append((pj - ac) * closed if p0 > 0 else (ac - pj) * closed)
+                if ac > 0:
+                    realized.append(((pj - ac) if p0 > 0 else (ac - pj)) / ac * 100.0)
                 if abs(delta) > abs(p0):
                     avgcost[j] = pj
                 elif abs(delta) == abs(p0):
@@ -425,28 +425,27 @@ if ok:
         if bm is not None:
             bm["calmar"] = (bm["cagr"] / abs(bm["maxdd"])) if bm["maxdd"] < 0 else 0.0
 
-        # Сделочная статистика по реализованному PnL (винрейт / средняя прибыль / средний убыток).
+        # Сделочная статистика: винрейт и средняя прибыль/убыток В ПРОЦЕНТАХ за сделку (по реализованным сделкам).
         wins = [p for p in realized if p > 0]
         losses = [p for p in realized if p < 0]
         n_closed = len(wins) + len(losses)
         winrate = (len(wins) / n_closed * 100.0) if n_closed else 0.0
-        avg_win = (sum(wins) / len(wins)) if wins else 0.0
-        avg_loss = (sum(losses) / len(losses)) if losses else 0.0
+        avg_win = (sum(wins) / len(wins)) if wins else 0.0        # % за сделку
+        avg_loss = (sum(losses) / len(losses)) if losses else 0.0  # % за сделку
         avg_load = (load_sum / exp_cnt) if exp_cnt else 0.0
-        ret_on_load = (tot / avg_load) if avg_load > 0 else 0.0
+        # Доходность на загрузку В ГОДОВОМ ЭКВИВАЛЕНТЕ: CAGR ÷ средняя загрузка.
+        ret_on_load = (cagr / avg_load) if avg_load > 0 else 0.0
 
-        # Форматтеры значений для таблицы метрик (число / процент / деньги со знаком).
+        # Форматтеры значений для таблицы метрик (число / процент со знаком).
         def _f2(x):
             try: return "%.2f" % float(x)
             except Exception: return "—"
         def _fp1(x):
             try: return "%.1f%%" % float(x)
             except Exception: return "—"
-        def _fm(x):
-            try: v = int(round(float(x)))
+        def _fps(x):
+            try: return "%+.1f%%" % float(x)
             except Exception: return "—"
-            s = format(abs(v), ",").replace(",", " ")
-            return ("+" if v > 0 else ("-" if v < 0 else "")) + s
 
         # --- Ключевые метрики (карточки): доходность, CAGR, макс. просадка — с бенчмарком ПОД каждой. ---
         delta_bm = ("%.1f пп к БМ" % ((tot - b_tot) * 100.0)) if b_tot is not None else None
@@ -469,12 +468,12 @@ if ok:
             {"Метрика": "Волатильность", "Стратегия": _fp1(vol * 100.0), "Бенчмарк": _bmp("vol")},
             {"Метрика": "Сделок", "Стратегия": str(len(trades)), "Бенчмарк": "—"},
             {"Метрика": "Винрейт", "Стратегия": (_fp1(winrate) if n_closed else "—"), "Бенчмарк": "—"},
-            {"Метрика": "Ср. прибыль/сделку", "Стратегия": (_fm(avg_win) if wins else "—"), "Бенчмарк": "—"},
-            {"Метрика": "Ср. убыток/сделку", "Стратегия": (_fm(avg_loss) if losses else "—"), "Бенчмарк": "—"},
+            {"Метрика": "Ср. прибыль/сделку", "Стратегия": (_fps(avg_win) if wins else "—"), "Бенчмарк": "—"},
+            {"Метрика": "Ср. убыток/сделку", "Стратегия": (_fps(avg_loss) if losses else "—"), "Бенчмарк": "—"},
             {"Метрика": "Ср. загрузка", "Стратегия": _fp1(avg_load * 100.0), "Бенчмарк": "100.0%"},
-            {"Метрика": "Доходность/загрузка",
-             "Стратегия": (_fp1(ret_on_load * 100.0) if avg_load > 0 else "—"),
-             "Бенчмарк": (_fp1(b_tot * 100.0) if b_tot is not None else "—")},
+            {"Метрика": "Доходность/загрузка (годовых)",
+             "Стратегия": (_fps(ret_on_load * 100.0) if avg_load > 0 else "—"),
+             "Бенчмарк": (_fps(bm["cagr"] * 100.0) if bm is not None else "—")},
         ]
         emit(table(pd.DataFrame(mrows, columns=["Метрика", "Стратегия", "Бенчмарк"]),
                    formats={"Метрика": "text", "Стратегия": "text", "Бенчмарк": "text"},
@@ -558,8 +557,8 @@ if ok:
         emit(callout("Исполнение: решение на close бара t, заявка исполняется по close бара t+1 (без заглядывания вперёд). "
                      "Издержки (комиссия, полу-спред, слиппедж, налоги) удерживаются с каждой сделки по модели рынка инструмента; "
                      "заём под шорт и процент по дебету маржи начисляются ежедневно. "
-                     "Винрейт / ср. прибыль / ср. убыток — по реализованным сделкам (средняя цена входа). "
-                     "Ср. загрузка = валовая экспозиция без кэш-эквивалентов (BIL); доходность/загрузка = итог. доходность ÷ ср. загрузку. "
+                     "Винрейт / ср. прибыль / ср. убыток — по реализованным сделкам, в % за сделку (к средней цене входа). "
+                     "Ср. загрузка = валовая экспозиция без кэш-эквивалентов (BIL); доходность/загрузка = CAGR ÷ ср. загрузку (годовых). "
                      "Данные берутся из EODHD (adjusted), FMP — резерв; без ключей ряд заменяется демонстрационной синтетикой. "
                      "Это исследовательский инструмент, не инвестсовет.", tone="good", title="Готово — допущения теста"))
         print("Готово.")

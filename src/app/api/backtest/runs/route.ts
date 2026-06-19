@@ -22,11 +22,14 @@ export async function POST(req: Request) {
   const resultHtml = body?.resultHtml != null ? String(body.resultHtml) : null;
   if (!resultHtml) return Response.json({ error: 'nothing to save' }, { status: 400 });
   try {
+    const autosaved = body?.autosaved === true;
     const title = (body?.title ?? '').toString().trim() || autoTitle();
     const description = body?.description != null ? String(body.description) : null;
     const config = body?.config != null ? JSON.stringify(body.config) : '{}';
     const strategy = body?.strategy != null ? String(body.strategy) : '';
-    const id = await saveBacktestRun({ title, description, config, strategy, resultHtml });
+    const strategyId =
+      body?.strategyId == null ? null : Number.isFinite(Number(body.strategyId)) ? Number(body.strategyId) : null;
+    const id = await saveBacktestRun({ title, description, config, strategy, resultHtml, strategyId, autosaved });
     return Response.json({ id, title });
   } catch (e: any) {
     return Response.json({ error: e?.message || 'db error' }, { status: 500 });

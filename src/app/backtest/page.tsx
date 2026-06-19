@@ -24,9 +24,18 @@ import {
 } from '@/components/ui';
 import { DEFAULT_STRATEGY, UNIVERSE_PRESETS } from '@/lib/backtest/presets';
 
-type SavedRunItem = { id: number; title: string | null; created_at: string };
+// Сохранённые сущности бэктеста: стратегии (переиспользуемый код) и прогоны (результаты).
+type SavedStrategyItem = { id: number; title: string | null; created_at: string };
+type SavedRunItem = {
+  id: number;
+  strategy_id: number | null;
+  title: string | null;
+  autosaved: boolean;
+  created_at: string;
+};
 
 const SYMBOL_RE = /^[A-Z0-9][A-Z0-9.\-]{0,11}$/;
+const DRAFT_KEY = 'bt:draft:code'; // автосохранение черновика кода в localStorage (не теряем правки)
 
 // Тикеры стратегии задаются в самом скрипте: переменная верхнего уровня UNIVERSE = [...] (или SYMBOLS).
 // Парсим её на клиенте — чтобы показать состав и не блокировать запуск, когда вселенная задана в коде.
@@ -56,6 +65,20 @@ function renderMd(md: string): string {
   } catch {
     return esc(md);
   }
+}
+
+// Короткая метка времени из ISO created_at (для списка автосохранений).
+function fmtWhen(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function autoStamp(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 type EquityPayload = {
@@ -144,6 +167,13 @@ function equitySvg(p: EquityPayload | null): string {
   );
 }
 
+// Сборка HTML результата (кривая + лог + блоки) — общая для ручного сохранения и автосохранения.
+function composeResultHtml(chart: EquityPayload | null, logStr: string, blks: string[]): string {
+  const logHtml = logStr ? `<pre class="rlog">${esc(logStr)}</pre>` : '';
+  const chartHtml = chart ? equitySvg(chart) : '';
+  return chartHtml + logHtml + blks.join('');
+}
+
 function TrashIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -190,6 +220,12 @@ function Backtest() {
   const [strategy, setStrategy] = useState(DEFAULT_STRATEGY);
   const [draftPrompt, setDraftPrompt] = useState('');
   const [drafting, setDrafting] = useState(false);
+  const [draftRestored, setDraftRestored] = useState(false);
+  // Активная (открытая) сохранённая стратегия — к ней привязываются результаты прогонов.
+  const [activeStrategyId, setActiveStrategyId] = useState<number | null>(null);
+  const [activeStrategyTitle, setActiveStrategyTitle] = useState<string | null>(null);
+  const activeStrategyIdRef = useRef<number | null>(null);
+  activeStrategyIdRef.current = activeStrategyId;
 
   // ── Прогон ──
   const [running, setRunning] = useState(false);
@@ -202,13 +238,16 @@ function Backtest() {
   const [openedRunId, setOpenedRunId] = useState<number | null>(null);
   const lastConfigRef = useRef<Record<string, unknown> | null>(null);
 
-  // ── Сохранённые прогоны ──
-  const [savedRuns, setSavedRuns] = useState<SavedRunItem[] | null>(null);
+  // ── Библиотека (стратегии + прогоны) ──
+  const [strategies, setStrategies] = useState<SavedStrategyItem[] | null>(null);
+  const [runs, setRuns] = useState<SavedRunItem[] | null>(null);
   const [runModal, setRunModal] = useState<
     { mode: 'save' | 'edit'; id?: number; title: string; description: string } | null
   >(null);
   const [runPreview, setRunPreview] = useState(false);
   const [savingResult, setSavingResult] = useState(false);
+  const [strategyModal, setStrategyModal] = useState<{ mode: 'save' | 'rename'; id?: number; title: string } | null>(null);
+  const [savingStrategy, setSavingStrategy] = useState(false);
 
   const outRef = useRef<HTMLDivElement>(null);
 
@@ -233,17 +272,66 @@ function Backtest() {
   // Кнопку запуска не блокируем, если вселенная объявлена в скрипте (даже вычисляемая).
   const canRun = universe.length >= 1 || scriptDriven;
 
+  // Группировка прогонов: структурированные (ручные) под их стратегию, отдельно «без стратегии» и автосохранения.
+  const runsByStrategy = useMemo(() => {
+    const m = new Map<number, SavedRunItem[]>();
+    for (const r of runs ?? []) {
+      if (r.autosaved || r.strategy_id == null) continue;
+      const arr = m.get(r.strategy_id) ?? [];
+      arr.push(r);
+      m.set(r.strategy_id, arr);
+    }
+    return m;
+  }, [runs]);
+  const orphanRuns = useMemo(() => (runs ?? []).filter((r) => !r.autosaved && r.strategy_id == null), [runs]);
+  const autosaves = useMemo(() => (runs ?? []).filter((r) => r.autosaved), [runs]);
+
+  async function loadStrategies() {
+    try {
+      const d = await (await fetch('/api/backtest/strategies')).json();
+      setStrategies(Array.isArray(d?.strategies) ? d.strategies : []);
+    } catch {
+      setStrategies([]);
+    }
+  }
   async function loadRuns() {
     try {
       const d = await (await fetch('/api/backtest/runs')).json();
-      setSavedRuns(Array.isArray(d?.runs) ? d.runs : []);
+      setRuns(Array.isArray(d?.runs) ? d.runs : []);
     } catch {
-      setSavedRuns([]);
+      setRuns([]);
     }
   }
   useEffect(() => {
+    loadStrategies();
     loadRuns();
   }, []);
+
+  // Черновик кода: восстанавливаем из localStorage при загрузке, чтобы не терять правки.
+  useEffect(() => {
+    try {
+      const d = localStorage.getItem(DRAFT_KEY);
+      if (d && d.trim() && d !== DEFAULT_STRATEGY) {
+        setStrategy(d);
+        setDraftRestored(true);
+      }
+    } catch {
+      /* localStorage недоступен — не критично */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Автосохранение черновика кода (с дебаунсом) — текущий код редактора всегда восстановим.
+  useEffect(() => {
+    const id = setTimeout(() => {
+      try {
+        localStorage.setItem(DRAFT_KEY, strategy);
+      } catch {
+        /* noop */
+      }
+    }, 600);
+    return () => clearTimeout(id);
+  }, [strategy]);
+
   useEffect(() => {
     outRef.current?.scrollTo({ top: outRef.current.scrollHeight, behavior: 'smooth' });
   }, [blocks, log, status]);
@@ -258,9 +346,7 @@ function Backtest() {
   }
 
   function buildResultHtml(): string {
-    const logHtml = log ? `<pre class="rlog">${esc(log)}</pre>` : '';
-    const chartHtml = liveChart ? equitySvg(liveChart) : '';
-    return chartHtml + logHtml + blocks.join('');
+    return composeResultHtml(liveChart, log, blocks);
   }
 
   function buildConfig() {
@@ -273,6 +359,21 @@ function Backtest() {
       start: start.trim() || undefined,
       end: end.trim() || undefined,
     };
+  }
+
+  // Применяем сохранённый конфиг стратегии к полям UI (бенчмарк/капитал/риск/даты + запасная вселенная).
+  function applyConfig(cfg: any) {
+    if (!cfg || typeof cfg !== 'object') return;
+    if (typeof cfg.benchmark === 'string') setBenchmark(cfg.benchmark);
+    if (Number.isFinite(Number(cfg.initialCapital))) setInitialCapital(Number(cfg.initialCapital));
+    if (Number.isFinite(Number(cfg.maxLeverage))) setMaxLeverage(Number(cfg.maxLeverage));
+    if (typeof cfg.allowShort === 'boolean') setAllowShort(cfg.allowShort);
+    if (typeof cfg.start === 'string') setStart(cfg.start);
+    if (typeof cfg.end === 'string') setEnd(cfg.end);
+    if (Array.isArray(cfg.universe)) {
+      setPresets(new Set());
+      setCustom(cfg.universe.join(', '));
+    }
   }
 
   async function draft() {
@@ -328,6 +429,28 @@ function Backtest() {
     }
   }
 
+  // Автосохранение результата прогона: после удачного прогона снимок уходит в «Автосохранения».
+  async function autosaveRun(resultHtml: string, config: Record<string, unknown> | null) {
+    if (!resultHtml) return;
+    try {
+      await fetch('/api/backtest/runs', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          resultHtml,
+          title: `Автопрогон · ${autoStamp()}`,
+          config,
+          strategy,
+          strategyId: activeStrategyIdRef.current,
+          autosaved: true,
+        }),
+      });
+      loadRuns();
+    } catch {
+      /* автосохранение не должно мешать прогону */
+    }
+  }
+
   async function execute() {
     if (running) return;
     if (!canRun) {
@@ -348,6 +471,10 @@ function Backtest() {
     setLiveChart(null);
     setOpenedRunId(null);
     setStatus('Отправка запроса…');
+    // Локальные накопители — чтобы собрать HTML для автосохранения сразу после прогона.
+    const lBlocks: string[] = [];
+    let lLog = '';
+    let lChart: EquityPayload | null = null;
     try {
       const res = await fetch('/api/backtest/execute', {
         method: 'POST',
@@ -379,17 +506,26 @@ function Backtest() {
             const m = typeof ev.html === 'string' && ev.html.match(/data-bt-equity='([A-Za-z0-9+/=]+)'/);
             if (m) {
               try {
-                setLiveChart(JSON.parse(atob(m[1])));
+                const parsed = JSON.parse(atob(m[1]));
+                lChart = parsed;
+                setLiveChart(parsed);
               } catch {
                 /* битый снимок — пропускаем */
               }
             } else {
+              lBlocks.push(ev.html);
               setBlocks((b) => [...b, ev.html]);
             }
-          } else if (ev.type === 'log') setLog((l) => l + ev.text);
-          else if (ev.type === 'done') setStatus('Готово');
+          } else if (ev.type === 'log') {
+            lLog += ev.text;
+            setLog((l) => l + ev.text);
+          } else if (ev.type === 'done') setStatus('Готово');
         }
       }
+      // Автосохранение результата (если прогон что-то выдал и не упал с карточкой ошибки).
+      const html = composeResultHtml(lChart, lLog, lBlocks);
+      const hasError = lBlocks.some((b) => b.includes('rerrblk'));
+      if (html && !hasError) await autosaveRun(html, config);
     } catch (e: any) {
       setStatus('Ошибка');
       toast({ variant: 'error', title: 'Ошибка выполнения', description: e?.message });
@@ -398,11 +534,123 @@ function Backtest() {
     }
   }
 
+  // ── Стратегии: сохранить/обновить/переименовать/открыть/удалить ──
+  function openSaveStrategyModal() {
+    setStrategyModal({ mode: 'save', title: activeStrategyTitle || `Стратегия · ${autoStamp()}` });
+  }
+  async function openRenameStrategy(id: number) {
+    try {
+      const d = await (await fetch(`/api/backtest/strategies/${id}`)).json();
+      const s = d?.strategy;
+      if (!s) throw new Error('Стратегия не найдена');
+      setStrategyModal({ mode: 'rename', id, title: s.title || '' });
+    } catch (e: any) {
+      toast({ variant: 'error', title: 'Не удалось открыть', description: e?.message });
+    }
+  }
+  async function confirmStrategyModal() {
+    if (!strategyModal || !strategyModal.title.trim()) return;
+    setSavingStrategy(true);
+    try {
+      if (strategyModal.mode === 'save') {
+        const r = await fetch('/api/backtest/strategies', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ title: strategyModal.title.trim(), code: strategy, config: buildConfig() }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d?.error || 'Не удалось сохранить стратегию');
+        setActiveStrategyId(Number(d?.id) || null);
+        setActiveStrategyTitle(d?.title || strategyModal.title.trim());
+        toast({ variant: 'success', title: 'Стратегия сохранена', description: d?.title });
+      } else {
+        const r = await fetch(`/api/backtest/strategies/${strategyModal.id}`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ title: strategyModal.title.trim() }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d?.error || 'Не удалось переименовать');
+        if (activeStrategyId === strategyModal.id) setActiveStrategyTitle(strategyModal.title.trim());
+        toast({ variant: 'success', title: 'Переименовано' });
+      }
+      setStrategyModal(null);
+      loadStrategies();
+    } catch (e: any) {
+      toast({ variant: 'error', title: 'Ошибка сохранения', description: e?.message });
+    } finally {
+      setSavingStrategy(false);
+    }
+  }
+  async function updateActiveStrategy() {
+    if (activeStrategyId == null) return;
+    try {
+      const r = await fetch(`/api/backtest/strategies/${activeStrategyId}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ code: strategy, config: buildConfig() }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d?.error || 'Не удалось обновить');
+      toast({ variant: 'success', title: 'Стратегия обновлена', description: activeStrategyTitle || undefined });
+    } catch (e: any) {
+      toast({ variant: 'error', title: 'Не удалось обновить', description: e?.message });
+    }
+  }
+  async function openStrategy(id: number) {
+    try {
+      const d = await (await fetch(`/api/backtest/strategies/${id}`)).json();
+      const s = d?.strategy;
+      if (!s) throw new Error('Стратегия не найдена');
+      setStrategy(typeof s.code === 'string' ? s.code : '');
+      if (s.config) {
+        try {
+          applyConfig(JSON.parse(s.config));
+        } catch {
+          /* битый конфиг — игнорируем */
+        }
+      }
+      setActiveStrategyId(s.id);
+      setActiveStrategyTitle(s.title || null);
+      // Сбрасываем область результата (открыли стратегию, а не результат).
+      setOpenedRunId(null);
+      setIsFresh(false);
+      setBlocks([]);
+      setLog('');
+      setLiveChart(null);
+      setViewDesc(null);
+      setStatus('');
+      toast({ variant: 'success', title: 'Стратегия открыта', description: s.title || undefined });
+    } catch (e: any) {
+      toast({ variant: 'error', title: 'Не удалось открыть', description: e?.message });
+    }
+  }
+  function newStrategy() {
+    setStrategy(DEFAULT_STRATEGY);
+    setActiveStrategyId(null);
+    setActiveStrategyTitle(null);
+    setDraftRestored(false);
+    toast({ variant: 'success', title: 'Новая стратегия', description: 'Редактор сброшен к примеру.' });
+  }
+  async function onDeleteStrategy(id: number) {
+    try {
+      const r = await fetch(`/api/backtest/strategies/${id}`, { method: 'DELETE' });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Ошибка');
+      if (activeStrategyId === id) {
+        setActiveStrategyId(null);
+        setActiveStrategyTitle(null);
+      }
+      toast({ variant: 'success', title: 'Стратегия удалена', description: 'Вместе с её сохранёнными прогонами.' });
+      loadStrategies();
+      loadRuns();
+    } catch (e: any) {
+      toast({ variant: 'error', title: 'Не удалось удалить', description: e?.message });
+    }
+  }
+
+  // ── Результаты прогонов ──
   function openSaveResultModal() {
-    const d = new Date();
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const ts = `${pad(d.getDate())}.${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    setRunModal({ mode: 'save', title: `Бэктест · ${ts}`, description: '' });
+    setRunModal({ mode: 'save', title: `Бэктест · ${autoStamp()}`, description: '' });
     setRunPreview(false);
   }
 
@@ -434,6 +682,8 @@ function Backtest() {
             description: runModal.description,
             config: lastConfigRef.current,
             strategy,
+            strategyId: activeStrategyId,
+            autosaved: false,
           }),
         });
         const d = await r.json().catch(() => ({}));
@@ -470,6 +720,10 @@ function Backtest() {
       setOpenedRunId(id);
       setBlocks(run.result_html ? [run.result_html] : []);
       if (typeof run.strategy === 'string' && run.strategy.trim()) setStrategy(run.strategy);
+      setActiveStrategyId(run.strategy_id ?? null);
+      setActiveStrategyTitle(
+        run.strategy_id != null ? (strategies ?? []).find((s) => s.id === run.strategy_id)?.title ?? null : null,
+      );
       setViewDesc(run.description || null);
       setStatus('Сохранённый результат');
     } catch (e: any) {
@@ -491,6 +745,39 @@ function Backtest() {
   const hasOutput = blocks.length > 0 || log.length > 0 || !!liveChart || running;
   const canSaveResult = isFresh && !running && (blocks.length > 0 || log.length > 0 || !!liveChart);
 
+  // Переиспользуемый рендер строки прогона (результата) в списках библиотеки.
+  function runRow(r: SavedRunItem, openTestId: string) {
+    return (
+      <li key={r.id} className="flex items-stretch gap-1">
+        <button
+          type="button"
+          data-testid={openTestId}
+          onClick={() => openSavedRun(r.id)}
+          className="min-w-0 flex-1 rounded-fk-sm px-2.5 py-1.5 text-left transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
+        >
+          <span className="block truncate text-[13px] text-ink-2">{r.title || `Прогон #${r.id}`}</span>
+          <span className="block text-[11px] text-ink-3">{fmtWhen(r.created_at)}</span>
+        </button>
+        <button
+          type="button"
+          aria-label="Редактировать прогон"
+          onClick={() => openEditRun(r.id)}
+          className="shrink-0 rounded-fk-sm px-2 text-ink-3 transition-colors hover:bg-surface-2 hover:text-brand focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
+        >
+          <EditIcon />
+        </button>
+        <button
+          type="button"
+          aria-label="Удалить прогон"
+          onClick={() => onDeleteRun(r.id)}
+          className="shrink-0 rounded-fk-sm px-2 text-ink-3 transition-colors hover:bg-surface-2 hover:text-down focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
+        >
+          <TrashIcon />
+        </button>
+      </li>
+    );
+  }
+
   return (
     <>
       <header className="sticky top-0 z-30 border-b border-line bg-[rgba(255,255,255,0.82)] backdrop-blur-md">
@@ -507,7 +794,7 @@ function Backtest() {
       </header>
 
       <main className="mx-auto grid max-w-[1280px] grid-cols-1 gap-4 px-4 py-6 sm:px-6 lg:grid-cols-[360px_1fr] lg:py-8">
-        {/* Левая колонка — конфиг + сохранённые */}
+        {/* Левая колонка — конфиг + библиотека */}
         <div className="flex min-w-0 flex-col gap-4">
           <Card>
             <CardHeader>
@@ -618,49 +905,103 @@ function Backtest() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Сохранённые прогоны</CardTitle>
-              <CardDescription>Снимок отчёта + конфиг + код. Кликните, чтобы открыть.</CardDescription>
+              <CardTitle>Библиотека</CardTitle>
+              <CardDescription>
+                Стратегии (код) и результаты прогонов. Результаты вложены под свою стратегию; автосохранения — отдельной группой.
+              </CardDescription>
             </CardHeader>
-            <CardContent>
-              {savedRuns === null ? (
-                <div className="space-y-2">
-                  <Skeleton className="h-10 w-full" />
-                  <Skeleton className="h-10 w-full" />
+            <CardContent className="space-y-5">
+              {/* Стратегии (со вложенными структурированными прогонами) */}
+              <div>
+                <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-3">Стратегии</div>
+                {strategies === null ? (
+                  <div className="space-y-2">
+                    <Skeleton className="h-9 w-full" />
+                    <Skeleton className="h-9 w-full" />
+                  </div>
+                ) : strategies.length === 0 ? (
+                  <p className="text-sm text-ink-3">
+                    Пока нет сохранённых стратегий. Нажмите «Сохранить как стратегию» под редактором.
+                  </p>
+                ) : (
+                  <ul className="space-y-2" data-testid="saved-strategies">
+                    {strategies.map((s) => {
+                      const sruns = runsByStrategy.get(s.id) ?? [];
+                      const isActive = activeStrategyId === s.id;
+                      return (
+                        <li key={s.id}>
+                          <div className="flex items-stretch gap-1">
+                            <button
+                              type="button"
+                              data-testid="strategy-open"
+                              onClick={() => openStrategy(s.id)}
+                              className={`min-w-0 flex-1 rounded-fk-sm px-2.5 py-1.5 text-left transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)] ${
+                                isActive ? 'bg-brand-50' : ''
+                              }`}
+                            >
+                              <span className="block truncate text-[13px] font-medium text-ink">
+                                {s.title || `Стратегия #${s.id}`}
+                              </span>
+                              <span className="block text-[11px] text-ink-3">
+                                {sruns.length ? `${sruns.length} рез.` : 'нет результатов'}
+                                {isActive ? ' · активна' : ''}
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              aria-label="Переименовать стратегию"
+                              onClick={() => openRenameStrategy(s.id)}
+                              className="shrink-0 rounded-fk-sm px-2 text-ink-3 transition-colors hover:bg-surface-2 hover:text-brand focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
+                            >
+                              <EditIcon />
+                            </button>
+                            <button
+                              type="button"
+                              aria-label="Удалить стратегию"
+                              onClick={() => onDeleteStrategy(s.id)}
+                              className="shrink-0 rounded-fk-sm px-2 text-ink-3 transition-colors hover:bg-surface-2 hover:text-down focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
+                            >
+                              <TrashIcon />
+                            </button>
+                          </div>
+                          {sruns.length > 0 && (
+                            <ul className="ml-2 mt-1 space-y-1 border-l border-line pl-2" data-testid="strategy-runs">
+                              {sruns.map((r) => runRow(r, 'run-open'))}
+                            </ul>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+
+              {/* Результаты без привязки к стратегии */}
+              {orphanRuns.length > 0 && (
+                <div>
+                  <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-3">Без стратегии</div>
+                  <ul className="space-y-1.5" data-testid="orphan-runs">
+                    {orphanRuns.map((r) => runRow(r, 'run-open'))}
+                  </ul>
                 </div>
-              ) : savedRuns.length === 0 ? (
-                <p className="text-sm text-ink-3">Пока пусто. Запустите бэктест и сохраните результат.</p>
-              ) : (
-                <ul className="space-y-1.5" data-testid="saved-runs">
-                  {savedRuns.map((r) => (
-                    <li key={r.id} className="flex items-stretch gap-1">
-                      <button
-                        type="button"
-                        data-testid="run-open"
-                        onClick={() => openSavedRun(r.id)}
-                        className="min-w-0 flex-1 rounded-fk-sm px-2.5 py-1.5 text-left transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
-                      >
-                        <span className="block truncate text-[13px] text-ink-2">{r.title || `Прогон #${r.id}`}</span>
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="Редактировать прогон"
-                        onClick={() => openEditRun(r.id)}
-                        className="shrink-0 rounded-fk-sm px-2 text-ink-3 transition-colors hover:bg-surface-2 hover:text-brand focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
-                      >
-                        <EditIcon />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="Удалить прогон"
-                        onClick={() => onDeleteRun(r.id)}
-                        className="shrink-0 rounded-fk-sm px-2 text-ink-3 transition-colors hover:bg-surface-2 hover:text-down focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
-                      >
-                        <TrashIcon />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
               )}
+
+              {/* Автосохранения (после каждого прогона) */}
+              <div>
+                <div className="mb-1.5 flex items-center justify-between">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">Автосохранения</span>
+                  {!!autosaves.length && <span className="text-[11px] text-ink-3">{autosaves.length}</span>}
+                </div>
+                {runs === null ? (
+                  <Skeleton className="h-9 w-full" />
+                ) : autosaves.length === 0 ? (
+                  <p className="text-sm text-ink-3">После каждого прогона результат сохраняется сюда автоматически.</p>
+                ) : (
+                  <ul className="space-y-1.5" data-testid="autosaves">
+                    {autosaves.map((r) => runRow(r, 'autosave-open'))}
+                  </ul>
+                )}
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -671,11 +1012,34 @@ function Backtest() {
             <CardHeader>
               <CardTitle>Стратегия (Python · on_bar)</CardTitle>
               <CardDescription>
-                Объявите <code>def on_bar(ctx):</code> (и опц. <code>initialize</code>). ctx даёт только прошлое;
-                заявки исполняются по close следующего бара.
+                Объявите <code>def on_bar(ctx):</code> (и опц. <code>initialize</code>) и список{' '}
+                <code>UNIVERSE = [...]</code>. ctx даёт только прошлое; заявки исполняются по close следующего бара.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* Тулбар стратегии: сохранить/обновить/новая + индикатор активной стратегии и черновика */}
+              <div className="flex flex-wrap items-center gap-2">
+                <Button size="sm" variant="secondary" onClick={openSaveStrategyModal} data-testid="save-strategy">
+                  Сохранить как стратегию
+                </Button>
+                {activeStrategyId != null && (
+                  <>
+                    <Button size="sm" variant="ghost" onClick={updateActiveStrategy} data-testid="update-strategy">
+                      Обновить
+                    </Button>
+                    <span className="truncate text-[12px] text-ink-3" title={activeStrategyTitle || undefined}>
+                      Активная: <span className="font-medium text-ink-2">{activeStrategyTitle || `#${activeStrategyId}`}</span>
+                    </span>
+                  </>
+                )}
+                <Button size="sm" variant="ghost" onClick={newStrategy} className="ml-auto" data-testid="new-strategy">
+                  Новая
+                </Button>
+              </div>
+              {draftRestored && (
+                <p className="text-[11px] text-ink-3">Восстановлен несохранённый черновик кода (автосохранение).</p>
+              )}
+
               {/* AI-помощник: описание задачи словами → готовый код стратегии */}
               <div className="space-y-2 rounded-fk border border-line bg-surface-2 p-3">
                 <div className="flex items-center gap-2">
@@ -745,7 +1109,7 @@ function Backtest() {
                   <Badge variant={status === 'Ошибка' ? 'down' : 'up'}>{status}</Badge>
                 ) : null}
                 {canSaveResult && (
-                  <Button size="sm" variant="secondary" onClick={openSaveResultModal}>
+                  <Button size="sm" variant="secondary" onClick={openSaveResultModal} data-testid="save-result">
                     Сохранить результат
                   </Button>
                 )}
@@ -786,6 +1150,37 @@ function Backtest() {
         </div>
       </main>
 
+      {/* Модалка сохранения/переименования СТРАТЕГИИ */}
+      <Modal
+        open={!!strategyModal}
+        onClose={() => setStrategyModal(null)}
+        title={strategyModal?.mode === 'rename' ? 'Переименовать стратегию' : 'Сохранить стратегию'}
+        description="Стратегия — переиспользуемый код + текущий конфиг. Откроется из библиотеки в один клик."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setStrategyModal(null)}>
+              Отмена
+            </Button>
+            <Button onClick={confirmStrategyModal} loading={savingStrategy} disabled={!strategyModal?.title.trim()} data-testid="strategy-save-confirm">
+              Сохранить
+            </Button>
+          </>
+        }
+      >
+        {strategyModal && (
+          <div className="pt-1">
+            <Input
+              autoFocus
+              value={strategyModal.title}
+              onChange={(e) => setStrategyModal({ ...strategyModal, title: e.target.value })}
+              placeholder="Название стратегии"
+              data-testid="strategy-title"
+            />
+          </div>
+        )}
+      </Modal>
+
+      {/* Модалка сохранения/редактирования РЕЗУЛЬТАТА */}
       <Modal
         open={!!runModal}
         onClose={() => setRunModal(null)}
@@ -796,7 +1191,7 @@ function Backtest() {
             <Button variant="ghost" onClick={() => setRunModal(null)}>
               Отмена
             </Button>
-            <Button onClick={confirmRunModal} loading={savingResult} disabled={!runModal?.title.trim()}>
+            <Button onClick={confirmRunModal} loading={savingResult} disabled={!runModal?.title.trim()} data-testid="result-save-confirm">
               Сохранить
             </Button>
           </>
@@ -804,6 +1199,13 @@ function Backtest() {
       >
         {runModal && (
           <div className="space-y-3 pt-1">
+            {runModal.mode === 'save' && (
+              <p className="text-[12px] text-ink-3">
+                {activeStrategyId != null
+                  ? `Будет вложен в стратегию «${activeStrategyTitle || `#${activeStrategyId}`}».`
+                  : 'Стратегия не выбрана — результат попадёт в группу «Без стратегии». Сохраните стратегию, чтобы привязать.'}
+              </p>
+            )}
             <Input
               autoFocus
               value={runModal.title}
