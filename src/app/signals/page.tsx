@@ -1445,11 +1445,36 @@ function FactorResult({ data, onSave }: { data: any; onSave: (d: SignalDef, name
   const hasYears = groups.some((g) => (g.grid || []).some((c: any) => Array.isArray(c.years)));
   const [winFrom, setWinFrom] = useState(minY);
   const [winTo, setWinTo] = useState(maxY);
+  const [picks, setPicks] = useState<Set<string>>(new Set()); // ключи `${gi}|${param}|${col}` — выбор по ВСЕМ группам
   useEffect(() => {
     setWinFrom(minY);
     setWinTo(maxY);
+    setPicks(new Set());
   }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
   const full = winFrom <= minY && winTo >= maxY;
+  const mainH: number = data.horizon;
+  const isQ: boolean = data.bins === 'quantile';
+
+  const toggle = (gi: number, c: HeatCell) =>
+    setPicks((prev) => {
+      const next = new Set(prev);
+      const k = `${gi}|${c.row}|${c.col}`;
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+
+  // Ключи выбора → {gi, группа, ячейка}; так панель выбора работает поверх НЕСКОЛЬКИХ групп (стран).
+  const cellByKey = useMemo(() => {
+    const m = new Map<string, { gi: number; group: any; cell: any }>();
+    groups.forEach((g: any, gi: number) => (g.grid || []).forEach((c: any) => m.set(`${gi}|${c.param}|${c.col}`, { gi, group: g, cell: c })));
+    return m;
+  }, [groups]);
+  const selected = useMemo(
+    () => ([...picks].map((k) => cellByKey.get(k)).filter(Boolean) as { gi: number; group: any; cell: any }[]),
+    [picks, cellByKey],
+  );
+
   return (
     <div className="space-y-5">
       <MetaBar meta={data.meta} />
@@ -1458,28 +1483,36 @@ function FactorResult({ data, onSave }: { data: any; onSave: (d: SignalDef, name
         {data.skip ? ` · gap ${data.skip}д` : ''}
       </Badge>
       {hasYears && <YearRange min={minY} max={maxY} from={winFrom} to={winTo} setFrom={setWinFrom} setTo={setWinTo} />}
+      <SelectionPanel
+        data={data}
+        f={f}
+        isRange={isRange}
+        isQ={isQ}
+        multi={multi}
+        mainH={mainH}
+        selected={selected}
+        winFrom={winFrom}
+        winTo={winTo}
+        fullWindow={full}
+        onClear={() => setPicks(new Set())}
+        onSave={onSave}
+      />
       {multi && <LeaderboardView data={data} groups={groups} winFrom={winFrom} winTo={winTo} />}
       {multi && (
-        <p className="text-[12px] text-ink-3">Ниже — полная карта по каждой стране/группе отдельно (клик по ячейке раскрывает детали).</p>
+        <p className="text-[12px] text-ink-3">Ниже — карта по каждой стране/группе. Кликайте ячейки (можно в РАЗНЫХ странах) — детали и совокупная статистика появятся сверху.</p>
       )}
       {groups.map((g: any, i: number) => (
-        <FactorGroup key={i} data={data} group={g} f={f} isRange={isRange} multi={multi} onSave={onSave} winFrom={winFrom} winTo={winTo} fullWindow={full} />
+        <FactorGroup key={i} gi={i} data={data} group={g} isRange={isRange} isQ={isQ} multi={multi} winFrom={winFrom} winTo={winTo} picks={picks} onToggle={toggle} />
       ))}
     </div>
   );
 }
 
-function FactorGroup({ data, group, f, isRange, multi, onSave, winFrom, winTo, fullWindow }: { data: any; group: any; f: any; isRange: boolean; multi: boolean; onSave: (d: SignalDef, name?: string) => void; winFrom: number; winTo: number; fullWindow: boolean }) {
-  const [picks, setPicks] = useState<Set<string>>(new Set());
+function FactorGroup({ gi, data, group, isRange, isQ, multi, winFrom, winTo, picks, onToggle }: { gi: number; data: any; group: any; isRange: boolean; isQ: boolean; multi: boolean; winFrom: number; winTo: number; picks: Set<string>; onToggle: (gi: number, c: HeatCell) => void }) {
   const mainH: number = data.horizon;
   const alpha: number = data.fdrAlpha || 0.1;
-  const isQ: boolean = data.bins === 'quantile';
   const grid: any[] = group.grid || [];
   const useWin = grid.some((g: any) => Array.isArray(g.years));
-  const ck = (param: any, col: any) => `${param}|${col}`;
-
-  // Сброс выбора при новом прогоне (смена данных).
-  useEffect(() => setPicks(new Set()), [data, group]);
 
   // Пересчёт каждой ячейки под выбранное окно лет (из по-годовой агрегации).
   const recomputed = useMemo(
@@ -1499,30 +1532,12 @@ function FactorGroup({ data, group, f, isRange, multi, onSave, winFrom, winTo, f
     sig: useWin ? !!(sigSet && sigSet.has(`${g.param}:${g.col}`)) : g.sig,
   }));
 
-  const toggle = (c: HeatCell) =>
-    setPicks((prev) => {
-      const next = new Set(prev);
-      const k = ck(c.row, c.col);
-      if (next.has(k)) next.delete(k);
-      else next.add(k);
-      return next;
-    });
-
-  const selectedRecs = recomputed.filter((r) => picks.has(ck(r.g.param, r.g.col)));
-  const single = selectedRecs.length === 1 ? selectedRecs[0] : null;
-  const cell = single?.g;
-  const agg = single?.agg;
-  // Базовая доходность группы — за полное окно (по-годовой базы для неё не храним).
-  const head = agg || (cell ? { mean: cell.mean, t: cell.t, hit: cell.hit, n: cell.n, periods: cell.periods, decay: null, yearly: cell.yearly } : null);
-  const decayPoints = agg
-    ? agg.decay
-    : cell?.decay
-      ? (data.hz || []).map((h: number) => ({ h, mean: cell.decay[String(h)] ?? null }))
-      : [];
-
-  // Совокупность по ≥2 выбранным ячейкам — сумма достаточных статистик (пул по срабатываниям).
-  const pooled = selectedRecs.length >= 2 ? poolCells(selectedRecs.map((r) => r.g), winFrom, winTo, mainH) : null;
-  const pickLabels = selectedRecs.map((r) => `${r.g.param}д/${isQ ? 'хвост' : isRange ? 'диап.' : 'порог'} ${r.g.col}`);
+  // Подсветка ячеек ЭТОЙ группы: глобальные ключи `${gi}|param|col` → локальные `param|col`.
+  const prefix = `${gi}|`;
+  const myPicked = useMemo(
+    () => new Set([...picks].filter((k) => k.startsWith(prefix)).map((k) => k.slice(prefix.length))),
+    [picks, prefix],
+  );
 
   return (
     <div className={multi ? 'space-y-3 rounded-fk border border-line bg-surface-elev p-3' : 'space-y-3'}>
@@ -1536,6 +1551,7 @@ function FactorGroup({ data, group, f, isRange, multi, onSave, winFrom, winTo, f
           </span>
         )}
         <span className="text-[11px] text-ink-3">базовая дох.: {fpct(group.baseline)}</span>
+        {myPicked.size > 0 && <span className="text-[11px] font-medium text-brand">выбрано здесь: {myPicked.size}</span>}
       </div>
       <Heatmap
         cells={cells}
@@ -1543,90 +1559,119 @@ function FactorGroup({ data, group, f, isRange, multi, onSave, winFrom, winTo, f
         cols={data.cols}
         rowLabel="Параметр"
         colLabel={isQ ? 'Хвост' : isRange ? 'Диапазон' : 'Порог'}
-        picked={picks}
-        onSelect={toggle}
+        picked={myPicked}
+        onSelect={(c) => onToggle(gi, c)}
         fmt={(v) => (v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2))}
       />
-      {picks.size === 0 ? (
-        <p className="text-[11px] text-ink-3">
-          {isRange ? 'Диапазоны не пересекаются — видно вклад каждой зоны отдельно. ' : ''}
-          {isQ ? 'Хвосты кросс-секционные (на каждую дату) и накопительные: «дно 5%» включает «дно 2%». Сравните худшие↔лучшие. ' : ''}
-          Точка в углу ячейки = значимо (FDR). Клик по ячейке — детали; выберите несколько — совокупная статистика.
-        </p>
-      ) : (
-        <div className="flex flex-wrap items-center gap-2 text-[11px] text-ink-3">
-          <span>Выбрано ячеек: <b className="text-ink-2">{picks.size}</b></span>
-          <button type="button" onClick={() => setPicks(new Set())} className="font-medium text-brand hover:underline">
-            сбросить
-          </button>
-        </div>
-      )}
+      <p className="text-[11px] text-ink-3">
+        {isRange ? 'Диапазоны не пересекаются — видно вклад каждой зоны отдельно. ' : ''}
+        {isQ ? 'Хвосты кросс-секционные (на каждую дату) и накопительные: «дно 5%» включает «дно 2%». Сравните худшие↔лучшие. ' : ''}
+        Точка в углу = значимо (FDR). Клик по ячейке — детали; выберите несколько{multi ? ' (в т.ч. в разных странах)' : ''} — совокупная статистика сверху.
+      </p>
+    </div>
+  );
+}
 
-      {/* Одна ячейка — детали (как раньше) */}
-      {single && cell && (
-        <Card>
-          <CardHeader>
+// Панель выбора (поверх ВСЕХ групп): 1 ячейка → детали; ≥2 → совокупная статистика (в т.ч. по странам).
+function SelectionPanel({ data, f, isRange, isQ, multi, mainH, selected, winFrom, winTo, fullWindow, onClear, onSave }: { data: any; f: any; isRange: boolean; isQ: boolean; multi: boolean; mainH: number; selected: { gi: number; group: any; cell: any }[]; winFrom: number; winTo: number; fullWindow: boolean; onClear: () => void; onSave: (d: SignalDef, name?: string) => void }) {
+  if (!selected.length) return null;
+  if (selected.length === 1) {
+    const { group, cell } = selected[0];
+    const agg = Array.isArray(cell.years) ? aggCell(cell.years, winFrom, winTo, mainH) : null;
+    return (
+      <CellDetailCard data={data} group={group} cell={cell} agg={agg} f={f} isQ={isQ} mainH={mainH} fullWindow={fullWindow} winFrom={winFrom} winTo={winTo} onClear={onClear} onSave={onSave} />
+    );
+  }
+  const colWord = isQ ? 'хвост' : isRange ? 'диап.' : 'порог';
+  const pooled = poolCells(selected.map((s) => s.cell), winFrom, winTo, mainH);
+  const labels = selected.map((s) => `${multi && s.group.label ? s.group.label + ' ' : ''}${s.cell.param}д/${colWord} ${s.cell.col}`);
+  const countries = [...new Set(selected.map((s) => s.group.label).filter(Boolean))] as string[];
+  return (
+    <PooledCard pooled={pooled} count={selected.length} labels={labels} countries={countries} fullWindow={fullWindow} winFrom={winFrom} winTo={winTo} mainH={mainH} onClear={onClear} />
+  );
+}
+
+function CellDetailCard({ data, group, cell, agg, f, isQ, mainH, fullWindow, winFrom, winTo, onClear, onSave }: { data: any; group: any; cell: any; agg: any; f: any; isQ: boolean; mainH: number; fullWindow: boolean; winFrom: number; winTo: number; onClear: () => void; onSave: (d: SignalDef, name?: string) => void }) {
+  const head = agg || { mean: cell.mean, t: cell.t, hit: cell.hit, n: cell.n, periods: cell.periods, decay: null, yearly: cell.yearly };
+  const decayPoints = agg
+    ? agg.decay
+    : cell.decay
+      ? (data.hz || []).map((h: number) => ({ h, mean: cell.decay[String(h)] ?? null }))
+      : [];
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-start justify-between gap-3">
+          <div>
             <CardTitle>
               {group.label ? group.label + ' · ' : ''}{f.label} ({cell.param}д) {regionLabel(f, cell.region)}
               {!fullWindow && <span className="text-[12px] font-normal text-ink-3"> · {winFrom}–{winTo}</span>}
             </CardTitle>
             <CardDescription>Метрики и профиль по горизонтам — за выбранное окно лет; разбивка по тикерам — за весь период прогона.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {head && head.mean != null ? (
-              <div className="flex flex-wrap gap-3">
-                <Stat label="Ср. изб. дох." value={fpct(head.mean)} tone={(head.mean ?? 0) >= 0 ? 'up' : 'down'} />
-                <Stat label="t-стат" value={fnum(head.t)} />
-                <Stat label="Доля плюс" value={fnum(head.hit, 1) + '%'} />
-                <Stat label="Наблюдений" value={String(head.n)} hint={`${head.periods} периодов`} />
-              </div>
-            ) : (
-              <p className="text-[13px] text-ink-3">В выбранном окне лет слишком мало наблюдений — расширьте окно.</p>
-            )}
-            {decayPoints.length > 0 && <DecayBlock points={decayPoints} mainH={mainH} />}
-            <YearlyBars yearly={head?.yearly ?? cell.yearly} />
-            <TickerTable tickers={cell.tickers} kw={cell.kw} />
-            {!isQ && (
-              <Button size="sm" variant="secondary" onClick={() => onSave({ factor: data.factor, param: cell.param, ...cell.region, skip: data.skip || 0 })}>
-                Сохранить как сигнал
-              </Button>
-            )}
-          </CardContent>
-        </Card>
-      )}
+          </div>
+          <button type="button" onClick={onClear} className="shrink-0 text-[12px] font-medium text-brand hover:underline">сбросить</button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {head && head.mean != null ? (
+          <div className="flex flex-wrap gap-3">
+            <Stat label="Ср. изб. дох." value={fpct(head.mean)} tone={(head.mean ?? 0) >= 0 ? 'up' : 'down'} />
+            <Stat label="t-стат" value={fnum(head.t)} />
+            <Stat label="Доля плюс" value={fnum(head.hit, 1) + '%'} />
+            <Stat label="Наблюдений" value={String(head.n)} hint={`${head.periods} периодов`} />
+          </div>
+        ) : (
+          <p className="text-[13px] text-ink-3">В выбранном окне лет слишком мало наблюдений — расширьте окно.</p>
+        )}
+        {decayPoints.length > 0 && <DecayBlock points={decayPoints} mainH={mainH} />}
+        <YearlyBars yearly={head?.yearly ?? cell.yearly} />
+        <TickerTable tickers={cell.tickers} kw={cell.kw} />
+        {!isQ && (
+          <Button size="sm" variant="secondary" onClick={() => onSave({ factor: data.factor, param: cell.param, ...cell.region, skip: data.skip || 0 })}>
+            Сохранить как сигнал
+          </Button>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
-      {/* ≥2 ячеек — совокупная статистика (пул достаточных статистик) */}
-      {selectedRecs.length >= 2 && (
-        <Card>
-          <CardHeader>
+function PooledCard({ pooled, count, labels, countries, fullWindow, winFrom, winTo, mainH, onClear }: { pooled: any; count: number; labels: string[]; countries: string[]; fullWindow: boolean; winFrom: number; winTo: number; mainH: number; onClear: () => void }) {
+  const shown = labels.slice(0, 8).join(' · ') + (labels.length > 8 ? ` …+${labels.length - 8}` : '');
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-start justify-between gap-3">
+          <div>
             <CardTitle>
-              Совокупно · {selectedRecs.length} ячеек
+              Совокупно · {count} ячеек{countries.length > 1 ? ` · ${countries.length} стран` : ''}
               {!fullWindow && <span className="text-[12px] font-normal text-ink-3"> · {winFrom}–{winTo}</span>}
             </CardTitle>
             <CardDescription>
-              Пул выбранных условий: {pickLabels.join(' · ')}. Наблюдения суммируются по каждому срабатыванию
-              (вложенные пороги одного периода/перекрытия не дедуплицируются) — это статистика «на сигнал».
+              Пул условий: {shown}. Наблюдения суммируются по каждому срабатыванию (перекрытия/вложенные пороги не
+              дедуплицируются; избыток считается к бенчмарку своей страны) — статистика «на сигнал».
             </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {pooled ? (
-              <>
-                <div className="flex flex-wrap gap-3">
-                  <Stat label="Ср. изб. дох." value={fpct(pooled.mean)} tone={pooled.mean >= 0 ? 'up' : 'down'} />
-                  <Stat label="t-стат" value={fnum(pooled.t)} />
-                  <Stat label="Доля плюс" value={fnum(pooled.hit, 1) + '%'} />
-                  <Stat label="Наблюдений" value={String(pooled.n)} hint={`${pooled.periods} периодов`} />
-                </div>
-                {pooled.decay.length > 0 && <DecayBlock points={pooled.decay} mainH={mainH} />}
-                <YearlyBars yearly={pooled.yearly} />
-              </>
-            ) : (
-              <p className="text-[13px] text-ink-3">В выбранном окне лет слишком мало наблюдений по выбранным ячейкам — расширьте окно или выберите другие.</p>
-            )}
-          </CardContent>
-        </Card>
-      )}
-    </div>
+          </div>
+          <button type="button" onClick={onClear} className="shrink-0 text-[12px] font-medium text-brand hover:underline">сбросить</button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {pooled ? (
+          <>
+            <div className="flex flex-wrap gap-3">
+              <Stat label="Ср. изб. дох." value={fpct(pooled.mean)} tone={pooled.mean >= 0 ? 'up' : 'down'} />
+              <Stat label="t-стат" value={fnum(pooled.t)} />
+              <Stat label="Доля плюс" value={fnum(pooled.hit, 1) + '%'} />
+              <Stat label="Наблюдений" value={String(pooled.n)} hint={`${pooled.periods} периодов`} />
+            </div>
+            {pooled.decay.length > 0 && <DecayBlock points={pooled.decay} mainH={mainH} />}
+            <YearlyBars yearly={pooled.yearly} />
+          </>
+        ) : (
+          <p className="text-[13px] text-ink-3">В выбранном окне лет слишком мало наблюдений по выбранным ячейкам — расширьте окно или выберите другие.</p>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
