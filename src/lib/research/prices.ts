@@ -40,7 +40,7 @@ export type PriceRow = { date: string; close: number; volume: number | null };
 const REFRESH_TTL_MS = 12 * 3600 * 1000; // освежаем хвост не чаще раза в ~12ч (EOD-данные)
 // Версия кэша цен. Бамп → одноразовый полный рефетч на тикер (лечит битый/короткий кэш, напр. после
 // неудачного переключения провайдера). Меняем, когда нужно пере-набрать историю у всех бумаг.
-const PRICES_EPOCH = '2';
+const PRICES_EPOCH = '3';
 const MIN_FULL_ROWS = 60; // меньше — считаем, что нормальной истории нет (не затираем чужой кэш этим)
 
 type Meta = { fetched_from: string; last_date: string; refreshed_at: string; provider: string; epoch: string };
@@ -108,13 +108,13 @@ async function fetchFromFmp(sym: string, from: string, to: string): Promise<Pric
 
 type Provider = { name: string; fetch: (sym: string, from: string, to: string) => Promise<PriceRow[]> };
 
-// Провайдеры цен в порядке приоритета. FMP — ОСНОВНОЙ (полная история, проверенная глубина).
-// EODHD — только ДОБОР пробелов (символы, которых нет в FMP), т.к. в проде его план может отдавать
-// усечённую историю; нельзя ухудшать рабочие данные FMP. Порядок: [FMP, EODHD].
+// Провайдеры цен в порядке приоритета. EODHD — ОСНОВНОЙ (скорректированные цены adjusted_close →
+// корректные корп.события, широкое гео), FMP — ДОБОР пробелов (символы/формы, которых нет в EODHD).
+// Предохранители ниже (don't-downgrade + эпоха) не дают короткому/битому ответу ухудшить рабочий кэш.
 function priceProviders(): Provider[] {
   const list: Provider[] = [];
-  if (process.env.FMP_API_KEY) list.push({ name: 'fmp', fetch: fetchFromFmp });
   if (process.env.EODHD_API_KEY) list.push({ name: 'eodhd', fetch: eodhdEod });
+  if (process.env.FMP_API_KEY) list.push({ name: 'fmp', fetch: fetchFromFmp });
   return list;
 }
 
@@ -171,7 +171,9 @@ export async function getPrices(symbol: string, from: string, to: string): Promi
       // (иначе короткий ответ провайдера затёр бы рабочую историю). Иначе — оставляем как есть.
       const ex = await priceExtent(sym);
       const newMin = rows.length ? rows[0].date : '';
-      const notWorse = rows.length >= MIN_FULL_ROWS && (ex.count === 0 || (!!newMin && newMin <= ex.min) || rows.length >= ex.count);
+      // «Не хуже» = либо нет старых данных, либо новые начинаются не позже, либо покрывают ≥80% баров.
+      // Так глубокий EODHD примется (≈равно FMP), а усечённый (1 год vs 25 лет) — будет отвергнут.
+      const notWorse = rows.length >= MIN_FULL_ROWS && (ex.count === 0 || (!!newMin && newMin <= ex.min) || rows.length >= ex.count * 0.8);
       if (!notWorse) {
         if (meta) await writeMeta(sym, meta.fetched_from, meta.last_date, meta.provider); // фиксируем эпоху, не зацикливаемся
         return selectRange(sym, from, to);
