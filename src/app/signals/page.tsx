@@ -40,6 +40,10 @@ function fnum(v: number | null | undefined, d = 2): string {
   if (v == null || !Number.isFinite(v)) return '—';
   return v.toFixed(d);
 }
+// Подпись бенчмарка: убираем технический суффикс биржи/индекса (N225.INDX → N225, ISF.LSE → ISF).
+function benchLabel(b: unknown): string {
+  return String(b ?? '').replace(/\.(INDX|LSE|US)$/i, '');
+}
 function resultTitle(r: any): string {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -1460,7 +1464,7 @@ function LeaderboardView({ data, groups, winFrom, winTo }: { data: any; groups: 
                 <tr key={i} data-testid="leaderboard-row" className="border-t border-line">
                   <td className="px-2 py-1 text-left">
                     {r.label}
-                    {r.benchmark ? <span className="text-ink-3"> · {r.benchmark}</span> : ''}
+                    {r.benchmark ? <span className="text-ink-3"> · {benchLabel(r.benchmark)}</span> : ''}
                   </td>
                   {r.best ? (
                     <>
@@ -1600,7 +1604,7 @@ function FactorGroup({ gi, data, group, isRange, isQ, multi, winFrom, winTo, pic
         {group.symbols != null && <span className="text-[11px] text-ink-3">{group.symbols} инстр.</span>}
         {group.benchmark && (
           <span className="text-[11px] text-ink-3">
-            vs {group.benchmark}
+            vs {benchLabel(group.benchmark)}
             {group.has_bench === false && <span className="text-warn-strong"> (бенчмарк не загрузился)</span>}
           </span>
         )}
