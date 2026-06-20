@@ -159,6 +159,22 @@ test.describe('Signals /signals', () => {
     await expect(page.locator('[data-testid="signals-output"]').getByText(/диапазон/i).first()).toBeVisible();
   });
 
+  test('операции над выбранными ячейками: ИЛИ → И (пересечение по членству)', async ({ page }) => {
+    await setup(page);
+    await page.getByTestId('run-study').click();
+    await expect(page.getByTestId('heat-cell').first()).toBeVisible({ timeout: 150000 });
+    const out = page.locator('[data-testid="signals-output"]');
+    // Выбираем 2 ячейки одной таблицы → появляется переключатель операции, по умолчанию ИЛИ (совокупно).
+    await page.getByTestId('heat-cell').nth(0).click();
+    await page.getByTestId('heat-cell').nth(2).click();
+    await expect(out.getByRole('tab', { name: /И \(пересеч/ })).toBeVisible();
+    await expect(out.getByText(/Совокупно/).first()).toBeVisible();
+    // Переключаемся на «И» — серверный расчёт по реальному членству (Pyodide на синтетике).
+    await out.getByRole('tab', { name: /И \(пересеч/ }).click();
+    await expect(out.getByText(/И \(пересечение\)/).first()).toBeVisible({ timeout: 150000 });
+    await expect(out.getByText(/Ср\. изб\. дох\.|мало наблюдений/).first()).toBeVisible({ timeout: 150000 });
+  });
+
   test('режим Сигнал: событийный анализ рендерит статистику', async ({ page }) => {
     await setup(page);
     await page.getByTestId('tab-signal').click();
