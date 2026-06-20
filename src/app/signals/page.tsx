@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Badge,
   Button,
@@ -12,6 +12,7 @@ import {
   Field,
   Input,
   Label,
+  SegmentedControl,
   Select,
   Skeleton,
   Spinner,
@@ -110,6 +111,46 @@ function aggCell(years: any[], from: number, to: number, mainH: number) {
 // [P,S]) аддитивны, поэтому пул = их сумма по выбранным ячейкам и окну лет — тот же расчёт, что в
 // aggCell. ВНИМАНИЕ: наблюдения НЕ дедуплицируются (вложенные пороги одного периода/перекрытия
 // учитываются по каждому срабатыванию) — это статистика «на срабатывание сигнала».
+// Запуск операции над множествами (И / A без B) на сервере — по реальному членству наблюдений.
+// Возвращает result движка (или ошибку); читает тот же ndjson-поток, что и обычный прогон.
+async function streamSetOps(body: Record<string, unknown>): Promise<{ data?: any; error?: string }> {
+  try {
+    const res = await fetch('/api/signals/study', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.body) return { error: 'Нет потока ответа' };
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    let out: any = null;
+    let err = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line) continue;
+        let ev: any;
+        try {
+          ev = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (ev.type === 'result') out = ev.data;
+        else if (ev.type === 'error') err = ev.text || 'ошибка';
+      }
+    }
+    return err ? { error: err } : { data: out };
+  } catch (e: any) {
+    return { error: e?.message || 'ошибка' };
+  }
+}
+
 function poolCells(cells: any[], from: number, to: number, mainH: number) {
   let n = 0, pos = 0, Q = 0, any = false;
   const perH: Record<string, [number, number]> = {};
@@ -896,7 +937,15 @@ function Signals() {
               </div>
             )}
             {running && !result && <Skeleton className="h-40 w-full" />}
-            {result?.mode === 'factor' && <FactorResult data={result} onSave={saveSignalDef} />}
+            {result?.mode === 'factor' && (
+              <FactorResult
+                data={result}
+                onSave={saveSignalDef}
+                reqGroups={groups}
+                reqUniverse={universe}
+                reqBenchmark={benchmark.toUpperCase().trim() || 'SPY'}
+              />
+            )}
             {result?.mode === 'signal' && <SignalResult data={result} onSave={saveSignalDef} />}
             {result?.mode === 'combine' && <CombineResult data={result} />}
           </div>
@@ -1493,7 +1542,7 @@ function LeaderboardView({ data, groups, winFrom, winTo }: { data: any; groups: 
   );
 }
 
-function FactorResult({ data, onSave }: { data: any; onSave: (d: SignalDef, name?: string) => void }) {
+function FactorResult({ data, onSave, reqGroups = [], reqUniverse = [], reqBenchmark = 'SPY' }: { data: any; onSave: (d: SignalDef, name?: string) => void; reqGroups?: { label?: string; tickers: string[]; benchmark?: string }[]; reqUniverse?: string[]; reqBenchmark?: string }) {
   const f = FACTOR_BY_ID[data.factor];
   const isRange = data.bins === 'range';
   const groups: any[] = data.groups && data.groups.length ? data.groups : [{ label: null, baseline: data.baseline, grid: data.grid }];
@@ -1552,6 +1601,9 @@ function FactorResult({ data, onSave }: { data: any; onSave: (d: SignalDef, name
         winFrom={winFrom}
         winTo={winTo}
         fullWindow={full}
+        reqGroups={reqGroups}
+        reqUniverse={reqUniverse}
+        reqBenchmark={reqBenchmark}
         onClear={() => setPicks(new Set())}
         onSave={onSave}
       />
@@ -1630,8 +1682,13 @@ function FactorGroup({ gi, data, group, isRange, isQ, multi, winFrom, winTo, pic
   );
 }
 
-// Панель выбора (поверх ВСЕХ групп): 1 ячейка → детали; ≥2 → совокупная статистика (в т.ч. по странам).
-function SelectionPanel({ data, f, isRange, isQ, multi, mainH, selected, winFrom, winTo, fullWindow, onClear, onSave }: { data: any; f: any; isRange: boolean; isQ: boolean; multi: boolean; mainH: number; selected: { gi: number; group: any; cell: any }[]; winFrom: number; winTo: number; fullWindow: boolean; onClear: () => void; onSave: (d: SignalDef, name?: string) => void }) {
+type SetOp = 'or' | 'and' | 'diff';
+
+// Панель выбора (поверх ВСЕХ групп): 1 ячейка → детали; ≥2 → операции над множествами наблюдений:
+//  • ИЛИ (объединение) — клиентский пул по агрегатам (быстро, работает и между странами);
+//  • И (пересечение) / A без B — серверный расчёт по реальному членству, ТОЛЬКО внутри одной страны.
+function SelectionPanel({ data, f, isRange, isQ, multi, mainH, selected, winFrom, winTo, fullWindow, reqGroups, reqUniverse, reqBenchmark, onClear, onSave }: { data: any; f: any; isRange: boolean; isQ: boolean; multi: boolean; mainH: number; selected: { gi: number; group: any; cell: any }[]; winFrom: number; winTo: number; fullWindow: boolean; reqGroups: { label?: string; tickers: string[]; benchmark?: string }[]; reqUniverse: string[]; reqBenchmark: string; onClear: () => void; onSave: (d: SignalDef, name?: string) => void }) {
+  const [op, setOp] = useState<SetOp>('or');
   if (!selected.length) return null;
   if (selected.length === 1) {
     const { group, cell } = selected[0];
@@ -1641,11 +1698,170 @@ function SelectionPanel({ data, f, isRange, isQ, multi, mainH, selected, winFrom
     );
   }
   const colWord = isQ ? 'хвост' : isRange ? 'диап.' : 'порог';
-  const pooled = poolCells(selected.map((s) => s.cell), winFrom, winTo, mainH);
-  const labels = selected.map((s) => `${multi && s.group.label ? s.group.label + ' ' : ''}${s.cell.param}д/${colWord} ${s.cell.col}`);
+  const cellLabel = (s: { group: any; cell: any }) => `${multi && s.group.label ? s.group.label + ' ' : ''}${s.cell.param}д/${colWord} ${s.cell.col}`;
+  const labels = selected.map(cellLabel);
   const countries = [...new Set(selected.map((s) => s.group.label).filter(Boolean))] as string[];
+  const sameGroup = new Set(selected.map((s) => s.gi)).size === 1;
+
+  // Тикеры/бенчмарк выбранной (единственной) группы — из ОТПРАВЛЕННОГО конфига (в результате их нет).
+  const resolveGroup = (group: any): { tickers: string[]; benchmark: string } => {
+    const gb = String(group?.benchmark || reqBenchmark || 'SPY').toUpperCase();
+    const byLabel = reqGroups.find((g) => String(g.label || '') === String(group?.label || ''));
+    if (byLabel) return { tickers: byLabel.tickers, benchmark: String(byLabel.benchmark || gb).toUpperCase() };
+    if (reqGroups.length === 1) return { tickers: reqGroups[0].tickers, benchmark: String(reqGroups[0].benchmark || gb).toUpperCase() };
+    return { tickers: reqUniverse, benchmark: gb };
+  };
+
+  const opControl = (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-[12px] text-ink-3">Операция:</span>
+      <SegmentedControl<SetOp>
+        size="sm"
+        value={op}
+        onChange={setOp}
+        options={[
+          { value: 'or', label: 'ИЛИ (объедин.)' },
+          { value: 'and', label: 'И (пересеч.)' },
+          { value: 'diff', label: 'A без B' },
+        ]}
+      />
+    </div>
+  );
+
+  let body: ReactNode;
+  if (op === 'or') {
+    const pooled = poolCells(selected.map((s) => s.cell), winFrom, winTo, mainH);
+    body = <PooledCard pooled={pooled} count={selected.length} labels={labels} countries={countries} fullWindow={fullWindow} winFrom={winFrom} winTo={winTo} mainH={mainH} onClear={onClear} />;
+  } else if (!sameGroup) {
+    body = (
+      <Card>
+        <CardHeader>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <CardTitle>{op === 'and' ? 'И (пересечение)' : 'A без B'} — в пределах одной страны</CardTitle>
+              <CardDescription>
+                Пересечение и разность считаются по одним и тем же наблюдениям (дата×тикер), поэтому имеют смысл только
+                внутри одной таблицы/страны (инструмент не может одновременно быть в двух корзинах). Выберите ячейки одной
+                таблицы — или переключитесь на «ИЛИ».
+              </CardDescription>
+            </div>
+            <button type="button" onClick={onClear} className="shrink-0 text-[12px] font-medium text-brand hover:underline">сбросить</button>
+          </div>
+        </CardHeader>
+      </Card>
+    );
+  } else {
+    const grp = resolveGroup(selected[0].group);
+    body = (
+      <SetOpsCard
+        op={op}
+        data={data}
+        group={selected[0].group}
+        tickers={grp.tickers}
+        benchmark={grp.benchmark}
+        cells={selected.map((s) => ({ param: s.cell.param, region: s.cell.region }))}
+        labels={selected.map((s) => `${s.cell.param}д/${colWord} ${s.cell.col}`)}
+        winFrom={winFrom}
+        winTo={winTo}
+        fullWindow={fullWindow}
+        mainH={mainH}
+        onClear={onClear}
+      />
+    );
+  }
+
   return (
-    <PooledCard pooled={pooled} count={selected.length} labels={labels} countries={countries} fullWindow={fullWindow} winFrom={winFrom} winTo={winTo} mainH={mainH} onClear={onClear} />
+    <div className="space-y-3">
+      {opControl}
+      {body}
+    </div>
+  );
+}
+
+// Серверная операция И / A без B по реальному членству наблюдений (одна группа/страна).
+function SetOpsCard({ op, data, group, tickers, benchmark, cells, labels, winFrom, winTo, fullWindow, mainH, onClear }: { op: SetOp; data: any; group: any; tickers: string[]; benchmark: string; cells: { param: number; region: any }[]; labels: string[]; winFrom: number; winTo: number; fullWindow: boolean; mainH: number; onClear: () => void }) {
+  const [state, setState] = useState<{ loading: boolean; res: any; err: string }>({ loading: true, res: null, err: '' });
+  const cellsKey = JSON.stringify(cells);
+  const tickKey = tickers.length + ':' + benchmark;
+  useEffect(() => {
+    let alive = true;
+    setState({ loading: true, res: null, err: '' });
+    if (!tickers.length) {
+      setState({ loading: false, res: null, err: 'Не удалось определить тикеры группы.' });
+      return;
+    }
+    streamSetOps({
+      mode: 'setops',
+      factor: data.factor,
+      bins: data.bins,
+      skip: data.skip || 0,
+      horizon: data.horizon,
+      op,
+      universe: tickers,
+      benchmark,
+      cells,
+      start: `${winFrom}-01-01`,
+      end: `${winTo}-12-31`,
+    }).then((r) => {
+      if (!alive) return;
+      setState({ loading: false, res: r.data || null, err: r.error || (r.data?.error ?? '') });
+    });
+    return () => {
+      alive = false;
+    };
+  }, [op, cellsKey, tickKey, data.factor, data.bins, data.skip, data.horizon, winFrom, winTo]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const res = state.res;
+  const st = res?.stat;
+  const title = op === 'and' ? 'И (пересечение)' : 'A без B';
+  const desc = op === 'and'
+    ? 'Наблюдения (дата×тикер), удовлетворяющие ВСЕМ выбранным условиям одновременно. Избыток — к бенчмарку страны.'
+    : 'Наблюдения первого условия (A), исключая попавшие в остальные (B). Избыток — к бенчмарку страны.';
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle>
+              {group.label ? group.label + ' · ' : ''}{title} · {cells.length} ячеек
+              {!fullWindow && <span className="text-[12px] font-normal text-ink-3"> · {winFrom}–{winTo}</span>}
+            </CardTitle>
+            <CardDescription>{desc}</CardDescription>
+          </div>
+          <button type="button" onClick={onClear} className="shrink-0 text-[12px] font-medium text-brand hover:underline">сбросить</button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap gap-1.5 text-[11px]">
+          {(res?.operands ?? cells).map((o: any, i: number) => (
+            <Badge key={i} variant={op === 'diff' && i === 0 ? 'brand' : 'neutral'}>
+              {op === 'diff' ? (i === 0 ? 'A: ' : 'B: ') : ''}{labels[i]}{o?.n != null ? ` · n=${o.n}` : ''}
+            </Badge>
+          ))}
+        </div>
+        {state.loading ? (
+          <div className="flex items-center gap-2 text-[13px] text-ink-3"><Spinner /> Считаю по членству наблюдений…</div>
+        ) : state.err ? (
+          <p className="text-[13px] text-warn-strong">{state.err}</p>
+        ) : st && st.mean != null ? (
+          <>
+            <div className="flex flex-wrap gap-3">
+              <Stat label="Ср. изб. дох." value={fpct(st.mean)} tone={(st.mean ?? 0) >= 0 ? 'up' : 'down'} />
+              <Stat label="t-стат" value={fnum(st.t)} />
+              <Stat label="Доля плюс" value={fnum(st.hit, 1) + '%'} />
+              <Stat label="Наблюдений" value={String(st.n)} hint={`${st.periods} периодов · база ${fpct(res.baseline)}`} />
+            </div>
+            {Array.isArray(res.decay) && res.decay.length > 0 && <DecayBlock points={res.decay.map((d: any) => ({ h: d.h, mean: d.mean }))} mainH={mainH} />}
+            <YearlyBars yearly={res.yearly} />
+            <TickerTable tickers={res.tickers} kw={res.kw} />
+          </>
+        ) : (
+          <p className="text-[13px] text-ink-3">
+            {op === 'and' ? 'Пересечение пустое или слишком мало наблюдений' : 'После исключения B слишком мало наблюдений'} — ослабьте условия или расширьте окно лет.
+          </p>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

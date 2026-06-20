@@ -392,6 +392,63 @@ async def main():
         return {'mode': 'factor', 'factor': fid, 'side': side, 'bins': bins, 'horizon': H, 'skip': skip,
                 'fdrAlpha': alpha, 'params': params, 'cols': col_labels, 'hz': HZ, 'groups': out_groups, 'meta': meta}
 
+    # setops — операции над множествами наблюдений ВЫБРАННЫХ ячеек одной группы (страны):
+    # OR (объединение, дедуплицировано), AND (пересечение — оба условия на одном date×ticker),
+    # diff (A·¬B — первая ячейка минус остальные). Считается по реальному членству, а не по агрегатам.
+    if mode == 'setops':
+        fid = CFG['factor']; bins = CFG.get('bins', 'cumulative'); skip = int(CFG.get('skip', 0))
+        op = CFG.get('op', 'and'); cells = CFG.get('cells') or []
+        if len(cells) < 2:
+            return {'error': 'Для операции нужно минимум 2 ячейки.'}
+        tgt = build_targets(px, bench, HZ, H)
+        if tgt.empty or tgt['date'].nunique() < 10:
+            return {'error': 'Недостаточно истории для построения панели.'}
+        base = tgt.reset_index(drop=True)
+        base['__rid'] = np.arange(len(base))
+        nrows = len(base)
+
+        def _cell_mask(cell):
+            fv = build_fval(px, bench, fid, int(cell['param']), H, skip)
+            sel = np.zeros(nrows, dtype=bool)
+            if fv.empty:
+                return sel
+            m = base[['__rid', 'symbol', 'date']].merge(fv, on=['symbol', 'date'], how='left')
+            reg = cell['region']
+            if bins == 'quantile':
+                valid = m['fval'].notna()
+                sub_v = m[valid]
+                if len(sub_v):
+                    gd = sub_v.groupby('date')['fval']
+                    n_by = gd.transform('size')
+                    rank = gd.rank(method='first', ascending=(reg.get('side') == 'pct_low'))
+                    k = np.maximum(1.0, np.round(n_by * float(reg.get('q', 10)) / 100.0))
+                    sel[sub_v['__rid'].values] = (rank <= k).values
+            else:
+                mm = region_mask(m['fval'], reg).fillna(False).values
+                sel[m['__rid'].values] = mm
+            return sel
+
+        masks = [_cell_mask(c) for c in cells]
+        if op == 'or':
+            comb = np.logical_or.reduce(masks)
+        elif op == 'diff':
+            comb = masks[0].copy()
+            for mk in masks[1:]:
+                comb = comb & (~mk)
+        else:
+            comb = np.logical_and.reduce(masks)
+        sub = base[comb]
+        st = pstat(sub, maincol); bstat = pstat(base, maincol)
+        operands = [{'param': int(c['param']), 'region': c['region'], 'n': int(masks[i].sum())} for i, c in enumerate(cells)]
+        decay = [{'h': h, 'mean': _f(float(sub['t_' + str(h)].mean())) if len(sub) else None,
+                  'base': _f(float(base['t_' + str(h)].mean()))} for h in HZ]
+        return {'mode': 'setops', 'op': op, 'factor': fid, 'bins': bins, 'horizon': H, 'hz': HZ, 'benchmark': bench,
+                'stat': ({'mean': _f(st['mean']), 't': _f(st['t']), 'hit': _f(st['hit']), 'n': st['n'], 'periods': st['periods']} if st else None),
+                'baseline': _f(bstat['mean']) if bstat else None,
+                'operands': operands, 'decay': decay, 'yearly': yearly_of(sub, maincol),
+                'tickers': ticker_breakdown(sub, maincol), 'kw': kruskal(sub, maincol),
+                'meta': meta_of(tgt, px, bench, n_cleaned)}
+
     if mode == 'signal':
         s0 = CFG['signal']
         fv = build_fval(px, bench, s0['factor'], int(s0['param']), H, int(s0.get('skip', 0)))

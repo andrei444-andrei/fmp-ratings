@@ -49,6 +49,28 @@ function normGroups(raw: unknown, benchmark: string): { label: string; tickers: 
   return out;
 }
 
+// Регион ячейки сетки (для операций над множествами): перцентиль (топ/дно %), порог (≥/≤) или диапазон.
+function normRegion(reg: any, bins: string): Record<string, unknown> | null {
+  const side = String(reg?.side || '');
+  if (bins === 'quantile') {
+    if (side !== 'pct_low' && side !== 'pct_high') return null;
+    const q = clampNum(reg?.q, NaN, 0.1, 50);
+    return Number.isFinite(q) ? { side, q } : null;
+  }
+  if (side === 'band') {
+    let lo = clampNum(reg?.lo, NaN, -1e9, 1e9);
+    let hi = clampNum(reg?.hi, NaN, -1e9, 1e9);
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) return null;
+    if (lo > hi) [lo, hi] = [hi, lo];
+    return { side, lo, hi };
+  }
+  if (side === 'low' || side === 'high') {
+    const t = clampNum(reg?.threshold, NaN, -1e9, 1e9);
+    return Number.isFinite(t) ? { side, threshold: t } : null;
+  }
+  return null;
+}
+
 function normSignal(raw: any): SignalDef | null {
   const f = FACTOR_BY_ID[String(raw?.factor)];
   if (!f) return null;
@@ -67,10 +89,10 @@ function normSignal(raw: any): SignalDef | null {
   return { factor: f.id as FactorId, param, side, threshold, skip };
 }
 
-export type StudyConfig = Record<string, unknown> & { mode: 'factor' | 'signal' | 'combine' };
+export type StudyConfig = Record<string, unknown> & { mode: 'factor' | 'signal' | 'combine' | 'setops' };
 
 export function normalizeStudyConfig(body: any): StudyConfig {
-  const mode = ['factor', 'signal', 'combine'].includes(body?.mode) ? body.mode : 'factor';
+  const mode = ['factor', 'signal', 'combine', 'setops'].includes(body?.mode) ? body.mode : 'factor';
   const benchmark = (typeof body?.benchmark === 'string' && body.benchmark.trim() ? body.benchmark : 'SPY')
     .toUpperCase()
     .trim();
@@ -114,6 +136,23 @@ export function normalizeStudyConfig(body: any): StudyConfig {
   if (mode === 'signal') {
     const sig = normSignal(body?.signal) || { factor: 'momentum', param: 5, side: 'low', threshold: -5 };
     return { ...base, signal: sig };
+  }
+
+  if (mode === 'setops') {
+    const f = FACTOR_BY_ID[String(body?.factor)] || FACTOR_BY_ID.xbench;
+    const bins = body?.bins === 'range' ? 'range' : body?.bins === 'quantile' ? 'quantile' : 'cumulative';
+    const op = ['or', 'and', 'diff'].includes(body?.op) ? body.op : 'and';
+    const skip = Math.round(clampNum(body?.skip, 0, 0, 60));
+    // Ячейки одной группы: {param ∈ paramOptions, region}. Порядок сохраняем — для diff важно (A — первая).
+    const cells = (Array.isArray(body?.cells) ? body.cells : [])
+      .slice(0, 8)
+      .map((c: any) => {
+        const param = f.paramOptions.includes(Number(c?.param)) ? Number(c.param) : null;
+        const region = normRegion(c?.region, bins);
+        return param != null && region ? { param, region } : null;
+      })
+      .filter((c: unknown): c is { param: number; region: Record<string, unknown> } => c != null);
+    return { ...base, factor: f.id, bins, op, skip, cells };
   }
 
   // combine
