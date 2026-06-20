@@ -44,7 +44,12 @@ export async function POST(req: Request) {
         }
         send({ type: 'status', text: 'Готовлю движок…' });
 
-        const configB64 = Buffer.from(JSON.stringify(cfg)).toString('base64');
+        // Факт наличия ключей данных на сервере (а не догадка по выходным в ряду) — для точной диагностики.
+        const cfgForEngine = {
+          ...cfg,
+          dataKeys: { eodhd: !!process.env.EODHD_API_KEY, fmp: !!process.env.FMP_API_KEY },
+        };
+        const configB64 = Buffer.from(JSON.stringify(cfgForEngine)).toString('base64');
         const strategyB64 = Buffer.from(strategy, 'utf-8').toString('base64');
         const code = buildBacktestCode(configB64, strategyB64);
 

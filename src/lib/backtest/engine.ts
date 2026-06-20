@@ -96,7 +96,8 @@ if ok:
         emit(callout("Не удалось загрузить цены. Проверьте тикеры и тариф FMP.", tone="bad", title="Нет данных"))
         ok = False
     else:
-        PXFF_DF = px.sort_index().ffill()
+        _pxs = px.sort_index()      # сырой ряд (до ffill) — для пер-символьного детекта синтетики
+        PXFF_DF = _pxs.ffill()
         TRADE_SYMS = [s for s in universe if s in PXFF_DF.columns]
         bench_present = bench in PXFF_DF.columns
         missing = [s for s in universe if s not in PXFF_DF.columns]
@@ -116,17 +117,38 @@ if ok:
     SYM_IDX = {s: j for j, s in enumerate(TRADE_SYMS)}
     PFF = PXFF_DF[TRADE_SYMS].values.astype(float)
 
-    # Детект синтетики: без ключей данных цены генерятся по КАЛЕНДАРНЫМ дням (вкл. выходные),
-    # а реальный EOD — только торговые дни. Высокая доля выходных => демо-ряд, не котировки.
+    # Детект синтетики ПО КАЖДОМУ тикеру: демо-ряд генерится по КАЛЕНДАРНЫМ дням (вкл. выходные),
+    # реальный EOD — только торговые дни. Высокая доля выходных в СОБСТВЕННЫХ датах тикера => демо.
+    # Ключи проверяем по факту на сервере (CFG.dataKeys), а НЕ угадываем — формулировка точная.
+    DK = CFG.get("dataKeys", {}) or {}
+    has_key = bool(DK.get("eodhd")) or bool(DK.get("fmp"))
+    def _is_synth(col):
+        try:
+            c = col.dropna()
+            return len(c) > 30 and float((c.index.dayofweek >= 5).mean()) > 0.10
+        except Exception:
+            return False
     try:
-        _wk = float((PXFF_DF.index.dayofweek >= 5).mean())
+        synth_syms = [s for s in TRADE_SYMS if _is_synth(_pxs[s])]
+        bench_synth = bool(bench_present and _is_synth(_pxs[bench]))
     except Exception:
-        _wk = 0.0
-    if _wk > 0.10:
-        emit(callout("На сервере НЕТ ключей данных (EODHD/FMP) — цены синтетические (демо, случайный ряд), это НЕ настоящий "
-                     + (TRADE_SYMS[0] if TRADE_SYMS else "тикер") + ". Кривая капитала и метрики бессмысленны. "
-                     "Чтобы тестировать на реальных данных, задайте EODHD_API_KEY (или FMP_API_KEY) на сервере.",
-                     tone="bad", title="Внимание: данные синтетические (демо)"))
+        synth_syms = []; bench_synth = False
+    if synth_syms or bench_synth:
+        m = len(TRADE_SYMS); n = len(synth_syms)
+        _lst = ", ".join((synth_syms + (["бенчмарк " + bench] if bench_synth else []))[:30])
+        if not has_key:
+            emit(callout("На сервере НЕ заданы ключи данных (EODHD_API_KEY / FMP_API_KEY) → цены демо-синтетика ("
+                         + str(n) + " из " + str(m) + " тикеров" + (" + бенчмарк" if bench_synth else "") + "). "
+                         "Кривая капитала и метрики бессмысленны. Задайте EODHD_API_KEY в переменных окружения Vercel "
+                         "(на том проекте/деплое, который открыт).",
+                         tone="bad", title="Внимание: на сервере нет ключей данных"))
+        else:
+            emit(callout("Ключи данных на сервере ЕСТЬ (EODHD: " + ("да" if DK.get("eodhd") else "нет")
+                         + ", FMP: " + ("да" if DK.get("fmp") else "нет") + "), но по " + str(n) + " из " + str(m)
+                         + " тикеров данные не пришли — по ним подставлена демо-синтетика: " + _lst + ". "
+                         "Обычно это неверный тикер/суффикс (EODHD-форма: AAPL, HSBA.LSE, RELIANCE.NSE, 7203.TSE, 005930.KO) "
+                         "или лимит тарифа. Проверьте /api/admin/eodhd-check. Пока часть рядов синтетическая — метрики искажены.",
+                         tone="bad", title="Внимание: часть тикеров без данных (демо)"))
 
     # Per-symbol модели издержек (массивы по индексу инструмента).
     COMM_BPS = np.zeros(K); MIN_COMM = np.zeros(K); SPREAD_BPS = np.zeros(K)
