@@ -449,6 +449,118 @@ async def main():
                 'tickers': ticker_breakdown(sub, maincol), 'kw': kruskal(sub, maincol),
                 'meta': meta_of(tgt, px, bench, n_cleaned)}
 
+    # dipcal — калибровка покупки просадок ПО КАЖДОМУ инструменту (стране) отдельно.
+    # Глубина просадки ранжируется по СОБСТВЕННОЙ истории (перцентиль) — непараметрично, корректно
+    # к жирным хвостам (где общая σ врёт). Автоподбор порога по форвардному edge; флаг стабильности
+    # (edge>0 в обеих половинах истории); классификация реверсия/тренд (corr глубина→форвард) и split
+    # по vol-режиму. Форвард — АБСОЛЮТНЫЙ (это P&L покупки ETF), edge = к безусловному среднему тикера.
+    if mode == 'dipcal':
+        N = int(CFG.get('dipWindow', 21)); W = int(CFG.get('volWindow', 63)); minN = int(CFG.get('minN', 20))
+        Hs = sorted(set([5, 10, 21, 42, H]))
+        pcts = [30, 20, 10, 5]
+        pxs = px.sort_index()
+        out_rows = []
+        for s in [col for col in pxs.columns if col != bench]:
+            c = pxs[s]
+            if c.notna().sum() < 500:
+                continue
+            dd = (c / c.rolling(N).max() - 1.0) * 100.0          # просадка от N-дн. пика (<=0)
+            ddr = (c / c.shift(N) - 1.0) * 100.0                 # точечная N-дн. доходность (справочно)
+            vold = c.pct_change().rolling(W).std()               # дневная σ (режим)
+            sigN = vold * math.sqrt(N) * 100.0                   # N-дн. σ в % (для перевода порога в σ)
+            df = pd.DataFrame({'dd': dd, 'ddr': ddr, 'vol': vold, 'sigN': sigN}, index=c.index)
+            for h in Hs:
+                df['fwd_' + str(h)] = (c.shift(-h) / c - 1.0) * 100.0
+            df['date'] = df.index
+            df = df.reindex(c.index[::max(1, H)]).dropna(subset=['dd', 'fwd_' + str(H)])
+            if len(df) < 40:
+                continue
+            fcol = 'fwd_' + str(H)
+            df[fcol] = df[fcol].clip(df[fcol].quantile(0.005), df[fcol].quantile(0.995))
+            base = float(df[fcol].mean())
+            sig_med = float(df['sigN'].median()) if df['sigN'].notna().any() else float('nan')
+            med_vol = float(df['vol'].median())
+            mid = df['date'].median()
+            first = df[df['date'] <= mid]; second = df[df['date'] > mid]
+
+            def _stat(sub):
+                n = len(sub)
+                if n < 2: return (float('nan'), 0.0, n, float('nan'))
+                m = float(sub[fcol].mean()); sd = float(sub[fcol].std(ddof=1))
+                t = m / (sd / math.sqrt(n)) if sd > 0 else 0.0
+                return (m, t, n, float((sub[fcol] > 0).mean() * 100.0))
+
+            curve = []; best = None
+            for p in pcts:
+                thr = float(df['dd'].quantile(p / 100.0))
+                m, t, n, hit = _stat(df[df['dd'] <= thr])
+                edge = (m - base) if m == m else float('nan')
+                sig_u = (thr / sig_med) if (sig_med == sig_med and sig_med != 0) else float('nan')
+                rec = {'pctile': p, 'dd': _f(thr), 'sigma': _f(sig_u), 'fwd': _f(m), 't': _f(t),
+                       'n': int(n), 'hit': _f(hit), 'edge': _f(edge), '_thr': thr}
+                curve.append(rec)
+                if n >= minN and edge == edge and edge > 0 and t >= 1.0:
+                    score = edge * math.sqrt(n)
+                    if best is None or score > best['_score']:
+                        best = dict(rec); best['_score'] = score
+            if best is None:  # ни один порог не прошёл фильтр — берём с макс. edge·√n при n>=minN
+                cand = [r for r in curve if r['n'] >= minN and r['edge'] is not None]
+                if cand:
+                    best = dict(max(cand, key=lambda r: (r['edge'] or -9) * math.sqrt(r['n']))); best['_score'] = 0.0
+            if best is None:
+                continue
+            thr = best['_thr']; sel = df[df['dd'] <= thr]
+
+            def _edge_half(part):
+                if len(part) < 2: return float('nan')
+                ss = part[part['dd'] <= thr]
+                if len(ss) < 3: return float('nan')
+                return float(ss[fcol].mean()) - float(part[fcol].mean())
+            e1 = _edge_half(first); e2 = _edge_half(second)
+            stable = bool(e1 == e1 and e2 == e2 and e1 > 0 and e2 > 0)
+
+            cc = df[['dd', fcol]].dropna()
+            rflag = 'neutral'; rcorr = float('nan'); rt = float('nan')
+            if len(cc) >= 10:
+                rcorr = float(cc['dd'].corr(cc[fcol]))
+                if rcorr == rcorr:
+                    rt = rcorr * math.sqrt(max(1, len(cc) - 2)) / math.sqrt(max(1e-9, 1 - rcorr * rcorr))
+                    if rcorr < 0 and abs(rt) >= 1.5: rflag = 'revert'
+                    elif rcorr > 0 and abs(rt) >= 1.5: rflag = 'trend'
+
+            calm = sel[sel['vol'] <= med_vol]; storm = sel[sel['vol'] > med_vol]
+            cm, _, cn, _ = _stat(calm); sm, _, sn, _ = _stat(storm)
+            by_h = []
+            for h in Hs:
+                hc = 'fwd_' + str(h); ss = sel[hc].dropna(); bb = df[hc].dropna()
+                by_h.append({'h': h, 'fwd': _f(float(ss.mean())) if len(ss) else None,
+                             'edge': _f(float(ss.mean()) - float(bb.mean())) if (len(ss) and len(bb)) else None,
+                             'n': int(len(ss))})
+            m, t, n, hit = _stat(sel)
+            for r in curve: r.pop('_thr', None)
+            out_rows.append({
+                'sym': s, 'n_total': int(len(df)), 'baseline': _f(base),
+                'pctile': best['pctile'], 'dd': _f(thr), 'sigma': best.get('sigma'),
+                'ddr_med': _f(float(sel['ddr'].median())) if len(sel) else None,
+                'fwd': _f(m), 't': _f(t), 'n': int(n), 'hit': _f(hit),
+                'edge': _f((m - base) if m == m else float('nan')),
+                'stable': stable, 'e1': _f(e1), 'e2': _f(e2),
+                'reversion': {'corr': _f(rcorr), 't': _f(rt), 'flag': rflag},
+                'regime': {'calm_fwd': _f(cm), 'calm_n': int(cn), 'storm_fwd': _f(sm), 'storm_n': int(sn)},
+                'by_h': by_h, 'curve': curve,
+            })
+        # Ранжируем для use-case «что покупать»: сперва реальные реверсеры (по edge), затем нейтральные,
+        # падающие ножи (trend) — в самом низу, как бы ни был велик edge к их же провальному baseline.
+        _ford = {'revert': 0, 'neutral': 1, 'trend': 2}
+        out_rows.sort(key=lambda r: (_ford.get(r['reversion']['flag'], 1), -(r['edge'] if r['edge'] is not None else -1e9)))
+        dts = sorted(pd.to_datetime(pxs.index).unique())
+        return {'mode': 'dipcal', 'horizon': H, 'dipWindow': N, 'volWindow': W, 'minN': minN,
+                'rows': out_rows,
+                'meta': {'symbols': len(out_rows),
+                         'first': str(pd.Timestamp(dts[0]).date()) if dts else '',
+                         'last': str(pd.Timestamp(dts[-1]).date()) if dts else '',
+                         'benchmark': bench, 'cleaned': int(n_cleaned)}}
+
     if mode == 'signal':
         s0 = CFG['signal']
         fv = build_fval(px, bench, s0['factor'], int(s0['param']), H, int(s0.get('skip', 0)))

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Badge,
   Button,
@@ -24,7 +24,7 @@ import { FACTORS, FACTOR_BY_ID, signalLabel, supportsSkip, type FactorId, type S
 import { UNIVERSE_PRESETS, type UniversePreset } from '@/lib/signals/presets';
 import { Heatmap, type HeatCell } from './Heatmap';
 
-type Mode = 'factor' | 'signal' | 'combine';
+type Mode = 'factor' | 'signal' | 'combine' | 'dipcal';
 type SavedSignal = { id: number; name: string; def: SignalDef };
 
 const CUR_YEAR = new Date().getFullYear();
@@ -235,6 +235,7 @@ function Tabs({ tab, setTab }: { tab: Mode; setTab: (m: Mode) => void }) {
     { id: 'factor', label: '1 · Фактор' },
     { id: 'signal', label: '2 · Сигнал' },
     { id: 'combine', label: '3 · Комбинация' },
+    { id: 'dipcal', label: '4 · Просадки' },
   ];
   return (
     <div className="flex gap-1 rounded-fk bg-surface-2 p-1">
@@ -325,6 +326,10 @@ function Signals() {
   const [grid1, setGrid1] = useState('');
   const [minN, setMinN] = useState(30);
   const [folds, setFolds] = useState(4);
+  // dipcal — калибровка покупки просадок: окно просадки N, окно волатильности, мин. число событий.
+  const [dipN, setDipN] = useState(21);
+  const [dipVolW, setDipVolW] = useState(63);
+  const [dipMinN, setDipMinN] = useState(20);
 
   // ── Сохранённые результаты (снимки) ──
   const [savedResults, setSavedResults] = useState<{ id: number; title: string; mode: string; created_at: string }[] | null>(null);
@@ -405,7 +410,7 @@ function Signals() {
         if (Number.isFinite(c.horizon)) setHorizon(c.horizon);
         if (typeof c.yearFrom === 'string') setYearFrom(c.yearFrom);
         if (typeof c.yearTo === 'string') setYearTo(c.yearTo);
-        if (c.tab === 'factor' || c.tab === 'signal' || c.tab === 'combine') setTab(c.tab);
+        if (c.tab === 'factor' || c.tab === 'signal' || c.tab === 'combine' || c.tab === 'dipcal') setTab(c.tab);
         if (typeof c.factorId === 'string' && FACTOR_BY_ID[c.factorId as FactorId]) setFactorId(c.factorId);
         if (c.fSide === 'high' || c.fSide === 'low' || c.fSide === 'band') setFSide(c.fSide);
         if (c.fBins === 'cumulative' || c.fBins === 'range' || c.fBins === 'quantile') setFBins(c.fBins);
@@ -489,7 +494,7 @@ function Signals() {
       setRunning(false);
       setErrMsg('');
       setResult(res.payload);
-      if (['factor', 'signal', 'combine'].includes(res.payload.mode)) setTab(res.payload.mode);
+      if (['factor', 'signal', 'combine', 'dipcal'].includes(res.payload.mode)) setTab(res.payload.mode);
       setStatus('Сохранённый результат');
     } catch (e: any) {
       toast({ variant: 'error', title: 'Не удалось открыть', description: e?.message });
@@ -632,6 +637,10 @@ function Signals() {
       minN,
       folds,
     });
+  }
+
+  function runDipcal() {
+    runStudy({ mode: 'dipcal', dipWindow: dipN, volWindow: dipVolW, minN: dipMinN });
   }
 
   function togglePicked(id: number) {
@@ -801,6 +810,21 @@ function Signals() {
                   onDelete={deleteSaved}
                 />
               )}
+              {tab === 'dipcal' && (
+                <DipcalForm
+                  dipN={dipN}
+                  setDipN={setDipN}
+                  volW={dipVolW}
+                  setVolW={setDipVolW}
+                  minN={dipMinN}
+                  setMinN={setDipMinN}
+                  horizon={horizon}
+                  setHorizon={setHorizon}
+                  onRun={runDipcal}
+                  running={running}
+                  canRun={universe.length >= 4}
+                />
+              )}
             </CardContent>
           </Card>
 
@@ -932,7 +956,7 @@ function Signals() {
               <div className="flex h-full min-h-[40vh] flex-col items-center justify-center text-center">
                 <p className="text-sm font-medium text-ink">Здесь появится результат</p>
                 <p className="mt-1 max-w-sm text-sm text-ink-3">
-                  Режим «Фактор» — карта край × порог; клик по ячейке раскрывает затухание и даёт сохранить сигнал. «Сигнал» — событийный анализ. «Комбинация» — пересечение и автоподбор границ.
+                  Режим «Фактор» — карта край × порог; клик по ячейке раскрывает затухание и даёт сохранить сигнал. «Сигнал» — событийный анализ. «Комбинация» — пересечение и автоподбор границ. «Просадки» — по каждой стране свой порог покупки просадки (в перцентилях её истории) с автоподбором и флагом реверсия/нож.
                 </p>
               </div>
             )}
@@ -948,6 +972,7 @@ function Signals() {
             )}
             {result?.mode === 'signal' && <SignalResult data={result} onSave={saveSignalDef} />}
             {result?.mode === 'combine' && <CombineResult data={result} />}
+            {result?.mode === 'dipcal' && <DipcalResult data={result} />}
           </div>
         </Card>
       </main>
@@ -1212,6 +1237,160 @@ function CombineForm(p: any) {
       )}
       <SavedList saved={p.saved} onDelete={p.onDelete} />
     </>
+  );
+}
+
+function DipcalForm(p: any) {
+  return (
+    <>
+      <p className="text-[12px] text-ink-3">
+        По каждому инструменту вселенной подбираем «свой» порог просадки — в перцентилях ЕГО собственной истории
+        (непараметрично, корректно к жирным хвостам) — и считаем, как он отрабатывает на покупку. Лучший пресет —{' '}
+        <span className="font-medium text-ink-2">«Страновые ETF»</span> слева.
+      </p>
+      <div className="grid grid-cols-2 gap-3">
+        <Field>
+          <Label htmlFor="dn">Окно просадки (дн.)</Label>
+          <Input id="dn" type="number" value={p.dipN} onChange={(e: any) => p.setDipN(Number(e.target.value) || 21)} />
+        </Field>
+        <Field>
+          <Label htmlFor="dh">Горизонт удержания (дн.)</Label>
+          <Input id="dh" type="number" value={p.horizon} onChange={(e: any) => p.setHorizon(Number(e.target.value) || 21)} />
+        </Field>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field>
+          <Label htmlFor="dv">Окно волатильности (дн.)</Label>
+          <Input id="dv" type="number" value={p.volW} onChange={(e: any) => p.setVolW(Number(e.target.value) || 63)} />
+        </Field>
+        <Field>
+          <Label htmlFor="dm">Мин. число событий</Label>
+          <Input id="dm" type="number" value={p.minN} onChange={(e: any) => p.setMinN(Number(e.target.value) || 20)} />
+        </Field>
+      </div>
+      <Button onClick={p.onRun} loading={p.running} fullWidth data-testid="run-study" disabled={!p.canRun}>
+        Калибровать просадки по странам
+      </Button>
+      {!p.canRun && <p className="text-[11px] font-medium text-warn-strong">Кнопка неактивна: выберите вселенную (≥ 4 инстр.) выше.</p>}
+    </>
+  );
+}
+
+const DIP_FLAG: Record<string, { label: string; variant: 'up' | 'down' | 'neutral' }> = {
+  revert: { label: 'реверсия', variant: 'up' },
+  neutral: { label: 'нейтр.', variant: 'neutral' },
+  trend: { label: 'нож ↓', variant: 'down' },
+};
+
+// Свод калибровки покупки просадок: по каждому рынку — подобранный порог (в %, σ и перцентиле),
+// форвардная доходность/edge, флаг поведения (реверсия/тренд) и стабильность. Строка раскрывается.
+function DipcalResult({ data }: { data: any }) {
+  const rows: any[] = data.rows || [];
+  const [open, setOpen] = useState<string | null>(null);
+  if (!rows.length) return <p className="text-sm text-ink-3">Недостаточно истории для калибровки — расширьте вселенную или окно лет.</p>;
+  const reverters = rows.filter((r) => r.reversion?.flag === 'revert' && (r.edge ?? 0) > 0 && (r.t ?? 0) >= 1).map((r) => r.sym);
+  const knives = rows.filter((r) => r.reversion?.flag === 'trend').map((r) => r.sym);
+  return (
+    <div className="space-y-4">
+      <p className="text-[11px] text-ink-3">
+        {data.meta?.symbols} инстр. · окно {data.meta?.first} — {data.meta?.last} · просадка {data.dipWindow}д · горизонт {data.horizon}д · vol {data.volWindow}д
+        {data.meta?.cleaned > 0 && <span className="text-warn-strong"> · очищено {data.meta.cleaned} баров</span>}
+      </p>
+      <div className="space-y-1 rounded-fk border border-line bg-surface-2 p-3 text-[12px]">
+        <p><span className="font-semibold text-up-strong">Покупать просадки:</span> {reverters.length ? reverters.join(', ') : '—'}</p>
+        <p><span className="font-semibold text-down-strong">Падающий нож (избегать):</span> {knives.length ? knives.join(', ') : '—'}</p>
+        <p className="text-ink-3">
+          Порог подобран по СОБСТВЕННОЙ истории каждого рынка (перцентиль просадки от {data.dipWindow}-дн. пика). «Форвард» — абсолютная
+          доходность за {data.horizon}д после входа; «edge» — сверх обычного удержания этого ETF. Клик по строке — детали.
+        </p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[12px]">
+          <thead>
+            <tr className="text-left text-ink-3">
+              <th className="py-1.5 pr-2">Рынок</th>
+              <th className="py-1.5 pr-2">Поведение</th>
+              <th className="py-1.5 pr-2">Порог входа</th>
+              <th className="py-1.5 pr-2 text-right">Форвард</th>
+              <th className="py-1.5 pr-2 text-right">Edge</th>
+              <th className="py-1.5 pr-2 text-right">t</th>
+              <th className="py-1.5 pr-2 text-right">Hit</th>
+              <th className="py-1.5 pr-2 text-right">N</th>
+              <th className="py-1.5 pr-2 text-center">Стаб.</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const fm = DIP_FLAG[r.reversion?.flag as string] || DIP_FLAG.neutral;
+              const isOpen = open === r.sym;
+              return (
+                <Fragment key={r.sym}>
+                  <tr className="cursor-pointer border-t border-line hover:bg-surface-2" onClick={() => setOpen(isOpen ? null : r.sym)}>
+                    <td className="py-1.5 pr-2 font-semibold text-ink">{r.sym}</td>
+                    <td className="py-1.5 pr-2"><Badge variant={fm.variant}>{fm.label}</Badge></td>
+                    <td className="py-1.5 pr-2 tabular-nums">{fpct(r.dd, 1)} <span className="text-ink-3">/ {fnum(r.sigma, 1)}σ / p{r.pctile}</span></td>
+                    <td className={`py-1.5 pr-2 text-right tabular-nums ${(r.fwd ?? 0) >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{fpct(r.fwd)}</td>
+                    <td className={`py-1.5 pr-2 text-right tabular-nums ${(r.edge ?? 0) >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{fpct(r.edge)}</td>
+                    <td className="py-1.5 pr-2 text-right tabular-nums">{fnum(r.t, 1)}</td>
+                    <td className="py-1.5 pr-2 text-right tabular-nums">{fnum(r.hit, 0)}%</td>
+                    <td className="py-1.5 pr-2 text-right tabular-nums">{r.n}</td>
+                    <td className="py-1.5 pr-2 text-center">{r.stable ? <span className="text-up-strong">✓</span> : <span className="text-ink-3">—</span>}</td>
+                  </tr>
+                  {isOpen && (
+                    <tr>
+                      <td colSpan={9} className="bg-surface-2 px-3 py-2">
+                        <DipcalDetail r={r} />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function DipcalDetail({ r }: { r: any }) {
+  const rev = r.reversion || {};
+  const reg = r.regime || {};
+  const bestH = (r.by_h || []).reduce((a: any, b: any) => ((b.edge ?? -1e9) > (a?.edge ?? -1e9) ? b : a), null);
+  return (
+    <div className="space-y-2 text-[11px]">
+      <div>
+        <div className="mb-1 font-semibold text-ink-2">Кривая отклика — порог по перцентилю просадки → форвард</div>
+        <div className="flex flex-wrap gap-1.5">
+          {(r.curve || []).map((c: any) => (
+            <span
+              key={c.pctile}
+              className={`rounded-fk-sm border px-2 py-1 tabular-nums ${c.pctile === r.pctile ? 'border-brand bg-brand-50 text-brand-700' : 'border-line text-ink-2'}`}
+            >
+              p{c.pctile}: {fpct(c.dd, 1)} → {fpct(c.fwd, 1)} <span className="text-ink-3">(edge {fpct(c.edge, 1)}, t {fnum(c.t, 1)}, n{c.n})</span>
+            </span>
+          ))}
+        </div>
+      </div>
+      <div>
+        <span className="font-semibold text-ink-2">Горизонт удержания: </span>
+        {(r.by_h || []).map((h: any) => (
+          <span key={h.h} className={`mr-2 tabular-nums ${bestH && h.h === bestH.h ? 'font-semibold text-brand-700' : 'text-ink-2'}`}>
+            {h.h}д {fpct(h.fwd, 1)}
+          </span>
+        ))}
+        {bestH && <span className="text-ink-3">· лучший ≈ {bestH.h}д</span>}
+      </div>
+      <div className="flex flex-wrap gap-x-5 gap-y-1 text-ink-2">
+        <span>
+          <span className="font-semibold">Реверсия:</span> corr {fnum(rev.corr, 2)} (t {fnum(rev.t, 1)}) —{' '}
+          {rev.flag === 'revert' ? 'глубже падение → выше отскок' : rev.flag === 'trend' ? 'глубже падение → дальше вниз' : 'нет связи'}
+        </span>
+        <span>
+          <span className="font-semibold">Режим входа:</span> тихо {fpct(reg.calm_fwd, 1)} (n{reg.calm_n}) · паника {fpct(reg.storm_fwd, 1)} (n{reg.storm_n})
+        </span>
+      </div>
+    </div>
   );
 }
 
