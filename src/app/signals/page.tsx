@@ -252,6 +252,7 @@ function Signals() {
   const [status, setStatus] = useState('');
   const [result, setResult] = useState<any>(null);
   const [errMsg, setErrMsg] = useState('');
+  const [hydrated, setHydrated] = useState(false); // конфиг восстановлен из localStorage (тогда можно сохранять)
 
   // ── Фактор ──
   const [factorId, setFactorId] = useState<FactorId>('xbench');
@@ -342,6 +343,35 @@ function Signals() {
     } catch {
       /* ignore */
     }
+    // Восстанавливаем ВХОДНОЙ конфиг (вселенная, фактор, годы). Иначе после перезахода результат есть,
+    // а вселенная пуста → кнопка «Построить карту» неактивна (частая путаница «кнопка не работает»).
+    try {
+      const c = JSON.parse(localStorage.getItem('signals:config') || 'null');
+      if (c && typeof c === 'object') {
+        if (Array.isArray(c.presets)) {
+          setPresets(new Set(c.presets));
+          for (const id of c.presets) {
+            const pr = UNIVERSE_PRESETS.find((p) => p.id === id);
+            if (pr?.dynamic) loadDyn(id); // дотянуть страновые/S&P корзины
+          }
+        }
+        if (typeof c.custom === 'string') setCustom(c.custom);
+        if (typeof c.benchmark === 'string') setBenchmark(c.benchmark);
+        if (Number.isFinite(c.horizon)) setHorizon(c.horizon);
+        if (typeof c.yearFrom === 'string') setYearFrom(c.yearFrom);
+        if (typeof c.yearTo === 'string') setYearTo(c.yearTo);
+        if (c.tab === 'factor' || c.tab === 'signal' || c.tab === 'combine') setTab(c.tab);
+        if (typeof c.factorId === 'string' && FACTOR_BY_ID[c.factorId as FactorId]) setFactorId(c.factorId);
+        if (c.fSide === 'high' || c.fSide === 'low' || c.fSide === 'band') setFSide(c.fSide);
+        if (c.fBins === 'cumulative' || c.fBins === 'range' || c.fBins === 'quantile') setFBins(c.fBins);
+        if (Array.isArray(c.fParams)) setFParams(c.fParams.filter((x: any) => Number.isFinite(x)));
+        if (typeof c.fThresholds === 'string') setFThresholds(c.fThresholds);
+        if (Number.isFinite(c.fSkip)) setFSkip(c.fSkip);
+      }
+    } catch {
+      /* ignore */
+    }
+    setHydrated(true);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Автосохранение последнего результата в браузере (переживает перезагрузку/перезаход).
@@ -352,6 +382,19 @@ function Signals() {
       /* квота переполнена — не критично */
     }
   }, [result]);
+
+  // Автосохранение ВХОДНОГО конфига (только ПОСЛЕ восстановления — иначе дефолты затрут сохранённое).
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      localStorage.setItem(
+        'signals:config',
+        JSON.stringify({ presets: [...presets], custom, benchmark, horizon, yearFrom, yearTo, tab, factorId, fSide, fBins, fParams, fThresholds, fSkip }),
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [hydrated, presets, custom, benchmark, horizon, yearFrom, yearTo, tab, factorId, fSide, fBins, fParams, fThresholds, fSkip]);
 
   async function saveCurrentResult(title: string) {
     if (!result || savingResult) return;
@@ -995,6 +1038,9 @@ function FactorForm(p: any) {
       <Button onClick={p.onRun} loading={p.running} disabled={!p.canRun} fullWidth data-testid="run-study">
         Построить карту
       </Button>
+      {!p.canRun && (
+        <p className="text-[11px] font-medium text-warn-strong">Кнопка неактивна: выберите вселенную (≥ 4 инстр.) в блоке «Вселенная» выше.</p>
+      )}
     </>
   );
 }
@@ -1048,6 +1094,9 @@ function SignalForm(p: any) {
         </Button>
         <Button variant="secondary" onClick={p.onSave}>Сохранить</Button>
       </div>
+      {!p.canRun && (
+        <p className="text-[11px] font-medium text-warn-strong">Кнопка неактивна: выберите вселенную (≥ 4 инстр.) в блоке «Вселенная» выше.</p>
+      )}
       <SavedList saved={p.saved} onLoad={p.onLoad} onDelete={p.onDelete} />
     </>
   );
@@ -1103,6 +1152,11 @@ function CombineForm(p: any) {
       <Button onClick={p.onRun} loading={p.running} fullWidth data-testid="run-study" disabled={p.picked.length < 2 || !p.canRun}>
         Исследовать комбинацию
       </Button>
+      {(!p.canRun || p.picked.length < 2) && (
+        <p className="text-[11px] font-medium text-warn-strong">
+          {!p.canRun ? 'Кнопка неактивна: выберите вселенную (≥ 4 инстр.) выше.' : 'Выберите ≥ 2 сохранённых сигнала ниже.'}
+        </p>
+      )}
       <SavedList saved={p.saved} onDelete={p.onDelete} />
     </>
   );
