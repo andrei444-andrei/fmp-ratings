@@ -175,6 +175,15 @@ test.describe('Signals /signals', () => {
     await expect(out.getByText(/Ср\. изб\. дох\.|мало наблюдений/).first()).toBeVisible({ timeout: 150000 });
   });
 
+  test('режим Просадки: калибровка покупки просадок по странам (свод)', async ({ page }) => {
+    await setup(page);
+    await page.getByTestId('tab-dipcal').click();
+    await page.getByTestId('run-study').click();
+    const out = page.locator('[data-testid="signals-output"]');
+    // Свод появляется: либо таблица «Покупать просадки …», либо сообщение о нехватке истории.
+    await expect(out.getByText(/Покупать просадки:|Недостаточно истории/)).toBeVisible({ timeout: 150000 });
+  });
+
   test('режим Сигнал: событийный анализ рендерит статистику', async ({ page }) => {
     await setup(page);
     await page.getByTestId('tab-signal').click();
