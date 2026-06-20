@@ -5,31 +5,46 @@
 
 // Модель издержек одного рынка. Все ставки — в б.п. (1 б.п. = 0.01%) от объёма сделки,
 // кроме minCommission (в валюте счёта) и borrowAnnualBps (годовая ставка заёма под шорт).
-// Значения — РАЗУМНЫЕ ДЕФОЛТЫ для ретейла, НЕ официальные тарифы; их можно переопределить.
+// КАЛИБРОВКА: реалистичные издержки для ЛИКВИДНЫХ бумаг на тарифах Interactive Brokers (а не
+// консервативный «worst case»). commissionBps включает биржевые/клиринговые сборы. half-spread и
+// slippage — для ликвидных имён (для неликвида их стоит поднять через override). Налоги/гербовые
+// сборы — реальные и обязательные (UK stamp 50, FR FTT 30, IT 10, ES 20, HK stamp ~11/стор.,
+// IN STT ~12/стор., KR 18 на продажу, TW 30 на продажу, CH ~3.75/стор.). Можно переопределить.
 export type MarketCost = {
   label: string;          // человекочитаемое имя рынка
   currency: string;       // валюта котировок (для предупреждения о смешении валют)
-  commissionBps: number;  // комиссия брокера, б.п. от объёма
+  commissionBps: number;  // комиссия брокера + биржа/клиринг, б.п. от объёма (тариф IB)
   minCommission: number;  // минимальная комиссия за сделку (в валюте счёта)
-  halfSpreadBps: number;  // половина бид-аск спреда, б.п. (платится в каждую сторону)
-  slippageBps: number;    // проскальзывание/воздействие на цену, б.п.
-  borrowAnnualBps: number;// годовая ставка заёма бумаги под шорт, б.п.
-  buyTaxBps: number;      // налог/сбор на покупку (напр. UK stamp duty 50 б.п.)
-  sellTaxBps: number;     // налог/сбор на продажу (напр. сборы регулятора)
+  halfSpreadBps: number;  // половина бид-аск спреда, б.п. (для ликвидных имён)
+  slippageBps: number;    // проскальзывание/воздействие на цену, б.п. (для ликвидных имён)
+  borrowAnnualBps: number;// годовая ставка заёма бумаги под шорт, б.п. (только для шортов)
+  buyTaxBps: number;      // налог/сбор на покупку (напр. UK stamp duty 50, FR/IT/ES FTT)
+  sellTaxBps: number;     // налог/сбор на продажу (напр. KR/TW transaction tax, HK stamp)
 };
 
-// Пресеты по основным рынкам. Коды совпадают с суффиксами-маркерами тикеров в движке
-// (US — без суффикса; PL = .WA Варшава; JP = .T Токио; UK = .L Лондон; и т.д.).
+// Пресеты по рынкам — реалистичные издержки IB для ликвидных бумаг. Код рынка определяется по
+// суффиксу тикера (см. SUFFIX_TO_MARKET) или явным override; US — без суффикса.
 export const MARKET_COSTS: Record<string, MarketCost> = {
-  US: { label: 'США (NYSE/Nasdaq)', currency: 'USD', commissionBps: 0.5, minCommission: 0, halfSpreadBps: 1, slippageBps: 2, borrowAnnualBps: 50, buyTaxBps: 0, sellTaxBps: 0.2 },
-  PL: { label: 'Польша (GPW)', currency: 'PLN', commissionBps: 38, minCommission: 3, halfSpreadBps: 15, slippageBps: 10, borrowAnnualBps: 300, buyTaxBps: 0, sellTaxBps: 0 },
-  JP: { label: 'Япония (TSE)', currency: 'JPY', commissionBps: 10, minCommission: 0, halfSpreadBps: 5, slippageBps: 5, borrowAnnualBps: 100, buyTaxBps: 0, sellTaxBps: 0 },
-  UK: { label: 'Великобритания (LSE)', currency: 'GBP', commissionBps: 5, minCommission: 1, halfSpreadBps: 5, slippageBps: 5, borrowAnnualBps: 75, buyTaxBps: 50, sellTaxBps: 0 },
-  HK: { label: 'Гонконг (HKEX)', currency: 'HKD', commissionBps: 10, minCommission: 1, halfSpreadBps: 8, slippageBps: 8, borrowAnnualBps: 150, buyTaxBps: 13, sellTaxBps: 13 },
-  DE: { label: 'Германия (XETRA)', currency: 'EUR', commissionBps: 4, minCommission: 1, halfSpreadBps: 4, slippageBps: 4, borrowAnnualBps: 75, buyTaxBps: 0, sellTaxBps: 0 },
-  FR: { label: 'Франция (Euronext Paris)', currency: 'EUR', commissionBps: 5, minCommission: 1, halfSpreadBps: 5, slippageBps: 5, borrowAnnualBps: 80, buyTaxBps: 30, sellTaxBps: 0 },
-  CA: { label: 'Канада (TSX)', currency: 'CAD', commissionBps: 5, minCommission: 1, halfSpreadBps: 5, slippageBps: 5, borrowAnnualBps: 75, buyTaxBps: 0, sellTaxBps: 0 },
-  generic: { label: 'Прочий рынок (по умолчанию)', currency: 'USD', commissionBps: 15, minCommission: 1, halfSpreadBps: 12, slippageBps: 12, borrowAnnualBps: 250, buyTaxBps: 0, sellTaxBps: 0 },
+  US: { label: 'США (NYSE/Nasdaq)', currency: 'USD', commissionBps: 0.4, minCommission: 0.35, halfSpreadBps: 0.5, slippageBps: 0.6, borrowAnnualBps: 30, buyTaxBps: 0, sellTaxBps: 0.2 },
+  JP: { label: 'Япония (TSE)', currency: 'JPY', commissionBps: 5, minCommission: 0.5, halfSpreadBps: 1.5, slippageBps: 1.5, borrowAnnualBps: 50, buyTaxBps: 0, sellTaxBps: 0 },
+  UK: { label: 'Великобритания (LSE)', currency: 'GBP', commissionBps: 4, minCommission: 1, halfSpreadBps: 1.5, slippageBps: 1.5, borrowAnnualBps: 50, buyTaxBps: 50, sellTaxBps: 0 },
+  DE: { label: 'Германия (XETRA)', currency: 'EUR', commissionBps: 3, minCommission: 1.25, halfSpreadBps: 1.5, slippageBps: 1.5, borrowAnnualBps: 50, buyTaxBps: 0, sellTaxBps: 0 },
+  FR: { label: 'Франция (Euronext Paris)', currency: 'EUR', commissionBps: 3, minCommission: 1.25, halfSpreadBps: 1.5, slippageBps: 1.5, borrowAnnualBps: 50, buyTaxBps: 30, sellTaxBps: 0 },
+  NL: { label: 'Euronext (AMS/BRU/LIS)', currency: 'EUR', commissionBps: 3, minCommission: 1.25, halfSpreadBps: 1.5, slippageBps: 1.5, borrowAnnualBps: 50, buyTaxBps: 0, sellTaxBps: 0 },
+  IT: { label: 'Италия (Borsa Italiana)', currency: 'EUR', commissionBps: 3, minCommission: 1.25, halfSpreadBps: 2, slippageBps: 2, borrowAnnualBps: 60, buyTaxBps: 10, sellTaxBps: 0 },
+  ES: { label: 'Испания (BME Madrid)', currency: 'EUR', commissionBps: 3, minCommission: 1.25, halfSpreadBps: 2, slippageBps: 2, borrowAnnualBps: 60, buyTaxBps: 20, sellTaxBps: 0 },
+  CH: { label: 'Швейцария (SIX)', currency: 'CHF', commissionBps: 5, minCommission: 1.5, halfSpreadBps: 1.5, slippageBps: 1.5, borrowAnnualBps: 50, buyTaxBps: 3.75, sellTaxBps: 3.75 },
+  SE: { label: 'Швеция (Nasdaq Stockholm)', currency: 'SEK', commissionBps: 4, minCommission: 1, halfSpreadBps: 1.5, slippageBps: 1.5, borrowAnnualBps: 50, buyTaxBps: 0, sellTaxBps: 0 },
+  HK: { label: 'Гонконг (HKEX)', currency: 'HKD', commissionBps: 5, minCommission: 2.3, halfSpreadBps: 2, slippageBps: 2, borrowAnnualBps: 100, buyTaxBps: 11, sellTaxBps: 11 },
+  CA: { label: 'Канада (TSX)', currency: 'CAD', commissionBps: 3, minCommission: 1, halfSpreadBps: 1.5, slippageBps: 1.5, borrowAnnualBps: 50, buyTaxBps: 0, sellTaxBps: 0 },
+  AU: { label: 'Австралия (ASX)', currency: 'AUD', commissionBps: 5, minCommission: 3, halfSpreadBps: 2, slippageBps: 2, borrowAnnualBps: 60, buyTaxBps: 0, sellTaxBps: 0 },
+  IN: { label: 'Индия (NSE/BSE)', currency: 'INR', commissionBps: 3, minCommission: 1, halfSpreadBps: 3, slippageBps: 3, borrowAnnualBps: 0, buyTaxBps: 12, sellTaxBps: 12 },
+  KR: { label: 'Корея (KRX)', currency: 'KRW', commissionBps: 4, minCommission: 1, halfSpreadBps: 2, slippageBps: 2, borrowAnnualBps: 80, buyTaxBps: 0, sellTaxBps: 18 },
+  BR: { label: 'Бразилия (B3)', currency: 'BRL', commissionBps: 3, minCommission: 1, halfSpreadBps: 3, slippageBps: 3, borrowAnnualBps: 150, buyTaxBps: 0, sellTaxBps: 0 },
+  TW: { label: 'Тайвань (TWSE)', currency: 'TWD', commissionBps: 4, minCommission: 1, halfSpreadBps: 2, slippageBps: 2, borrowAnnualBps: 100, buyTaxBps: 0, sellTaxBps: 30 },
+  MX: { label: 'Мексика (BMV)', currency: 'MXN', commissionBps: 4, minCommission: 1, halfSpreadBps: 3, slippageBps: 3, borrowAnnualBps: 150, buyTaxBps: 0, sellTaxBps: 0 },
+  PL: { label: 'Польша (GPW)', currency: 'PLN', commissionBps: 6, minCommission: 3, halfSpreadBps: 4, slippageBps: 4, borrowAnnualBps: 200, buyTaxBps: 0, sellTaxBps: 0 },
+  generic: { label: 'Прочий рынок (по умолчанию)', currency: 'USD', commissionBps: 8, minCommission: 1, halfSpreadBps: 6, slippageBps: 6, borrowAnnualBps: 150, buyTaxBps: 0, sellTaxBps: 0 },
 };
 
 // Суффикс тикера → код рынка (для автоматического выбора модели издержек).
@@ -39,6 +54,9 @@ export const MARKET_COSTS: Record<string, MarketCost> = {
 export const SUFFIX_TO_MARKET: Record<string, string> = {
   WA: 'PL', WAR: 'PL', T: 'JP', TSE: 'JP', L: 'UK', LSE: 'UK',
   HK: 'HK', DE: 'DE', XETRA: 'DE', F: 'DE', PA: 'FR', TO: 'CA', V: 'CA',
+  SW: 'CH', AS: 'NL', BR: 'NL', LS: 'NL', MI: 'IT', MC: 'ES', ST: 'SE',
+  AX: 'AU', NS: 'IN', NSE: 'IN', BO: 'IN', KS: 'KR', KQ: 'KR', KO: 'KR',
+  SA: 'BR', TW: 'TW', TWO: 'TW', MX: 'MX',
 };
 
 export type BacktestConfig = {

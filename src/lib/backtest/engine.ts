@@ -23,9 +23,12 @@ MARGIN_DAILY = float(CFG["marginRateAnnual"]) / 252.0
 COSTS = CFG["costs"]
 OVR = CFG.get("marketOverrides", {})
 DEFM = CFG.get("defaultMarket", "US")
-# Суффиксы FMP-стиля И EODHD-стиля (WAR/TSE/LSE/XETRA) → код рынка для модели издержек.
+# Суффиксы FMP-стиля И EODHD-стиля → код рынка для модели издержек. Синхронно с SUFFIX_TO_MARKET в presets.ts.
 SUFFIX = {"WA": "PL", "WAR": "PL", "T": "JP", "TSE": "JP", "L": "UK", "LSE": "UK",
-          "HK": "HK", "DE": "DE", "XETRA": "DE", "F": "DE", "PA": "FR", "TO": "CA", "V": "CA"}
+          "HK": "HK", "DE": "DE", "XETRA": "DE", "F": "DE", "PA": "FR", "TO": "CA", "V": "CA",
+          "SW": "CH", "AS": "NL", "BR": "NL", "LS": "NL", "MI": "IT", "MC": "ES", "ST": "SE",
+          "AX": "AU", "NS": "IN", "NSE": "IN", "BO": "IN", "KS": "KR", "KQ": "KR", "KO": "KR",
+          "SA": "BR", "TW": "TW", "TWO": "TW", "MX": "MX"}
 
 def _warn(msg, title=None):
     try:
