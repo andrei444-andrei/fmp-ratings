@@ -58,13 +58,18 @@ test.describe('Backtest /backtest', () => {
     await expect(page.locator('.research-output .rt-cap', { hasText: 'Сделки' })).toBeVisible({ timeout: 60000 });
     // Ни одной карточки ошибки.
     await expect(page.locator('.research-output .rerrblk')).toHaveCount(0);
-    // Автосохранение: после прогона результат уходит в группу «Автосохранения».
-    await expect(page.getByTestId('autosaves').locator('[data-testid="autosave-open"]').first()).toBeVisible({ timeout: 30000 });
+    // Автосохранение: прогон без активной стратегии авто-создаёт стратегию и кладёт прогон ВНУТРЬ неё.
+    await expect(
+      page.getByTestId('saved-strategies').locator('[data-testid="strategy-runs"]').first()
+        .locator('[data-testid="run-open"]').first(),
+    ).toBeVisible({ timeout: 30000 });
   });
 
-  test('сохранение → открытие → удаление РЕЗУЛЬТАТА', async ({ page }) => {
+  test('ручное сохранение результата вкладывается в стратегию', async ({ page }) => {
     await runSmallBacktest(page);
     await expect(page.locator('.research-output .rkit-kpi').first()).toBeVisible({ timeout: 180000 });
+    // После прогона стратегия уже авто-создана и активна — ручной результат вложится в неё.
+    await expect(page.getByTestId('update-strategy')).toBeVisible({ timeout: 30000 });
 
     await page.getByTestId('save-result').click();
     const title = 'e2e результат ' + Date.now();
@@ -72,17 +77,16 @@ test.describe('Backtest /backtest', () => {
     await page.getByTestId('result-save-confirm').click();
     await expect(page.getByText('Результат сохранён')).toBeVisible({ timeout: 15000 });
 
-    // Без активной стратегии результат попадает в группу «Без стратегии».
-    const item = page.getByTestId('orphan-runs').locator('[data-testid="run-open"]').filter({ hasText: title });
-    await expect(item).toBeVisible();
+    // Результат виден среди прогонов стратегии; открывается и удаляется.
+    const item = page.getByTestId('strategy-runs').locator('[data-testid="run-open"]').filter({ hasText: title }).first();
+    await expect(item).toBeVisible({ timeout: 15000 });
     await item.click();
     await expect(page.getByText('Сохранённый результат')).toBeVisible();
     await expect(page.locator('.research-output .rkit-kpi').first()).toBeVisible();
 
-    const li = page.getByTestId('orphan-runs').locator('li').filter({ hasText: title });
+    const li = page.locator('[data-testid="strategy-runs"] li').filter({ hasText: title }).first();
     await li.getByRole('button', { name: 'Удалить прогон' }).click();
     await expect(page.getByText('Результат удалён')).toBeVisible({ timeout: 15000 });
-    await expect(page.getByTestId('orphan-runs').locator('[data-testid="run-open"]').filter({ hasText: title })).toHaveCount(0);
   });
 
   test('сохранение → открытие → удаление СТРАТЕГИИ', async ({ page }) => {

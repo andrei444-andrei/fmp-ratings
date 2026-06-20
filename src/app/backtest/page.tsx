@@ -276,19 +276,19 @@ function Backtest() {
   // Кнопку запуска не блокируем, если вселенная объявлена в скрипте (даже вычисляемая).
   const canRun = universe.length >= 1 || scriptDriven;
 
-  // Группировка прогонов: структурированные (ручные) под их стратегию, отдельно «без стратегии» и автосохранения.
+  // Прогоны вложены ВНУТРЬ своей стратегии (история прогонов = история стратегии). Авто и ручные — вместе.
   const runsByStrategy = useMemo(() => {
     const m = new Map<number, SavedRunItem[]>();
     for (const r of runs ?? []) {
-      if (r.autosaved || r.strategy_id == null) continue;
+      if (r.strategy_id == null) continue;
       const arr = m.get(r.strategy_id) ?? [];
       arr.push(r);
       m.set(r.strategy_id, arr);
     }
     return m;
   }, [runs]);
-  const orphanRuns = useMemo(() => (runs ?? []).filter((r) => !r.autosaved && r.strategy_id == null), [runs]);
-  const autosaves = useMemo(() => (runs ?? []).filter((r) => r.autosaved), [runs]);
+  // Легаси-прогоны без стратегии (новые всегда привязаны: при прогоне без активной стратегии она авто-создаётся).
+  const orphanRuns = useMemo(() => (runs ?? []).filter((r) => r.strategy_id == null), [runs]);
 
   async function loadStrategies() {
     try {
@@ -422,21 +422,37 @@ function Backtest() {
     setChatInput('');
   }
 
-  // Автосохранение результата прогона: после удачного прогона снимок уходит в «Автосохранения».
-  async function autosaveRun(resultHtml: string, config: Record<string, unknown> | null) {
+  // При прогоне без активной стратегии — авто-создаём её (история прогонов копится внутри стратегии).
+  async function ensureStrategyForRun(): Promise<number | null> {
+    if (activeStrategyIdRef.current != null) return activeStrategyIdRef.current;
+    const base = scriptUniverse.length ? scriptUniverse : uiUniverse;
+    const title = base.length ? base.slice(0, 3).join('/') + (base.length > 3 ? ' …' : '') : `Стратегия · ${autoStamp()}`;
+    try {
+      const r = await fetch('/api/backtest/strategies', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title, code: strategy, config: buildConfig(), chat: chatMessages.slice(-40) }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) return null;
+      const id = Number(d?.id) || null;
+      setActiveStrategyId(id);
+      setActiveStrategyTitle(d?.title || title);
+      loadStrategies();
+      return id;
+    } catch {
+      return null;
+    }
+  }
+
+  // Автосохранение результата прогона: снимок уходит ВНУТРЬ стратегии; заголовок/описание пишет AI (на сервере).
+  async function autosaveRun(resultHtml: string, config: Record<string, unknown> | null, strategyId: number | null) {
     if (!resultHtml) return;
     try {
       await fetch('/api/backtest/runs', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          resultHtml,
-          title: `Автопрогон · ${autoStamp()}`,
-          config,
-          strategy,
-          strategyId: activeStrategyIdRef.current,
-          autosaved: true,
-        }),
+        body: JSON.stringify({ resultHtml, config, strategy, strategyId, autosaved: true }),
       });
       loadRuns();
     } catch {
@@ -518,7 +534,10 @@ function Backtest() {
       // Автосохранение результата (если прогон что-то выдал и не упал с карточкой ошибки).
       const html = composeResultHtml(lChart, lLog, lBlocks);
       const hasError = lBlocks.some((b) => b.includes('rerrblk'));
-      if (html && !hasError) await autosaveRun(html, config);
+      if (html && !hasError) {
+        const sid = await ensureStrategyForRun(); // прогон всегда попадает внутрь стратегии
+        await autosaveRun(html, config, sid);
+      }
     } catch (e: any) {
       setStatus('Ошибка');
       toast({ variant: 'error', title: 'Ошибка выполнения', description: e?.message });
@@ -909,7 +928,7 @@ function Backtest() {
             <CardHeader>
               <CardTitle>Библиотека</CardTitle>
               <CardDescription>
-                Стратегии (код) и результаты прогонов. Результаты вложены под свою стратегию; автосохранения — отдельной группой.
+                Стратегии и их история прогонов. Каждый бэктест автоматически сохраняется внутрь своей стратегии, а заголовок прогона AI пишет по изменениям кода.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
@@ -978,32 +997,15 @@ function Backtest() {
                 )}
               </div>
 
-              {/* Результаты без привязки к стратегии */}
+              {/* Легаси-прогоны без привязки к стратегии (новые всегда внутри стратегии) */}
               {orphanRuns.length > 0 && (
                 <div>
-                  <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-3">Без стратегии</div>
+                  <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-3">Без стратегии (старые)</div>
                   <ul className="space-y-1.5" data-testid="orphan-runs">
                     {orphanRuns.map((r) => runRow(r, 'run-open'))}
                   </ul>
                 </div>
               )}
-
-              {/* Автосохранения (после каждого прогона) */}
-              <div>
-                <div className="mb-1.5 flex items-center justify-between">
-                  <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">Автосохранения</span>
-                  {!!autosaves.length && <span className="text-[11px] text-ink-3">{autosaves.length}</span>}
-                </div>
-                {runs === null ? (
-                  <Skeleton className="h-9 w-full" />
-                ) : autosaves.length === 0 ? (
-                  <p className="text-sm text-ink-3">После каждого прогона результат сохраняется сюда автоматически.</p>
-                ) : (
-                  <ul className="space-y-1.5" data-testid="autosaves">
-                    {autosaves.map((r) => runRow(r, 'autosave-open'))}
-                  </ul>
-                )}
-              </div>
             </CardContent>
           </Card>
         </div>

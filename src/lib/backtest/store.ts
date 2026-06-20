@@ -222,9 +222,20 @@ export async function saveBacktestRun(o: {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [o.strategyId ?? null, o.title, o.description ?? null, o.config, o.strategy, 'saved', o.resultHtml, autosaved, now],
   });
-  // Автосохранения держим в ограниченном количестве — старые подрезаем (структурированные не трогаем).
-  if (autosaved) await pruneAutosaves();
+  // Автосохранения держим в ограниченном количестве В РАМКАХ СТРАТЕГИИ — старые подрезаем (ручные не трогаем).
+  if (autosaved) await pruneAutosaves(o.strategyId ?? null);
   return Number(r.lastInsertRowid ?? 0);
+}
+
+// Код прошлого (самого свежего) прогона стратегии — для авто-заголовка по diff кода.
+export async function getLastRunCode(strategyId: number): Promise<string | null> {
+  await ensureBacktestTables();
+  const r = await libsqlClient.execute({
+    sql: `SELECT strategy FROM backtest_runs WHERE strategy_id = ? ORDER BY id DESC LIMIT 1`,
+    args: [strategyId],
+  });
+  const x = r.rows[0];
+  return x?.strategy != null ? String(x.strategy) : null;
 }
 
 export async function updateBacktestRun(
@@ -260,12 +271,21 @@ export async function deleteBacktestRun(id: number): Promise<void> {
   await libsqlClient.execute({ sql: `DELETE FROM backtest_runs WHERE id = ?`, args: [id] });
 }
 
-// Держим не более MAX_AUTOSAVES автосохранений: удаляем самые старые сверх лимита.
-async function pruneAutosaves(): Promise<void> {
-  await libsqlClient.execute({
-    sql: `DELETE FROM backtest_runs WHERE autosaved = 1 AND id NOT IN (
-            SELECT id FROM backtest_runs WHERE autosaved = 1 ORDER BY id DESC LIMIT ?
-          )`,
-    args: [MAX_AUTOSAVES],
-  });
+// Держим не более MAX_AUTOSAVES автосохранений В РАМКАХ ОДНОЙ СТРАТЕГИИ (история по стратегии).
+async function pruneAutosaves(strategyId: number | null): Promise<void> {
+  if (strategyId == null) {
+    await libsqlClient.execute({
+      sql: `DELETE FROM backtest_runs WHERE autosaved = 1 AND strategy_id IS NULL AND id NOT IN (
+              SELECT id FROM backtest_runs WHERE autosaved = 1 AND strategy_id IS NULL ORDER BY id DESC LIMIT ?
+            )`,
+      args: [MAX_AUTOSAVES],
+    });
+  } else {
+    await libsqlClient.execute({
+      sql: `DELETE FROM backtest_runs WHERE autosaved = 1 AND strategy_id = ? AND id NOT IN (
+              SELECT id FROM backtest_runs WHERE autosaved = 1 AND strategy_id = ? ORDER BY id DESC LIMIT ?
+            )`,
+      args: [strategyId, strategyId, MAX_AUTOSAVES],
+    });
+  }
 }
