@@ -17,14 +17,16 @@ async function probeEod(sym: string, from: string) {
     if (!r.ok) return { sym, status: r.status, ok: false };
     const arr: any = await r.json();
     if (!Array.isArray(arr) || !arr.length) return { sym, status: r.status, ok: true, count: 0 };
+    const last = arr[arr.length - 1] || {};
     return {
       sym,
       status: r.status,
       ok: true,
       count: arr.length,
       first: arr[0]?.date,
-      last: arr[arr.length - 1]?.date,
+      last: last?.date,
       adjusted: arr[0]?.adjusted_close != null,
+      lastClose: last?.adjusted_close ?? last?.close ?? null, // величина намекает на валюту (Nikkei ~38000 JPY и т.п.)
     };
   } catch (e: any) {
     return { sym, error: e?.message || String(e) };
@@ -45,8 +47,16 @@ async function probeJson(label: string, path: string) {
   }
 }
 
-export async function GET(_req: NextRequest) {
+export async function GET(req: NextRequest) {
   if (!process.env.EODHD_API_KEY) return NextResponse.json({ error: 'EODHD_API_KEY не задан на сервере' }, { status: 400 });
+  // Гибкий режим: ?symbols=A,B,C[&from=YYYY-MM-DD] — пробуем произвольные символы (индексы, FX и т.п.).
+  const symParam = req.nextUrl.searchParams.get('symbols');
+  if (symParam) {
+    const from = req.nextUrl.searchParams.get('from') || '1990-01-01';
+    const syms = symParam.split(',').map((s) => s.trim()).filter(Boolean).slice(0, 40);
+    const probed = await Promise.all(syms.map((s) => probeEod(s, from)));
+    return NextResponse.json({ from, probed });
+  }
   const forms = await Promise.all([
     probeEod('AAPL.US', '1990-01-01'),
     probeEod('PETR4.SA', '1990-01-01'),
