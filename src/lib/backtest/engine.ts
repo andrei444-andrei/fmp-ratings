@@ -119,6 +119,8 @@ if ok:
     K = len(TRADE_SYMS)
     SYM_IDX = {s: j for j, s in enumerate(TRADE_SYMS)}
     PFF = PXFF_DF[TRADE_SYMS].values.astype(float)
+    # Колонка бенчмарка (не торгуется) — чтобы ctx.history/ctx.price отдавали и его (относительные стратегии).
+    BENCH_COL = PXFF_DF[bench].values.astype(float) if bench_present else None
 
     # Детект синтетики ПО КАЖДОМУ тикеру: демо-ряд генерится по КАЛЕНДАРНЫМ дням (вкл. выходные),
     # реальный EOD — только торговые дни. Высокая доля выходных в СОБСТВЕННЫХ датах тикера => демо.
@@ -182,13 +184,24 @@ if ok:
             self._prow = None
             self._orders = {}
         def price(self, sym):
-            j = SYM_IDX.get(str(sym).upper())
+            s = str(sym).upper()
+            j = SYM_IDX.get(s)
             if j is None:
+                # Бенчмарк не торгуется, но его цену/историю можно запрашивать (для относительных стратегий).
+                if BENCH_COL is not None and s == bench:
+                    return float(BENCH_COL[self.i])
                 return float("nan")
             return float(self._prow[j])
         def history(self, sym, n=None):
-            j = SYM_IDX.get(str(sym).upper())
+            s = str(sym).upper()
+            j = SYM_IDX.get(s)
             if j is None:
+                if BENCH_COL is not None and s == bench:
+                    col = BENCH_COL[: self.i + 1]
+                    col = col[~np.isnan(col)]
+                    if n is not None and int(n) > 0:
+                        col = col[-int(n):]
+                    return col
                 return np.array([])
             col = PFF[: self.i + 1, j]
             col = col[~np.isnan(col)]

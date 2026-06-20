@@ -59,7 +59,7 @@ const SYS_PROMPT =
   'Без заглядывания в будущее: ctx отдаёт ТОЛЬКО прошлое (по текущий бар включительно); ордер ставится на close текущего бара, ' +
   'исполняется по close СЛЕДУЮЩЕГО — об этом заботится движок. ' +
   'API ctx:\n' +
-  '- ctx.symbols — торгуемые тикеры; ctx.benchmark — тикер бенчмарка (НЕ торгуется);\n' +
+  '- ctx.symbols — торгуемые тикеры; ctx.benchmark — тикер бенчмарка (НЕ торгуется, но его цену/историю можно запрашивать: ctx.price(ctx.benchmark), ctx.history(ctx.benchmark));\n' +
   '- ctx.date — дата бара; ctx.i — индекс; ctx.cash; ctx.equity;\n' +
   '- ctx.price(sym) -> float (close текущего бара);\n' +
   '- ctx.history(sym, n=None) -> np.ndarray прошлых close по текущий бар (последние n, без NaN);\n' +
