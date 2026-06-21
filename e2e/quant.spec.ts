@@ -165,14 +165,25 @@ test.describe('Аналитика алгоритмов /quant', () => {
     await page.goto('/quant');
     await page.getByRole('button', { name: 'Сводка по стратегии' }).click();
     // до выбора месяца — подсказка
-    await expect(page.locator('.qc-trades-empty')).toBeVisible();
-    // кликаем первую кликабельную ячейку месяца
+    await expect(page.locator('.qc-trades-empty').first()).toBeVisible();
+    // кликаем первую кликабельную ячейку месяца (таблица «Помесячная доходность»)
     await page.locator('.qc-heat td.clk').first().click();
     // появляется панель сделок с таблицей buy/sell
-    await expect(page.locator('.qc-trades-h')).toContainText('Сделки');
+    await expect(page.locator('.qc-trades-h').first()).toContainText('Сделки');
     await expect(page.locator('.qc-trades-list .qc-side.buy').first()).toBeVisible();
     await expect(page.locator('.qc-trades-list .qc-side.sell').first()).toBeVisible();
     await expect(page.locator('.qc-trades-list td.sym').first()).toContainText('SPY');
+  });
+
+  test('сводка: клик по ячейке Δ к SPY тоже показывает сделки', async ({ page }) => {
+    await mockConfigured(page);
+    await page.goto('/quant');
+    await page.getByRole('button', { name: 'Сводка по стратегии' }).click();
+    // вторая таблица (Δ к SPY) — её ячейки тоже кликабельны
+    const deltaPanel = page.locator('.qc-panel', { hasText: 'Δ к SPY' });
+    await deltaPanel.locator('.qc-heat td.clk').first().click();
+    await expect(deltaPanel.locator('.qc-trades-h')).toContainText('Сделки');
+    await expect(deltaPanel.locator('.qc-trades-list td.sym').first()).toContainText('SPY');
   });
 
   test('сводка: состав активов по годам (по кнопке)', async ({ page }) => {
