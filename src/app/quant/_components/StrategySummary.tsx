@@ -6,6 +6,11 @@ import UnderwaterChart from './UnderwaterChart';
 import { computeSummary } from '@/lib/quantconnect/summary';
 import { computeDrawdowns } from '@/lib/quantconnect/drawdowns';
 import type { SeriesResponse, TradesResponse, QcTrade } from '@/lib/quantconnect/types';
+import type { AllocationResult } from '@/lib/quantconnect/allocation';
+
+const ALLOC_TOPN = 12;
+function wpct(w: number): string { return w > 0.0005 ? (w * 100).toFixed(w < 0.1 ? 1 : 0) + '%' : ''; }
+function heatAlloc(w: number): string { return `rgba(108, 92, 240, ${Math.min(Math.max(w, 0), 1) * 0.78})`; }
 
 const ACC = '#6b5bf0', MUT = '#9aa0ad';
 const MONTHS = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
@@ -79,8 +84,27 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
     setSelMonth(ym);
     if (sel != null) ensureTrades(sel);
   }
-  // смена стратегии сбрасывает выбранный месяц и подгруженные сделки
-  useEffect(() => { setSelMonth(null); setTrades(null); setTradesFor(null); setTradesErr(null); setTradesCapped(false); }, [sel]);
+
+  // состав активов по годам (ленивая, тяжёлая загрузка — по кнопке)
+  const [alloc, setAlloc] = useState<AllocationResult | null>(null);
+  const [allocFor, setAllocFor] = useState<number | null>(null);
+  const [allocLoading, setAllocLoading] = useState(false);
+  const [allocErr, setAllocErr] = useState<string | null>(null);
+  async function loadAlloc(algoId: number, force = false) {
+    setAllocLoading(true); setAllocErr(null);
+    try {
+      const r: AllocationResult = await fetch(`/api/quantconnect/allocation?id=${algoId}${force ? '&force=1' : ''}`).then(res => res.json());
+      if (r.error) setAllocErr(r.error);
+      setAlloc(r); setAllocFor(algoId);
+    } catch (e: any) { setAllocErr(e.message); }
+    finally { setAllocLoading(false); }
+  }
+
+  // смена стратегии сбрасывает выбранный месяц, сделки и состав
+  useEffect(() => {
+    setSelMonth(null); setTrades(null); setTradesFor(null); setTradesErr(null); setTradesCapped(false);
+    setAlloc(null); setAllocFor(null); setAllocErr(null);
+  }, [sel]);
 
   async function load(force = false) {
     setLoading(true); setError(null);
@@ -337,6 +361,70 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
                   </div>
                 </div>
               )}
+
+              {/* состав активов по годам (оценка по позициям из ордеров) */}
+              <div className="qc-panel">
+                <div className="qc-panel-h">Состав активов по годам <span className="c">оценка позиций из ордеров, mark-to-market на конец месяца</span>
+                  <span className="qc-spacer" />
+                  {allocFor === sel && alloc && !allocLoading && (
+                    <button className="qc-btn" onClick={() => sel != null && loadAlloc(sel, true)}>Пересчитать</button>
+                  )}
+                </div>
+                {allocFor !== sel ? (
+                  <div className="qc-state">
+                    <button className="qc-btn primary" onClick={() => sel != null && loadAlloc(sel)} disabled={allocLoading}>
+                      {allocLoading ? 'Считаю состав…' : 'Показать состав активов'}
+                    </button>
+                    <div style={{ marginTop: 8, fontSize: 12 }}>Реконструкция позиций из сделок + оценка по ценам FMP. Может занять время.</div>
+                  </div>
+                ) : allocLoading ? (
+                  <div className="qc-state">Считаю состав активов…</div>
+                ) : allocErr ? (
+                  <div className="qc-state qc-err">{allocErr}</div>
+                ) : !alloc || !alloc.years.length ? (
+                  <div className="qc-state">Недостаточно данных по сделкам для оценки состава.</div>
+                ) : (() => {
+                  const cols = alloc.symbols.slice(0, ALLOC_TOPN);
+                  return (
+                    <>
+                      <div className="qc-tblwrap" style={{ border: 0 }}>
+                        <table className="qc-heat">
+                          <thead><tr>
+                            <th className="lbl">Год</th>
+                            {cols.map(s => <th key={s}>{s}</th>)}
+                            <th>Прочее</th>
+                            <th className="tot">Кэш</th>
+                          </tr></thead>
+                          <tbody>
+                            {alloc.years.map(y => {
+                              let sumTop = 0;
+                              for (const s of cols) sumTop += y.weights[s] || 0;
+                              const other = Math.max(0, 1 - y.cash - sumTop);
+                              return (
+                                <tr key={y.year}>
+                                  <td className="lbl">{y.year}</td>
+                                  {cols.map(s => {
+                                    const w = y.weights[s] || 0;
+                                    return <td key={s} style={{ background: heatAlloc(w) }} title={`${s}: ${(w * 100).toFixed(1)}%`}>{wpct(w)}</td>;
+                                  })}
+                                  <td style={{ background: heatAlloc(other) }} title={`прочие инструменты: ${(other * 100).toFixed(1)}%`}>{wpct(other)}</td>
+                                  <td className="tot" title={`вне рынка: ${(y.cash * 100).toFixed(1)}%`}>{wpct(y.cash)}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="qc-alloc-note">
+                        Оценка: позиции реконструированы из ордеров и оценены по ценам на конец каждого месяца (FMP), доли усреднены по году.
+                        Не учтены плечо/маржа, кэш-остаток и реинвест дивидендов; шорты — по модулю экспозиции.
+                        {alloc.approx && ' Часть инструментов без рыночной цены оценена по последней цене сделки (приблизительно).'}
+                        {alloc.capped && ' Ордера обрезаны лимитом — состав может быть неполным.'}
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
 
               {/* анализ просадок выбранной стратегии */}
               {dd && (

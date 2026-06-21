@@ -82,6 +82,14 @@ async function mockConfigured(page: Page) {
   await page.route('**/api/quantconnect/portfolio**', r => r.fulfill({ json: PORTFOLIO }));
   await page.route('**/api/quantconnect/series**', r => r.fulfill({ json: SERIES }));
   await page.route('**/api/quantconnect/trades**', r => r.fulfill({ json: { id: 1, name: 'EMA Cross', trades: TRADES, capped: false, total: TRADES.length, error: null } }));
+  await page.route('**/api/quantconnect/allocation**', r => r.fulfill({ json: {
+    id: 1, name: 'EMA Cross', approx: false, capped: false, error: null,
+    symbols: ['SPY', 'AAPL'],
+    years: [
+      { year: 2022, weights: { SPY: 0.6, AAPL: 0.3 }, cash: 0.1, months: 12 },
+      { year: 2023, weights: { SPY: 0.5, AAPL: 0.4 }, cash: 0.1, months: 12 },
+    ],
+  } }));
   await page.route('**/api/quantconnect/backtests**', r => r.fulfill({ json: { backtests: [
     { backtestId: 'aaa111', name: 'run A', status: 'Completed.', completed: true },
     { backtestId: 'bbb222', name: 'run B', status: 'Completed.', completed: true },
@@ -165,6 +173,19 @@ test.describe('Аналитика алгоритмов /quant', () => {
     await expect(page.locator('.qc-trades-list .qc-side.buy').first()).toBeVisible();
     await expect(page.locator('.qc-trades-list .qc-side.sell').first()).toBeVisible();
     await expect(page.locator('.qc-trades-list td.sym').first()).toContainText('SPY');
+  });
+
+  test('сводка: состав активов по годам (по кнопке)', async ({ page }) => {
+    await mockConfigured(page);
+    await page.goto('/quant');
+    await page.getByRole('button', { name: 'Сводка по стратегии' }).click();
+    const panel = page.locator('.qc-panel', { hasText: 'Состав активов по годам' });
+    await panel.getByRole('button', { name: 'Показать состав активов' }).click();
+    // появляется таблица с инструментами, годами и колонкой «Кэш»
+    await expect(panel.locator('.qc-heat th', { hasText: 'SPY' })).toBeVisible();
+    await expect(panel.locator('.qc-heat th', { hasText: 'Кэш' })).toBeVisible();
+    await expect(panel.locator('.qc-heat td.lbl', { hasText: '2023' })).toBeVisible();
+    await expect(panel.locator('.qc-alloc-note')).toContainText('Оценка');
   });
 
   test('риск / корреляция: матрица, метрики, downside', async ({ page }) => {
