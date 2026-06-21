@@ -66,6 +66,19 @@ export async function listStrategies(): Promise<SavedStrategyItem[]> {
   }));
 }
 
+// Контекст для AI-нейминга стратегии: уже существующие названия (чтобы не дублировать и дать
+// отличимое имя) и описания недавних прогонов (какие идеи уже тестируются).
+export async function getStrategyNamingContext(): Promise<{ titles: string[]; ideas: string[] }> {
+  await ensureBacktestTables();
+  const st = await libsqlClient.execute(`SELECT title FROM backtest_strategies ORDER BY id DESC LIMIT 40`);
+  const titles = st.rows.map((x) => (x.title != null ? String(x.title).trim() : '')).filter(Boolean);
+  const rn = await libsqlClient.execute(
+    `SELECT description FROM backtest_runs WHERE description IS NOT NULL AND TRIM(description) <> '' ORDER BY id DESC LIMIT 30`,
+  );
+  const ideas = rn.rows.map((x) => String(x.description).trim()).filter(Boolean);
+  return { titles, ideas };
+}
+
 export type SavedStrategy = {
   id: number;
   title: string | null;

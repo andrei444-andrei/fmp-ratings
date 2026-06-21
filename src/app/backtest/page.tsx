@@ -252,6 +252,7 @@ function Backtest() {
   const [savingResult, setSavingResult] = useState(false);
   const [strategyModal, setStrategyModal] = useState<{ mode: 'save' | 'rename'; id?: number; title: string } | null>(null);
   const [savingStrategy, setSavingStrategy] = useState(false);
+  const [suggestingName, setSuggestingName] = useState(false);
 
   const outRef = useRef<HTMLDivElement>(null);
 
@@ -426,12 +427,13 @@ function Backtest() {
   async function ensureStrategyForRun(): Promise<number | null> {
     if (activeStrategyIdRef.current != null) return activeStrategyIdRef.current;
     const base = scriptUniverse.length ? scriptUniverse : uiUniverse;
+    // Запасной заголовок по тикерам — если AI-нейминг недоступен (нет ключа/лимит).
     const title = base.length ? base.slice(0, 3).join('/') + (base.length > 3 ? ' …' : '') : `Стратегия · ${autoStamp()}`;
     try {
       const r = await fetch('/api/backtest/strategies', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ title, code: strategy, config: buildConfig(), chat: chatMessages.slice(-40) }),
+        body: JSON.stringify({ title, autoName: true, code: strategy, config: buildConfig(), chat: chatMessages.slice(-40) }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) return null;
@@ -558,6 +560,30 @@ function Backtest() {
       setStrategyModal({ mode: 'rename', id, title: s.title || '' });
     } catch (e: any) {
       toast({ variant: 'error', title: 'Не удалось открыть', description: e?.message });
+    }
+  }
+  // AI-подсказка названия по идее (код + чат) — заполняет поле в модалке.
+  async function suggestName() {
+    if (!strategyModal) return;
+    if (!strategy.trim()) {
+      toast({ variant: 'error', title: 'Нет кода', description: 'Сначала напишите стратегию.' });
+      return;
+    }
+    setSuggestingName(true);
+    try {
+      const r = await fetch('/api/backtest/strategies/suggest-name', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ code: strategy, chat: chatMessages.slice(-40) }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d?.error || 'Не удалось предложить название');
+      const t = String(d?.title || '').trim();
+      if (t) setStrategyModal((m) => (m ? { ...m, title: t } : m));
+    } catch (e: any) {
+      toast({ variant: 'error', title: 'AI-подсказка недоступна', description: e?.message });
+    } finally {
+      setSuggestingName(false);
     }
   }
   async function confirmStrategyModal() {
@@ -1199,8 +1225,9 @@ function Backtest() {
       <Modal
         open={!!strategyModal}
         onClose={() => setStrategyModal(null)}
+        size="lg"
         title={strategyModal?.mode === 'rename' ? 'Переименовать стратегию' : 'Сохранить стратегию'}
-        description="Стратегия — переиспользуемый код + текущий конфиг. Откроется из библиотеки в один клик."
+        description="Стратегия — переиспользуемый код + текущий конфиг. Назовите её по идее (или нажмите «Предложить» — AI придумает по коду)."
         footer={
           <>
             <Button variant="ghost" onClick={() => setStrategyModal(null)}>
@@ -1213,14 +1240,29 @@ function Backtest() {
         }
       >
         {strategyModal && (
-          <div className="pt-1">
-            <Input
-              autoFocus
-              value={strategyModal.title}
-              onChange={(e) => setStrategyModal({ ...strategyModal, title: e.target.value })}
-              placeholder="Название стратегии"
-              data-testid="strategy-title"
-            />
+          <div className="space-y-2 pt-1">
+            <div className="flex items-center gap-2">
+              <Input
+                autoFocus
+                value={strategyModal.title}
+                onChange={(e) => setStrategyModal({ ...strategyModal, title: e.target.value })}
+                placeholder="Напр.: Двойной моментум на секторных ETF"
+                className="flex-1 text-[15px]"
+                data-testid="strategy-title"
+              />
+              <Button
+                variant="secondary"
+                onClick={suggestName}
+                loading={suggestingName}
+                className="shrink-0"
+                data-testid="strategy-suggest-name"
+              >
+                ✨ Предложить
+              </Button>
+            </div>
+            <p className="text-[12px] text-ink-3">
+              Название лучше отражать идею/механику стратегии, а не список тикеров — так её проще отличить в библиотеке.
+            </p>
           </div>
         )}
       </Modal>
