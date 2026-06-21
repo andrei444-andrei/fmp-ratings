@@ -313,6 +313,17 @@ function Backtest() {
   useEffect(() => {
     loadStrategies();
     loadRuns();
+    // Пермалинк: ?run=<id> открывает сохранённый прогон, ?strategy=<id> — стратегию (по прямой ссылке).
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      const runId = Number(sp.get('run'));
+      const stratId = Number(sp.get('strategy'));
+      if (sp.get('run') && Number.isInteger(runId) && runId > 0) openSavedRun(runId);
+      else if (sp.get('strategy') && Number.isInteger(stratId) && stratId > 0) openStrategy(stratId);
+    } catch {
+      /* нет window — игнор */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Черновик кода: восстанавливаем из localStorage при загрузке, чтобы не терять правки.
@@ -505,6 +516,7 @@ function Backtest() {
     setViewDesc(null);
     setLiveChart(null);
     setOpenedRunId(null);
+    reflectPermalink(null, null); // свежий прогон ещё не сохранён — убираем устаревший ?run/?strategy
     setStatus('Отправка запроса…');
     // Локальные накопители — чтобы собрать HTML для автосохранения сразу после прогона.
     const lBlocks: string[] = [];
@@ -691,6 +703,7 @@ function Backtest() {
       setLiveChart(null);
       setViewDesc(null);
       setStatus('');
+      reflectPermalink('strategy', s.id); // адресная строка → пермалинк на стратегию
       toast({ variant: 'success', title: 'Стратегия открыта', description: s.title || undefined });
     } catch (e: any) {
       toast({ variant: 'error', title: 'Не удалось открыть', description: e?.message });
@@ -703,6 +716,7 @@ function Backtest() {
     setDraftRestored(false);
     setChatMessages([]);
     setChatInput('');
+    reflectPermalink(null, null); // новая (несохранённая) стратегия — убираем устаревший пермалинк
     toast({ variant: 'success', title: 'Новая стратегия', description: 'Редактор и чат сброшены.' });
   }
   async function onDeleteStrategy(id: number) {
@@ -781,6 +795,30 @@ function Backtest() {
     }
   }
 
+  // Пермалинки: открытый прогон/стратегия отражаются в адресной строке (без навигации) — ссылку
+  // можно скопировать и открыть напрямую. ?run=<id> и ?strategy=<id> взаимоисключающие.
+  function reflectPermalink(kind: 'run' | 'strategy' | null, id: number | null) {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('run');
+      url.searchParams.delete('strategy');
+      if (kind && id != null) url.searchParams.set(kind, String(id));
+      window.history.replaceState(null, '', url.toString());
+    } catch {
+      /* нет window/URL — игнор */
+    }
+  }
+  async function copyPermalink(kind: 'run' | 'strategy', id: number) {
+    const url = `${window.location.origin}/backtest?${kind}=${id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast({ variant: 'success', title: 'Ссылка скопирована', description: url });
+    } catch {
+      // clipboard недоступен (insecure context) — показываем ссылку, чтобы скопировать вручную.
+      toast({ variant: 'info', title: kind === 'run' ? 'Ссылка на прогон' : 'Ссылка на стратегию', description: url });
+    }
+  }
+
   async function openSavedRun(id: number) {
     try {
       const d = await (await fetch(`/api/backtest/runs/${id}`)).json();
@@ -814,6 +852,7 @@ function Backtest() {
       }
       setViewDesc(run.description || null);
       setStatus('Сохранённый результат');
+      reflectPermalink('run', id); // адресная строка → пермалинк на этот прогон
     } catch (e: any) {
       toast({ variant: 'error', title: 'Не удалось открыть', description: e?.message });
     }
@@ -845,6 +884,16 @@ function Backtest() {
         >
           <span className="block truncate text-[13px] text-ink-2">{r.title || `Прогон #${r.id}`}</span>
           <span className="block text-[11px] text-ink-3">{fmtWhen(r.created_at)}</span>
+        </button>
+        <button
+          type="button"
+          aria-label="Скопировать ссылку на прогон"
+          title="Скопировать ссылку на прогон"
+          data-testid="run-copy-link"
+          onClick={() => copyPermalink('run', r.id)}
+          className="shrink-0 rounded-fk-sm px-2 text-ink-3 transition-colors hover:bg-surface-2 hover:text-brand focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
+        >
+          🔗
         </button>
         <button
           type="button"
@@ -1037,6 +1086,16 @@ function Backtest() {
                             </button>
                             <button
                               type="button"
+                              aria-label="Скопировать ссылку на стратегию"
+                              title="Скопировать ссылку на стратегию"
+                              data-testid="strategy-copy-link"
+                              onClick={() => copyPermalink('strategy', s.id)}
+                              className="shrink-0 rounded-fk-sm px-2 text-ink-3 transition-colors hover:bg-surface-2 hover:text-brand focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
+                            >
+                              🔗
+                            </button>
+                            <button
+                              type="button"
                               aria-label="Переименовать стратегию"
                               onClick={() => openRenameStrategy(s.id)}
                               className="shrink-0 rounded-fk-sm px-2 text-ink-3 transition-colors hover:bg-surface-2 hover:text-brand focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
@@ -1223,6 +1282,11 @@ function Backtest() {
                 {canSaveResult && (
                   <Button size="sm" variant="secondary" onClick={openSaveResultModal} data-testid="save-result">
                     Сохранить результат
+                  </Button>
+                )}
+                {!isFresh && openedRunId != null && !running && (
+                  <Button size="sm" variant="ghost" onClick={() => copyPermalink('run', openedRunId)} data-testid="run-copy-link-toolbar">
+                    🔗 Ссылка
                   </Button>
                 )}
                 {!isFresh && openedRunId != null && !running && (

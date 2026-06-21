@@ -165,4 +165,26 @@ test.describe('Backtest /backtest', () => {
     await row.getByTestId('strategy-open').click();
     await expect(page.getByTestId('chat-log')).toContainText(msg, { timeout: 15000 });
   });
+
+  test('пермалинк прогона: ?run открывает результат по прямой ссылке', async ({ page }) => {
+    await runSmallBacktest(page);
+    // Вложенный прогон в авто-созданной стратегии.
+    const runOpen = page
+      .getByTestId('saved-strategies')
+      .locator('[data-testid="strategy-runs"]')
+      .first()
+      .locator('[data-testid="run-open"]')
+      .first();
+    await expect(runOpen).toBeVisible({ timeout: 60000 });
+    await runOpen.click();
+    await expect(page.getByText('Сохранённый результат')).toBeVisible({ timeout: 15000 });
+
+    // Открытие прогона отражается в адресной строке (ссылка, а не только навигация).
+    await expect.poll(() => new URL(page.url()).searchParams.get('run')).not.toBeNull();
+    const runParam = new URL(page.url()).searchParams.get('run');
+
+    // По прямой ссылке результат подгружается сам, без кликов по библиотеке.
+    await page.goto(`/backtest?run=${runParam}`);
+    await expect(page.getByText('Сохранённый результат')).toBeVisible({ timeout: 30000 });
+  });
 });
