@@ -135,4 +135,34 @@ test.describe('Backtest /backtest', () => {
     await page.getByTestId('chat-clear').click();
     await expect(page.getByTestId('chat-log')).toHaveCount(0);
   });
+
+  test('чат привязан к стратегии: сохраняется и переживает переоткрытие', async ({ page }) => {
+    const tag = 'ZQ' + Date.now().toString().slice(-7); // уникальный тикер → отличимая стратегия
+    await page.goto('/backtest');
+    await page.getByTestId('strategy-code').fill(
+      [
+        `UNIVERSE = ["AAA", "BBB", "${tag}"]`,
+        '',
+        'def on_bar(ctx):',
+        '    for s in ctx.symbols:',
+        '        ctx.order_target_percent(s, 1.0 / len(ctx.symbols))',
+      ].join('\n'),
+    );
+    await page.getByTestId('run-backtest').click();
+    // Прогон без активной стратегии авто-создаёт её → появляется кнопка «Обновить» (стратегия активна).
+    await expect(page.getByTestId('update-strategy')).toBeVisible({ timeout: 60000 });
+
+    // Пишем в чат: AI без ключа упадёт, но сообщение пользователя остаётся в треде и автосохраняется в стратегию.
+    const msg = 'тестовая идея ' + tag;
+    await page.getByTestId('chat-input').fill(msg);
+    await page.getByTestId('chat-send').click();
+    await expect(page.getByTestId('chat-log')).toContainText(msg);
+    await page.waitForTimeout(1500); // даём debounce-автосохранению чата уйти на сервер
+
+    // Перезагружаем и переоткрываем ту же стратегию по уникальному тегу — единый тред восстановлен.
+    await page.reload();
+    const row = page.getByTestId('saved-strategies').locator('li').filter({ hasText: tag }).first();
+    await row.getByTestId('strategy-open').click();
+    await expect(page.getByTestId('chat-log')).toContainText(msg, { timeout: 15000 });
+  });
 });
