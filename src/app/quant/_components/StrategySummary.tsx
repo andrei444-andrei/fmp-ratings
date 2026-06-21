@@ -53,6 +53,17 @@ function fmtMoney(n: number): string {
   return n.toLocaleString('ru-RU', { maximumFractionDigits: n >= 1000 ? 0 : 2 });
 }
 const SIDE_LABEL = { buy: 'Buy', sell: 'Sell', hold: 'Hold' } as const;
+// underwater из ряда equity (NaN на участках без данных — для выровненного бенчмарка)
+function underwaterOf(eq: number[]): number[] {
+  const out: number[] = []; let peak = -Infinity;
+  for (const v of eq) { if (isFinite(v) && v > peak) peak = v; out.push(isFinite(v) && peak > 0 ? v / peak - 1 : NaN); }
+  return out;
+}
+function minFinite(a: number[]): number | null {
+  let m: number | null = null;
+  for (const v of a) if (isFinite(v) && (m == null || v < m)) m = v;
+  return m;
+}
 
 export default function StrategySummary({ includeArchived }: { includeArchived: boolean }) {
   const [series, setSeries] = useState<SeriesResponse | null>(null);
@@ -441,10 +452,25 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
               {/* анализ просадок выбранной стратегии */}
               {dd && (
                 <>
-                  <div className="qc-panel">
-                    <div className="qc-panel-h">Просадки (underwater, % ниже пика) <span className="c">макс. просадка {fmtPct(dd.maxDD)}</span></div>
-                    <UnderwaterChart dates={dd.dates} lines={[{ label: 'Просадка', color: '#db3b44', uw: dd.underwater, fill: true }]} height={260} />
-                  </div>
+                  {(() => {
+                    // SPY underwater на тех же датах (benchEquity выровнен к ряду стратегии)
+                    const spyUw = sum.benchEquity ? underwaterOf(sum.benchEquity) : null;
+                    const spyMaxDD = spyUw ? minFinite(spyUw) : null;
+                    return (
+                      <div className="qc-panel">
+                        <div className="qc-panel-h">Просадки (underwater, % ниже пика)
+                          <span className="c">макс: стратегия {fmtPct(dd.maxDD)}{spyMaxDD != null ? ` · ${benchName} ${fmtPct(spyMaxDD)}` : ''}</span>
+                          <span className="qc-spacer" />
+                          <span className="qc-legend"><span className="ln" style={{ background: '#db3b44' }} />Стратегия</span>
+                          {spyUw && <span className="qc-legend"><span className="ln" style={{ background: MUT }} />{benchName}</span>}
+                        </div>
+                        <UnderwaterChart dates={dd.dates} height={260} lines={[
+                          { label: 'Стратегия', color: '#db3b44', uw: dd.underwater, fill: true },
+                          ...(spyUw ? [{ label: benchName, color: MUT, uw: spyUw, dash: true }] : []),
+                        ]} />
+                      </div>
+                    );
+                  })()}
 
                   {dd.episodes.length > 0 && (
                     <div className="qc-tblwrap">
