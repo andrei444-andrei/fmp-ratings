@@ -73,6 +73,21 @@ export async function aimlChat(opts: ChatOpts): Promise<string> {
   return (await aimlChatMeta(opts)).content;
 }
 
+// Человекочитаемое сообщение об ошибке AIMLAPI (вместо сырого JSON в UI).
+// Особо разбираем самый частый случай — исчерпан лимит аккаунта.
+export function friendlyAimlError(e: unknown): string {
+  const raw = (e instanceof Error ? e.message : String(e ?? '')) || '';
+  if (/usage limit|reached your specified/i.test(raw)) {
+    const m = raw.match(/regain access on\s+([0-9]{4}-[0-9]{2}-[0-9]{2})(?:\s+at\s+([0-9:]+\s*[A-Z]+))?/i);
+    const when = m ? ` Доступ восстановится ${m[1]}${m[2] ? ' в ' + m[2] : ''}.` : '';
+    return `Достигнут лимит AIMLAPI.${when} Поднимите лимит или пополните счёт в кабинете AIMLAPI. ` +
+      `Пока AI-функции (чат, авто-названия) работают в запасном режиме.`;
+  }
+  if (/\b401\b|invalid api key|unauthorized/i.test(raw)) return 'Неверный или неактивный ключ AIMLAPI.';
+  if (/\b429\b|rate limit/i.test(raw)) return 'Слишком много запросов к AIMLAPI — попробуйте через минуту.';
+  return raw || 'Ошибка AI-сервиса.';
+}
+
 // Как aimlChat, но дополнительно возвращает источники (citations) — для Perplexity Sonar.
 export async function aimlChatWithCitations(opts: {
   messages: ChatMessage[];

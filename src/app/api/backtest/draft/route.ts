@@ -1,4 +1,4 @@
-import { aimlChatMeta } from '@/lib/aimlapi';
+import { aimlChatMeta, friendlyAimlError } from '@/lib/aimlapi';
 import { logAppError } from '@/lib/app-errors';
 
 export const dynamic = 'force-dynamic';
@@ -103,6 +103,8 @@ export async function POST(req: Request) {
   } catch (e: any) {
     const msg = e?.message || 'ошибка генерации';
     logAppError({ route: '/api/backtest/draft', message: msg, stack: e?.stack, user_agent: ua, meta: { model } }).catch(() => {});
-    return Response.json({ error: msg }, { status: 502 });
+    // В UI отдаём человекочитаемое сообщение (лимит аккаунта/ключ/частота), в лог — сырое.
+    const limited = /usage limit|reached your specified/i.test(msg);
+    return Response.json({ error: friendlyAimlError(e) }, { status: limited ? 429 : 502 });
   }
 }
