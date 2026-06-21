@@ -218,6 +218,14 @@ function Research() {
     } catch {
       /* нет localStorage */
     }
+    // Пермалинк: ?run=<id> — открываем сохранённый результат напрямую по ссылке.
+    try {
+      const v = new URLSearchParams(window.location.search).get('run');
+      const n = Number(v);
+      if (v && Number.isInteger(n) && n > 0) openSavedRun(n);
+    } catch {
+      /* нет window — игнор */
+    }
   }, []);
   useEffect(() => {
     try {
@@ -296,7 +304,11 @@ function Research() {
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d?.error || 'Не удалось сохранить результат');
-        toast({ variant: 'success', title: 'Результат сохранён', description: d?.title });
+        if (d?.id) {
+          reflectRunId(Number(d.id)); // теперь у результата есть постоянная ссылка
+          setIsFresh(false); // это уже сохранённый снимок, а не свежий прогон
+        }
+        toast({ variant: 'success', title: 'Результат сохранён', description: 'Ссылка — в адресной строке (кнопка 🔗)' });
       } else {
         const r = await fetch(`/api/research/runs/${runModal.id}`, {
           method: 'PATCH',
@@ -317,6 +329,29 @@ function Research() {
     }
   }
 
+  // Пермалинк результата: ?run=<id> в адресной строке (без навигации) — ссылку можно скопировать/открыть.
+  function reflectRunId(id: number | null) {
+    setViewRunId(id);
+    try {
+      const url = new URL(window.location.href);
+      if (id != null) url.searchParams.set('run', String(id));
+      else url.searchParams.delete('run');
+      window.history.replaceState(null, '', url.toString());
+    } catch {
+      /* нет window/URL — игнор */
+    }
+  }
+  async function copyRunLink(id: number) {
+    const url = `${window.location.origin}/research?run=${id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast({ variant: 'success', title: 'Ссылка скопирована', description: url });
+    } catch {
+      // clipboard недоступен (insecure context) — показываем ссылку, чтобы скопировать вручную.
+      toast({ variant: 'info', title: 'Ссылка на результат', description: url });
+    }
+  }
+
   async function openSavedRun(id: number) {
     try {
       const d = await (await fetch(`/api/research/runs/${id}`)).json();
@@ -328,7 +363,7 @@ function Research() {
       setLog('');
       setBlocks(run.result_html ? [run.result_html] : []);
       setViewDesc(run.description || null);
-      setViewRunId(run.id);
+      reflectRunId(run.id); // адресная строка → пермалинк на этот результат
       setStatus('Сохранённый результат');
       // Подгружаем входной промт результата (привязка к его промту).
       setPrompt(run.prompt || '');
@@ -370,7 +405,7 @@ function Research() {
     setBlocks([]);
     setLog('');
     setViewDesc(null);
-    setViewRunId(null);
+    reflectRunId(null);
     setIsFresh(false);
     setStatus('');
   }
@@ -383,7 +418,7 @@ function Research() {
     setBlocks([]);
     setLog('');
     setViewDesc(null);
-    setViewRunId(null);
+    reflectRunId(null); // свежий прогон — ещё не сохранён, убираем устаревший ?run
     setStatus('Отправка запроса…');
     try {
       const res = await fetch('/api/research/execute', {
@@ -581,6 +616,16 @@ function Research() {
                                 </button>
                                 <button
                                   type="button"
+                                  aria-label="Скопировать ссылку"
+                                  title="Скопировать ссылку на результат"
+                                  data-testid="run-copy"
+                                  onClick={() => copyRunLink(r.id)}
+                                  className="shrink-0 rounded-fk-sm px-2 text-ink-3 transition-colors hover:bg-surface-2 hover:text-brand focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)]"
+                                >
+                                  🔗
+                                </button>
+                                <button
+                                  type="button"
                                   aria-label="Редактировать результат"
                                   title="Изменить название и описание"
                                   onClick={() => openEditRun(r.id)}
@@ -630,6 +675,11 @@ function Research() {
               )}
               {showSaveHint && (
                 <span className="text-[12px] text-ink-3">Создайте исследование, чтобы сохранить результат</span>
+              )}
+              {viewRunId != null && !running && (
+                <Button size="sm" variant="ghost" onClick={() => copyRunLink(viewRunId)} data-testid="run-copy-link">
+                  🔗 Ссылка
+                </Button>
               )}
             </div>
           </CardHeader>

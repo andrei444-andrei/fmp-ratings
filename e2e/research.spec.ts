@@ -118,6 +118,27 @@ test.describe('Research /research', () => {
     await expect(page.locator('.research-output .rdesc')).toContainText('Тест-логика');
   });
 
+  test('пермалинк: сохранение результата даёт ?run=<id>; прямой переход открывает снимок (без localStorage)', async ({ page, baseURL }) => {
+    await page.goto('/research');
+    await saveStudy(page, 'пермалинк-исследование ' + Date.now(), 'e2e перм ' + Date.now());
+    await runOnce(page);
+    await saveResult(page);
+    // После сохранения: ?run=<id> в адресной строке + кнопка «🔗 Ссылка» в шапке результата.
+    await expect(page).toHaveURL(/[?&]run=\d+/);
+    await expect(page.getByTestId('run-copy-link')).toBeVisible();
+    const id = new URL(page.url()).searchParams.get('run');
+    expect(id).toBeTruthy();
+
+    // Открываем ссылку в ЧИСТОМ контексте (нет localStorage) — снимок грузится сам из БД.
+    const ctx = await page.context().browser()!.newContext({ baseURL });
+    const p2 = await ctx.newPage();
+    await p2.goto(`/research?run=${id}`);
+    await expect(p2.getByText('Сохранённый результат')).toBeVisible({ timeout: 30000 });
+    await expect(p2.locator('.research-output table.rkit-table')).toBeVisible({ timeout: 30000 });
+    await expect(p2.getByTestId('run-copy-link')).toBeVisible();
+    await ctx.close();
+  });
+
   test('главная страница ведёт на /research', async ({ page }) => {
     await page.goto('/');
     await expect(page).toHaveURL(/\/research$/);
