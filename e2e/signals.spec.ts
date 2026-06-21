@@ -119,6 +119,48 @@ test.describe('Signals /signals', () => {
     await expect(page.getByTestId('heat-cell').first()).toBeVisible({ timeout: 30000 });
   });
 
+  test('пермалинк: сохранение даёт ?result=<id>; прямой переход открывает снимок (без localStorage)', async ({ page, baseURL }) => {
+    await setup(page);
+    await page.getByTestId('run-study').click();
+    await expect(page.getByTestId('heat-cell').first()).toBeVisible({ timeout: 150000 });
+    // Сохраняем → в адресной строке появляется ?result=<id>, в шапке — кнопка «🔗 Ссылка».
+    await page.getByTestId('save-result-btn').click();
+    await page.getByTestId('save-name-input').fill('Пермалинк-тест');
+    await page.getByTestId('save-name-confirm').click();
+    await expect(page.getByText('Результат сохранён')).toBeVisible({ timeout: 15000 });
+    await expect(page).toHaveURL(/[?&]result=\d+/);
+    await expect(page.getByTestId('result-copy-link')).toBeVisible();
+    const id = new URL(page.url()).searchParams.get('result');
+    expect(id).toBeTruthy();
+
+    // Открываем ссылку в ЧИСТОМ контексте (нет localStorage:lastResult) — снимок грузится сам из БД.
+    const ctx = await page.context().browser()!.newContext({ baseURL });
+    const p2 = await ctx.newPage();
+    await p2.goto(`/signals?result=${id}`);
+    await expect(p2.getByTestId('heat-cell').first()).toBeVisible({ timeout: 30000 });
+    await expect(p2.getByText('Сохранённый результат')).toBeVisible({ timeout: 15000 });
+    await expect(p2.getByTestId('result-copy-link')).toBeVisible();
+    await ctx.close();
+  });
+
+  test('пермалинк: открытие из списка отражает ?result=<id> в адресной строке', async ({ page }) => {
+    await setup(page);
+    await page.getByTestId('run-study').click();
+    await expect(page.getByTestId('heat-cell').first()).toBeVisible({ timeout: 150000 });
+    await page.getByTestId('save-result-btn').click();
+    await page.getByTestId('save-name-input').fill('Из-списка-тест');
+    await page.getByTestId('save-name-confirm').click();
+    await expect(page.getByText('Результат сохранён')).toBeVisible({ timeout: 15000 });
+    // Новый прогон убирает ?result из URL (снимок ещё не сохранён).
+    await page.getByTestId('run-study').click();
+    await expect(page).not.toHaveURL(/[?&]result=\d+/);
+    await expect(page.getByTestId('heat-cell').first()).toBeVisible({ timeout: 150000 });
+    // Открытие сохранённого из списка слева → ?result возвращается, кнопка «🔗 Ссылка» видна.
+    await page.getByTestId('saved-results').getByTestId('result-open').first().click();
+    await expect(page).toHaveURL(/[?&]result=\d+/);
+    await expect(page.getByTestId('result-copy-link')).toBeVisible();
+  });
+
   test('иностранные тикеры (7203.T) принимаются и строят карту', async ({ page }) => {
     await page.goto('/signals');
     await page.getByPlaceholder('SMH, GLD, TLT').fill('7203.T, 6758.T, PKN.WA, AAA, BBB');

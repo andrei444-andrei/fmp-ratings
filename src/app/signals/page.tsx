@@ -338,6 +338,8 @@ function Signals() {
   const [saveTitle, setSaveTitle] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null); // переименование в списке
   const [editTitle, setEditTitle] = useState('');
+  // id открытого снимка (пермалинк ?result=<id>). null — свежий несохранённый прогон.
+  const [currentResultId, setCurrentResultId] = useState<number | null>(null);
 
   const outRef = useRef<HTMLDivElement>(null);
 
@@ -385,13 +387,26 @@ function Signals() {
     loadSaved();
     loadResults();
     loadDyn('mega'); // S&P 500 подгружаем сразу (частый выбор)
-    // Восстанавливаем ПОСЛЕДНИЙ прогон (чтобы перезаход во вкладку не терял карту).
+    // Пермалинк ?result=<id> приоритетнее последнего прогона из localStorage (открыли по ссылке —
+    // показываем именно тот снимок). Сам снимок грузим в конце эффекта (openResult, async).
+    const urlResultId = (() => {
+      try {
+        const v = new URLSearchParams(window.location.search).get('result');
+        const n = Number(v);
+        return v && Number.isInteger(n) && n > 0 ? n : null;
+      } catch {
+        return null;
+      }
+    })();
+    // Восстанавливаем ПОСЛЕДНИЙ прогон (чтобы перезаход во вкладку не терял карту), если не пришли по ссылке.
     // Явная кнопка «Сохранить» — для именованного долгого хранения в списке слева.
-    try {
-      const s = localStorage.getItem('signals:lastResult');
-      if (s) setResult(JSON.parse(s));
-    } catch {
-      /* ignore */
+    if (!urlResultId) {
+      try {
+        const s = localStorage.getItem('signals:lastResult');
+        if (s) setResult(JSON.parse(s));
+      } catch {
+        /* ignore */
+      }
     }
     // Восстанавливаем ВХОДНОЙ конфиг (вселенная, фактор, годы). Иначе после перезахода результат есть,
     // а вселенная пуста → кнопка «Построить карту» неактивна (частая путаница «кнопка не работает»).
@@ -422,6 +437,7 @@ function Signals() {
       /* ignore */
     }
     setHydrated(true);
+    if (urlResultId) openResult(urlResultId); // открыли по прямой ссылке — грузим снимок (переопределит вкладку/результат)
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Автосохранение последнего результата в браузере (переживает перезагрузку/перезаход).
@@ -446,6 +462,30 @@ function Signals() {
     }
   }, [hydrated, presets, custom, benchmark, horizon, yearFrom, yearTo, tab, factorId, fSide, fBins, fParams, fThresholds, fSkip]);
 
+  // Пермалинк: отражаем id открытого снимка в адресной строке (?result=<id>) БЕЗ навигации —
+  // ссылку можно скопировать и открыть напрямую. id=null убирает параметр (свежий прогон).
+  function reflectResultId(id: number | null) {
+    setCurrentResultId(id);
+    try {
+      const url = new URL(window.location.href);
+      if (id != null) url.searchParams.set('result', String(id));
+      else url.searchParams.delete('result');
+      window.history.replaceState(null, '', url.toString());
+    } catch {
+      /* нет window/URL — игнор */
+    }
+  }
+  async function copyResultLink(id: number) {
+    const url = `${window.location.origin}/signals?result=${id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast({ variant: 'success', title: 'Ссылка скопирована', description: url });
+    } catch {
+      // clipboard недоступен (insecure context) — показываем ссылку, чтобы скопировать вручную.
+      toast({ variant: 'info', title: 'Ссылка на результат', description: url });
+    }
+  }
+
   async function saveCurrentResult(title: string) {
     if (!result || savingResult) return;
     const name = title.trim().slice(0, 200) || resultTitle(result);
@@ -458,7 +498,8 @@ function Signals() {
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d?.error || 'не удалось');
-      toast({ variant: 'success', title: 'Результат сохранён', description: d?.title });
+      if (d?.id) reflectResultId(Number(d.id)); // теперь у результата есть постоянная ссылка
+      toast({ variant: 'success', title: 'Результат сохранён', description: 'Ссылка — в адресной строке (кнопка 🔗)' });
       setNamingSave(false);
       loadResults();
     } catch (e: any) {
@@ -495,6 +536,7 @@ function Signals() {
       setErrMsg('');
       setResult(res.payload);
       if (['factor', 'signal', 'combine', 'dipcal'].includes(res.payload.mode)) setTab(res.payload.mode);
+      reflectResultId(id); // адресная строка → пермалинк на этот снимок
       setStatus('Сохранённый результат');
     } catch (e: any) {
       toast({ variant: 'error', title: 'Не удалось открыть', description: e?.message });
@@ -545,6 +587,7 @@ function Signals() {
     }
     setRunning(true);
     setResult(null);
+    reflectResultId(null); // новый прогон — снимок ещё не сохранён, убираем устаревший ?result
     setErrMsg('');
     setStatus('Отправка запроса…');
     try {
@@ -874,6 +917,15 @@ function Signals() {
                           </button>
                           <button
                             type="button"
+                            aria-label="Скопировать ссылку"
+                            data-testid="result-copy"
+                            onClick={() => copyResultLink(r.id)}
+                            className="shrink-0 rounded-fk-sm px-1.5 text-ink-3 hover:text-brand"
+                          >
+                            🔗
+                          </button>
+                          <button
+                            type="button"
                             aria-label="Переименовать результат"
                             data-testid="result-rename"
                             onClick={() => {
@@ -911,7 +963,11 @@ function Signals() {
                 <Badge variant={status === 'Ошибка' ? 'down' : 'up'}>{status}</Badge>
               ) : null}
               {result && !running && (
-                namingSave ? (
+                currentResultId != null ? (
+                  <Button size="sm" variant="ghost" onClick={() => copyResultLink(currentResultId)} data-testid="result-copy-link">
+                    🔗 Ссылка
+                  </Button>
+                ) : namingSave ? (
                   <div className="flex items-center gap-1">
                     <Input
                       autoFocus
