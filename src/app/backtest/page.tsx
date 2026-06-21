@@ -230,6 +230,9 @@ function Backtest() {
   const [activeStrategyTitle, setActiveStrategyTitle] = useState<string | null>(null);
   const activeStrategyIdRef = useRef<number | null>(null);
   activeStrategyIdRef.current = activeStrategyId;
+  // Чат привязан к стратегии: пишем его в стратегию автоматически. Этот флаг гасит автосохранение,
+  // когда чат МЕНЯЕМ программно (открыли стратегию/прогон) — чтобы не перезаписать загруженный тред.
+  const suppressChatPersist = useRef(false);
 
   // ── Прогон ──
   const [running, setRunning] = useState(false);
@@ -343,6 +346,27 @@ function Backtest() {
   useEffect(() => {
     chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight, behavior: 'smooth' });
   }, [chatMessages, chatBusy]);
+
+  // Чат — единый тред стратегии: любое изменение автоматически сохраняем в активную стратегию
+  // (debounce). Программные загрузки треда гасятся флагом suppressChatPersist, прогоны его не трогают.
+  useEffect(() => {
+    if (suppressChatPersist.current) {
+      suppressChatPersist.current = false;
+      return;
+    }
+    const sid = activeStrategyIdRef.current;
+    if (sid == null) return;
+    const t = setTimeout(() => {
+      fetch(`/api/backtest/strategies/${sid}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chat: chatMessages.slice(-80) }),
+      }).catch(() => {
+        /* автосохранение чата не должно мешать работе */
+      });
+    }, 700);
+    return () => clearTimeout(t);
+  }, [chatMessages]);
 
   function togglePreset(id: string) {
     setPresets((prev) => {
@@ -648,11 +672,13 @@ function Backtest() {
           /* битый конфиг — игнорируем */
         }
       }
-      // Восстанавливаем историю AI-чата стратегии.
+      // Восстанавливаем единый тред AI-чата стратегии (это загрузка, а не правка — не пересохраняем).
       try {
         const arr = s.chat ? JSON.parse(s.chat) : [];
+        suppressChatPersist.current = true;
         setChatMessages(Array.isArray(arr) ? arr.filter((m: any) => m && typeof m.content === 'string') : []);
       } catch {
+        suppressChatPersist.current = true;
         setChatMessages([]);
       }
       setActiveStrategyId(s.id);
@@ -767,10 +793,25 @@ function Backtest() {
       setOpenedRunId(id);
       setBlocks(run.result_html ? [run.result_html] : []);
       if (typeof run.strategy === 'string' && run.strategy.trim()) setStrategy(run.strategy);
-      setActiveStrategyId(run.strategy_id ?? null);
+      const sid = run.strategy_id ?? null;
+      setActiveStrategyId(sid);
       setActiveStrategyTitle(
-        run.strategy_id != null ? (strategies ?? []).find((s) => s.id === run.strategy_id)?.title ?? null : null,
+        sid != null ? (strategies ?? []).find((s) => s.id === sid)?.title ?? null : null,
       );
+      // Чат привязан к стратегии: открытие прогона НЕ заводит свой чат — подтягиваем единый тред
+      // стратегии-владельца (для прогонов одной стратегии это всегда один и тот же чат).
+      if (sid != null) {
+        try {
+          const sd = await (await fetch(`/api/backtest/strategies/${sid}`)).json();
+          if (sd?.strategy) {
+            const arr = sd.strategy.chat ? JSON.parse(sd.strategy.chat) : [];
+            suppressChatPersist.current = true;
+            setChatMessages(Array.isArray(arr) ? arr.filter((m: any) => m && typeof m.content === 'string') : []);
+          }
+        } catch {
+          /* не удалось подтянуть тред — оставляем текущий */
+        }
+      }
       setViewDesc(run.description || null);
       setStatus('Сохранённый результат');
     } catch (e: any) {
