@@ -26,4 +26,34 @@ test.describe('Backtest EODHD integration', () => {
     await expect(page.getByText('данные синтетические')).toHaveCount(0);
     await expect(page.locator('.research-output .rerrblk')).toHaveCount(0);
   });
+
+  // Регресс: метрики бенчмарка НЕ зависят от состава вселенной. Раньше при смешанных календарях
+  // (US + Токио) SPY-бенчмарк считался по объединённому индексу с ffill → нулевые дни искажали
+  // его волатильность/Sharpe. Теперь бенчмарк считается по своим торговым дням — vol стабильна.
+  async function benchVol(page: import('@playwright/test').Page, universe: string[], traded: string) {
+    await page.goto('/backtest');
+    await page.locator('#start').fill('2016-01-01');
+    await page.locator('#end').fill('2023-12-31');
+    await page.locator('#benchmark').fill('SPY');
+    await page.getByTestId('strategy-code').fill(
+      [`UNIVERSE = ${JSON.stringify(universe)}`, '', 'def on_bar(ctx):', `    ctx.order_target_percent("${traded}", 1.0)`].join('\n'),
+    );
+    await page.getByTestId('run-backtest').click();
+    await expect(page.locator('.research-output .rkit-kpi').first()).toBeVisible({ timeout: 180000 });
+    await expect(page.locator('.research-output .rt-cap', { hasText: 'Сделки' })).toBeVisible({ timeout: 60000 });
+    const rows = await page.locator('.research-output table tbody tr').evaluateAll((trs) =>
+      trs.map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => (td.textContent || '').trim())));
+    const volRow = rows.find((r) => /Волатильн/i.test(r[0] || ''));
+    // колонка «Бенчмарк» = третья ячейка; "17.6%" → 17.6
+    return Number((volRow?.[2] || '').replace('%', '').replace(',', '.'));
+  }
+
+  test('метрики бенчмарка не зависят от календаря вселенной (US vs +Токио)', async ({ page }) => {
+    const usOnly = await benchVol(page, ['SPY'], 'SPY');
+    const mixed = await benchVol(page, ['7203.TSE'], '7203.TSE');
+    expect(usOnly).toBeGreaterThan(0);
+    expect(mixed).toBeGreaterThan(0);
+    // Один и тот же бенчмарк SPY → одинаковая волатильность независимо от вселенной (допуск 1 п.п.).
+    expect(Math.abs(usOnly - mixed)).toBeLessThan(1.0);
+  });
 });
