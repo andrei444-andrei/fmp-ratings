@@ -94,6 +94,7 @@ for _s in _src_uni:
     if _s and _s not in _seen_u:
         _seen_u.add(_s); universe.append(_s)
 PXFF_DF = pd.DataFrame()
+_PX_RAW = pd.DataFrame()   # сырой ряд цен (до ffill) — для «чистых» метрик бенчмарка по его ОБСТВЕННЫМ торговым дням
 TRADE_SYMS = []
 bench_present = False
 if ok:
@@ -104,6 +105,7 @@ if ok:
         ok = False
     else:
         _pxs = px.sort_index()      # сырой ряд (до ffill) — для пер-символьного детекта синтетики
+        _PX_RAW = _pxs
         PXFF_DF = _pxs.ffill()
         TRADE_SYMS = [s for s in universe if s in PXFF_DF.columns]
         bench_present = bench in PXFF_DF.columns
@@ -421,10 +423,30 @@ if ok:
     if err is not None:
         emit(callout(err, tone="bad", title="Ошибка выполнения стратегии"))
     else:
+        # Годы и «баров в году» считаем по ФАКТИЧЕСКОМУ календарю индекса, а не n/252. Иначе при
+        # смешанных календарях (напр. US + TSE) объединённый индекс даёт >252 баров/год, и hard-coded
+        # 252 искажает annualized vol/Sharpe/CAGR. Для обычного дневного US-ряда выходит ≈252 (как было).
+        def _yrs(idx):
+            try:
+                d = (pd.Timestamp(idx[-1]) - pd.Timestamp(idx[0])).days
+                return (d / 365.25) if d > 0 else (len(idx) / 252.0)
+            except Exception:
+                return len(idx) / 252.0
+        def _ppy(idx):
+            try:
+                if len(idx) < 3:
+                    return 252.0
+                y = _yrs(idx)
+                return ((len(idx) - 1) / y) if y > 0 else 252.0
+            except Exception:
+                return 252.0
+
         equity = pd.Series(eq, index=PXFF_DF.index)
         rets = equity.pct_change().dropna()
         n_days = len(equity)
-        years = n_days / 252.0
+        years = _yrs(equity.index)
+        ppy = _ppy(equity.index)
+        ann = math.sqrt(ppy)
         e0 = float(equity.iloc[0]); e1 = float(equity.iloc[-1])
         tot = (e1 / e0 - 1.0) if e0 > 0 else -1.0
         if e1 <= 0 or e0 <= 0 or years <= 0:
@@ -432,11 +454,11 @@ if ok:
         else:
             cagr = (e1 / e0) ** (1.0 / years) - 1.0
         sd = float(rets.std())
-        vol = sd * math.sqrt(252.0)
-        sharpe = (float(rets.mean()) / sd * math.sqrt(252.0)) if sd > 0 else 0.0
+        vol = sd * ann
+        sharpe = (float(rets.mean()) / sd * ann) if sd > 0 else 0.0
         neg = rets[rets < 0]
-        dd_dev = float(neg.std()) * math.sqrt(252.0) if len(neg) > 1 else 0.0
-        sortino = (float(rets.mean()) * 252.0 / dd_dev) if dd_dev > 0 else 0.0
+        dd_dev = float(neg.std()) * ann if len(neg) > 1 else 0.0
+        sortino = (float(rets.mean()) * ppy / dd_dev) if dd_dev > 0 else 0.0
         dd_series = equity / equity.cummax() - 1.0
         maxdd = float(dd_series.min())
         calmar = (cagr / abs(maxdd)) if maxdd < 0 else 0.0
@@ -446,29 +468,33 @@ if ok:
             r = s.pct_change().dropna()
             if len(r) < 2:
                 return None
+            ppy2 = _ppy(s.index)
+            ann2 = math.sqrt(ppy2)
             sd2 = float(r.std())
             ng = r[r < 0]
-            dd2 = float(ng.std()) * math.sqrt(252.0) if len(ng) > 1 else 0.0
+            dd2 = float(ng.std()) * ann2 if len(ng) > 1 else 0.0
             dser = s / s.cummax() - 1.0
-            a0 = float(s.iloc[0]); a1 = float(s.iloc[-1]); yr = len(s) / 252.0
+            a0 = float(s.iloc[0]); a1 = float(s.iloc[-1]); yr = _yrs(s.index)
             return {
-                "vol": sd2 * math.sqrt(252.0),
-                "sharpe": (float(r.mean()) / sd2 * math.sqrt(252.0)) if sd2 > 0 else 0.0,
-                "sortino": (float(r.mean()) * 252.0 / dd2) if dd2 > 0 else 0.0,
+                "vol": sd2 * ann2,
+                "sharpe": (float(r.mean()) / sd2 * ann2) if sd2 > 0 else 0.0,
+                "sortino": (float(r.mean()) * ppy2 / dd2) if dd2 > 0 else 0.0,
                 "maxdd": float(dser.min()),
                 "tot": (a1 / a0 - 1.0) if a0 > 0 else -1.0,
                 "cagr": ((a1 / a0) ** (1.0 / yr) - 1.0) if (a1 > 0 and a0 > 0 and yr > 0) else -1.0,
                 "calmar": 0.0,
             }
 
-        # Бенчмарк buy & hold.
+        # Бенчмарк buy & hold. Метрики считаем по СОБСТВЕННЫМ торговым дням бенчмарка (сырой ряд до ffill),
+        # а не по объединённому индексу вселенной — иначе ffill-дубли на чужих торговых днях (напр. TSE,
+        # когда NYSE закрыт) подмешивают нулевые доходности и искажают его волатильность/Sharpe.
         b_tot = None; bench_eq = None
         if bench_present:
-            b = PXFF_DF[bench].astype(float)
-            bvalid = b.dropna()
+            b_src = _PX_RAW[bench] if (bench in getattr(_PX_RAW, "columns", [])) else PXFF_DF[bench]
+            bvalid = b_src.astype(float).dropna()
             if len(bvalid) > 1:
                 b0 = float(bvalid.iloc[0])
-                bench_eq = INIT_CAP * (b / b0)
+                bench_eq = INIT_CAP * (bvalid / b0)
                 b_tot = float(bvalid.iloc[-1] / b0 - 1.0)
         bm = _series_metrics(bench_eq.dropna()) if bench_eq is not None else None
         if bm is not None:
