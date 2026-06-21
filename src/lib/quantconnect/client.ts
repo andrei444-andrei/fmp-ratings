@@ -5,6 +5,7 @@
 
 import { createHash } from 'node:crypto';
 import { getCreds, type QcCreds } from './creds';
+import { qcParseOrder } from './orders';
 import type { QcProject, QcBacktestSummary, QcSeriesPoint, QcTrade } from './types';
 
 const QC_BASE = 'https://www.quantconnect.com/api/v2';
@@ -212,20 +213,10 @@ export async function qcReadBacktestOrders(
   return { orders: out, capped: true };
 }
 
-// Коды enum'ов QuantConnect для человекочитаемых ярлыков.
-const ORDER_TYPE: Record<number, string> = {
-  0: 'Market', 1: 'Limit', 2: 'StopMarket', 3: 'StopLimit', 4: 'MarketOnOpen',
-  5: 'MarketOnClose', 6: 'OptionExercise', 7: 'LimitIfTouched', 8: 'ComboMarket',
-  9: 'ComboLimit', 10: 'ComboLegLimit', 11: 'TrailingStop',
-};
-const ORDER_STATUS: Record<number, string> = {
-  0: 'New', 1: 'Submitted', 2: 'PartiallyFilled', 3: 'Filled', 5: 'Canceled',
-  6: 'None', 7: 'Invalid', 8: 'CancelPending', 9: 'UpdateSubmitted',
-};
-const ORDER_DIR: Record<number, 'buy' | 'sell' | 'hold'> = { 0: 'buy', 1: 'sell', 2: 'hold' };
-
 // Детальные сделки (ордера) бектеста: дата, инструмент, сторона, кол-во, цена, объём.
-// Та же пагинация/кап, что и у qcReadBacktestOrders, но с полным набором полей для UI.
+// Пагинация ≤100/стр., кап на число страниц. Ошибку ПЕРВОЙ страницы пробрасываем
+// (чтобы реальная причина «нет сделок» — напр. ошибка API — была видна), дальше —
+// отдаём что успели собрать.
 export async function qcReadBacktestTrades(
   projectId: number | string,
   backtestId: string,
@@ -237,42 +228,12 @@ export async function qcReadBacktestTrades(
     let data: any;
     try {
       data = await qcPost('/backtests/orders/read', { projectId: Number(projectId), backtestId: String(backtestId), start, end: start + 100 });
-    } catch {
+    } catch (e) {
+      if (page === 0) throw e;
       return { trades: out, capped: false };
     }
-    const arr = Array.isArray(data?.orders) ? data.orders : [];
-    for (const o of arr) {
-      const sym = o?.symbol?.value ?? o?.symbol?.Value ?? (typeof o?.symbol === 'string' ? o.symbol : '') ?? '';
-      const t = o?.time ?? o?.createdTime ?? o?.lastFillTime;
-      let iso = '';
-      if (t != null) {
-        const ms = typeof t === 'number' ? (t > 1e12 ? t : t * 1000) : Date.parse(String(t));
-        if (isFinite(ms)) iso = new Date(ms).toISOString();
-      }
-      const qtyRaw = Number(o?.quantity ?? o?.Quantity ?? 0);
-      const dirCode = Number(o?.direction ?? o?.Direction);
-      const direction = ORDER_DIR[dirCode] ?? (qtyRaw > 0 ? 'buy' : qtyRaw < 0 ? 'sell' : 'hold');
-      let price = Number(o?.price ?? o?.Price ?? 0);
-      if (!(price > 0)) {
-        const fills = o?.orderFillEvents ?? o?.events ?? o?.fills;
-        if (Array.isArray(fills) && fills.length) {
-          const fp = Number(fills[fills.length - 1]?.fillPrice ?? fills[fills.length - 1]?.FillPrice);
-          if (fp > 0) price = fp;
-        }
-      }
-      const quantity = Math.abs(qtyRaw);
-      const value = price > 0 ? quantity * price : 0;
-      out.push({
-        time: iso,
-        symbol: String(sym || '?').toUpperCase(),
-        direction,
-        quantity,
-        price,
-        value,
-        type: ORDER_TYPE[Number(o?.type ?? o?.Type)] ?? '',
-        status: ORDER_STATUS[Number(o?.status ?? o?.Status)] ?? '',
-      });
-    }
+    const arr = Array.isArray(data?.orders) ? data.orders : Array.isArray(data?.Orders) ? data.Orders : [];
+    for (const o of arr) out.push(qcParseOrder(o));
     if (arr.length < 100) return { trades: out, capped: false };
   }
   return { trades: out, capped: true };

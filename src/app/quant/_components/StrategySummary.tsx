@@ -175,6 +175,67 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
   const years = sum ? [...new Set([...Object.keys(sum.monthly).map(Number), ...Object.keys(sum.yearlyTotals).map(Number)])].sort((a, b) => a - b) : [];
   const hasAlpha = !!(sum && sum.monthlyBench);
 
+  // панель сделок выбранного месяца — общая для обеих помесячных таблиц (доходность и Δ к SPY)
+  const tradesPanel = (
+    <div className="qc-trades">
+      {!selMonth ? (
+        <div className="qc-trades-empty">Кликни по месяцу в таблице — здесь появятся сделки за него.</div>
+      ) : (
+        <>
+          <div className="qc-trades-h">Сделки · {MONTHS[Number(selMonth.slice(5, 7)) - 1]} {selMonth.slice(0, 4)}</div>
+          {tradesLoading ? (
+            <div className="qc-trades-empty">Загрузка сделок…</div>
+          ) : tradesErr ? (
+            <div className="qc-trades-empty qc-err">{tradesErr}</div>
+          ) : monthTrades.length === 0 ? (
+            <div className="qc-trades-empty">
+              {(trades?.length ?? 0) === 0 ? (
+                <>По стратегии не загрузились сделки — у бектеста нет ордеров или нет доступа к ним.</>
+              ) : (
+                <>
+                  В этом месяце сделок не было.
+                  <div className="qc-trades-meta">
+                    Всего по стратегии: {trades!.length} сделок в {tradeMonths.length} мес.
+                    {nearestMonths.length > 0 && <> · ближайшие: {nearestMonths.map((m, i) => (
+                      <button key={m} className="qc-trades-near" onClick={() => clickMonth(m)}>{monthLabel(m)}{i < nearestMonths.length - 1 ? ',' : ''}</button>
+                    ))}</>}
+                  </div>
+                </>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="qc-trades-sum">
+                {monthTrades.length} сделок · <span className="qc-pos">{monthTrades.filter(t => t.direction === 'buy').length} buy</span> / <span className="qc-neg">{monthTrades.filter(t => t.direction === 'sell').length} sell</span> · {new Set(monthTrades.map(t => t.symbol)).size} инстр.
+                {tradesCapped && <span className="qc-mut"> · показаны не все (лимит)</span>}
+              </div>
+              <div className="qc-trades-list">
+                <table>
+                  <thead><tr><th>Дата</th><th>Инстр.</th><th>Сторона</th><th className="r">Кол-во</th><th className="r">Цена</th><th className="r">Объём</th></tr></thead>
+                  <tbody>
+                    {monthTrades.map((t, i) => (
+                      <tr key={i}>
+                        <td>{fmtDay(t.time)}</td>
+                        <td className="sym">{t.symbol}</td>
+                        <td>
+                          <span className={'qc-side ' + t.direction}>{SIDE_LABEL[t.direction]}</span>
+                          {t.status && t.status !== 'Filled' && <span className="qc-stat">{t.status}</span>}
+                        </td>
+                        <td className="r">{fmtNum(t.quantity)}</td>
+                        <td className="r">{t.price > 0 ? fmtNum(t.price) : '—'}</td>
+                        <td className="r">{fmtMoney(t.value)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+
   return (
     <>
       <div className="qc-method">
@@ -260,70 +321,15 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
                     </table>
                   </div>
 
-                  <div className="qc-trades">
-                    {!selMonth ? (
-                      <div className="qc-trades-empty">Выберите месяц в таблице слева — здесь появятся сделки за него.</div>
-                    ) : (
-                      <>
-                        <div className="qc-trades-h">Сделки · {MONTHS[Number(selMonth.slice(5, 7)) - 1]} {selMonth.slice(0, 4)}</div>
-                        {tradesLoading ? (
-                          <div className="qc-trades-empty">Загрузка сделок…</div>
-                        ) : tradesErr ? (
-                          <div className="qc-trades-empty qc-err">{tradesErr}</div>
-                        ) : monthTrades.length === 0 ? (
-                          <div className="qc-trades-empty">
-                            {(trades?.length ?? 0) === 0 ? (
-                              <>По стратегии не загрузились сделки — у бектеста нет ордеров или нет доступа к ним.</>
-                            ) : (
-                              <>
-                                В этом месяце сделок не было.
-                                <div className="qc-trades-meta">
-                                  Всего по стратегии: {trades!.length} сделок в {tradeMonths.length} мес.
-                                  {nearestMonths.length > 0 && <> · ближайшие: {nearestMonths.map((m, i) => (
-                                    <button key={m} className="qc-trades-near" onClick={() => clickMonth(m)}>{monthLabel(m)}{i < nearestMonths.length - 1 ? ',' : ''}</button>
-                                  ))}</>}
-                                </div>
-                              </>
-                            )}
-                          </div>
-                        ) : (
-                          <>
-                            <div className="qc-trades-sum">
-                              {monthTrades.length} сделок · <span className="qc-pos">{monthTrades.filter(t => t.direction === 'buy').length} buy</span> / <span className="qc-neg">{monthTrades.filter(t => t.direction === 'sell').length} sell</span> · {new Set(monthTrades.map(t => t.symbol)).size} инстр.
-                              {tradesCapped && <span className="qc-mut"> · показаны не все (лимит)</span>}
-                            </div>
-                            <div className="qc-trades-list">
-                              <table>
-                                <thead><tr><th>Дата</th><th>Инстр.</th><th>Сторона</th><th className="r">Кол-во</th><th className="r">Цена</th><th className="r">Объём</th></tr></thead>
-                                <tbody>
-                                  {monthTrades.map((t, i) => (
-                                    <tr key={i}>
-                                      <td>{fmtDay(t.time)}</td>
-                                      <td className="sym">{t.symbol}</td>
-                                      <td>
-                                        <span className={'qc-side ' + t.direction}>{SIDE_LABEL[t.direction]}</span>
-                                        {t.status && t.status !== 'Filled' && <span className="qc-stat">{t.status}</span>}
-                                      </td>
-                                      <td className="r">{fmtNum(t.quantity)}</td>
-                                      <td className="r">{t.price > 0 ? fmtNum(t.price) : '—'}</td>
-                                      <td className="r">{fmtMoney(t.value)}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
-                          </>
-                        )}
-                      </>
-                    )}
-                  </div>
+                  {tradesPanel}
                 </div>
               </div>
 
-              {/* помесячное превышение/занижение к бенчмарку (Δ к SPY) */}
+              {/* помесячное превышение/занижение к бенчмарку (Δ к SPY) — ячейки тоже кликабельны */}
               {hasAlpha && (
                 <div className="qc-panel">
-                  <div className="qc-panel-h">Δ к {benchName} (превышение / занижение) <span className="c">доходность стратегии − {benchName}, помесячно</span></div>
+                  <div className="qc-panel-h">Δ к {benchName} (превышение / занижение) <span className="c">кликни по месяцу — сделки появятся справа</span></div>
+                  <div className="qc-mrow">
                   <div className="qc-tblwrap" style={{ border: 0 }}>
                     <table className="qc-heat">
                       <thead><tr><th className="lbl">Год</th>{MONTHS.map(m => <th key={m}>{m}</th>)}<th className="tot">Год</th></tr></thead>
@@ -335,10 +341,14 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
                               const s = sum.monthly[y]?.[mi + 1];
                               const b = sum.monthlyBench?.[y]?.[mi + 1];
                               const d = (s != null && b != null) ? s - b : null;
+                              const ym = `${y}-${String(mi + 1).padStart(2, '0')}`;
+                              const clickable = s != null; // кликаем по месяцам, где у стратегии есть доходность (=есть данные)
                               return (
                                 <td key={mi}
+                                  className={(clickable ? 'clk' : '') + (selMonth === ym ? ' sel' : '')}
                                   style={{ background: d != null ? heatDelta(d) : 'transparent' }}
-                                  title={d != null ? `стратегия ${fmtPct(s)} · ${benchName} ${fmtPct(b)}` : undefined}>
+                                  onClick={clickable ? () => clickMonth(ym) : undefined}
+                                  title={d != null ? `стратегия ${fmtPct(s)} · ${benchName} ${fmtPct(b)} · клик — сделки` : undefined}>
                                   {d != null ? fmtPct(d) : ''}
                                 </td>
                               );
@@ -358,6 +368,8 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
                         ))}
                       </tbody>
                     </table>
+                  </div>
+                  {tradesPanel}
                   </div>
                 </div>
               )}
