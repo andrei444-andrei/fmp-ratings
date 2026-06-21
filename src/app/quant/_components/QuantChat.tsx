@@ -3,14 +3,19 @@
 import { useEffect, useRef, useState } from 'react';
 import Markdown from './Markdown';
 
-type Msg = { role: 'user' | 'assistant'; content: string };
+type Msg = { role: 'user' | 'assistant'; content: string; citations?: string[]; web?: boolean };
 
 const SUGGESTIONS = [
   'Какая стратегия показала себя лучше всего?',
   'Где были самые большие просадки и когда?',
-  'Какими инструментами и как часто торгуют стратегии?',
-  'Сколько сделок и по каким активам было в 2015 году?',
+  'Какие сделки делала стратегия в прошлом году?',
+  'Что происходило в Японии в октябре 2015?',
 ];
+
+// Домен из URL — для компактного отображения источника.
+function host(u: string): string {
+  try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u; }
+}
 
 export default function QuantChat() {
   const [open, setOpen] = useState(false);
@@ -38,7 +43,7 @@ export default function QuantChat() {
         body: JSON.stringify({ messages: next }),
       }).then(r => r.json());
       if (res.error) setErr(res.error);
-      else setMsgs(m => [...m, { role: 'assistant', content: res.reply || '—' }]);
+      else setMsgs(m => [...m, { role: 'assistant', content: res.reply || '—', citations: res.citations, web: res.web }]);
     } catch (e: any) { setErr(e.message); }
     finally { setBusy(false); }
   }
@@ -68,7 +73,20 @@ export default function QuantChat() {
               </div>
             ) : msgs.map((m, i) => (
               <div key={i} className={'qc-msg ' + m.role}>
-                {m.role === 'assistant' ? <Markdown text={m.content} /> : m.content}
+                {m.role === 'assistant' ? (
+                  <>
+                    {m.web && <div className="qc-msg-web">🌐 поиск в интернете</div>}
+                    <Markdown text={m.content} />
+                    {m.citations && m.citations.length > 0 && (
+                      <div className="qc-cites">
+                        <span className="qc-cites-h">Источники:</span>
+                        {m.citations.slice(0, 8).map((u, j) => (
+                          <a key={j} href={u} target="_blank" rel="noreferrer" title={u}>{j + 1}. {host(u)}</a>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : m.content}
               </div>
             ))}
             {busy && <div className="qc-msg assistant"><span className="qc-typing">думаю…</span></div>}

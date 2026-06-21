@@ -5,7 +5,43 @@
 import { listAlgorithms } from './algorithms';
 import { buildPortfolio, buildSeries } from './portfolio';
 import { getStrategyFacts, type StrategyFacts } from './strategy-facts';
-import type { DayPoint } from './types';
+import { getStrategyTrades } from './trades';
+import type { DayPoint, QcTrade } from './types';
+
+// Компактная сводка сделок по годам для чата: кол-во, buy/sell, топ-инструменты по
+// обороту (с долей), плюс несколько свежих сделок — чтобы отвечать «какие сделки были в N году».
+function tradesDigest(trades: QcTrade[]): string[] {
+  const lines: string[] = [];
+  const byYear = new Map<number, QcTrade[]>();
+  for (const t of trades) {
+    const y = Number(t.time.slice(0, 4));
+    if (!isFinite(y) || y < 1990) continue;
+    (byYear.get(y) ?? byYear.set(y, []).get(y)!).push(t);
+  }
+  const years = [...byYear.keys()].sort((a, b) => a - b);
+  for (const y of years) {
+    const ts = byYear.get(y)!;
+    const buys = ts.filter(t => t.direction === 'buy').length;
+    const sells = ts.filter(t => t.direction === 'sell').length;
+    const notional = new Map<string, number>();
+    for (const t of ts) notional.set(t.symbol, (notional.get(t.symbol) || 0) + (t.value || 0));
+    const tot = [...notional.values()].reduce((s, x) => s + x, 0) || 1;
+    const top = [...notional.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10)
+      .map(([s, v]) => `${s} ${(v / tot * 100).toFixed(0)}%`).join(', ');
+    lines.push(`  ${y}: ${ts.length} сделок (buy ${buys} / sell ${sells}); по обороту: ${top}`);
+  }
+  // последние 10 сделок целиком (для «какие именно сделки»)
+  const recent = [...trades].sort((a, b) => (a.time < b.time ? 1 : -1)).slice(0, 10);
+  if (recent.length) {
+    lines.push('  Последние сделки:');
+    for (const t of recent) {
+      const d = t.time.slice(0, 10);
+      const px = t.price > 0 ? ` @ ${t.price}` : '';
+      lines.push(`    ${d} ${t.direction === 'buy' ? 'BUY' : t.direction === 'sell' ? 'SELL' : 'HOLD'} ${t.symbol} ×${t.quantity}${px}`);
+    }
+  }
+  return lines;
+}
 
 function pct(v: number | null | undefined, d = 1): string {
   if (v == null || !isFinite(v)) return '—';
@@ -44,11 +80,13 @@ export async function buildChatContext(): Promise<string> {
   const metaById = new Map(algos.map(a => [a.id, a]));
   const dailyById = new Map(sr.algos.map(a => [a.id, a.daily]));
 
-  // статистика + торгуемые инструменты по каждой стратегии (параллельно, кэшируется)
+  // статистика + торгуемые инструменты + детальные сделки по каждой стратегии (кэшируется)
   const factsById = new Map<number, StrategyFacts>();
+  const tradesById = new Map<number, QcTrade[]>();
   await Promise.all(pf.algos.map(async c => {
     if (c.resolvedBacktestId && !c.error) {
       try { factsById.set(c.id, await getStrategyFacts(c.projectId, c.resolvedBacktestId)); } catch { /* пропускаем */ }
+      try { const t = await getStrategyTrades(c.id); if (t.trades?.length) tradesById.set(c.id, t.trades); } catch { /* пропускаем */ }
     }
   }));
 
@@ -77,7 +115,11 @@ export async function buildChatContext(): Promise<string> {
       for (const [k, v] of Object.entries(facts.statistics)) lines.push(`  ${k}: ${v}`);
     }
 
-    if (facts && facts.tradesTotal) {
+    const detailed = tradesById.get(c.id);
+    if (detailed && detailed.length) {
+      lines.push(`Сделки (ордера) всего: ${detailed.length}. По годам — кол-во, buy/sell, оборот по инструментам и примеры:`);
+      lines.push(...tradesDigest(detailed));
+    } else if (facts && facts.tradesTotal) {
       lines.push(`Сделки (ордера) всего: ${facts.tradesTotal}${facts.tradesCapped ? '+ (показаны первые)' : ''}. По годам — кол-во и инструменты:`);
       const yrs = Object.keys(facts.tradesByYear).map(Number).filter(y => y > 0).sort((a, b) => a - b);
       for (const y of yrs) {

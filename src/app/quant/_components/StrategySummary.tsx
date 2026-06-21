@@ -115,6 +115,21 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
     return trades.filter(t => t.time.slice(0, 7) === selMonth).sort((a, b) => (a.time < b.time ? -1 : 1));
   }, [selMonth, trades]);
 
+  // месяцы, в которых вообще были сделки — чтобы отличать «пусто в месяце» от «нет данных»
+  const tradeMonths = useMemo(() => {
+    if (!trades) return [] as string[];
+    return [...new Set(trades.map(t => t.time.slice(0, 7)).filter(Boolean))].sort();
+  }, [trades]);
+  // ближайшие к выбранному месяцы со сделками (по модулю смещения)
+  const nearestMonths = useMemo(() => {
+    if (!selMonth || !tradeMonths.length) return [] as string[];
+    const key = (ym: string) => Number(ym.slice(0, 4)) * 12 + Number(ym.slice(5, 7));
+    const k0 = key(selMonth);
+    return [...tradeMonths].sort((a, b) => Math.abs(key(a) - k0) - Math.abs(key(b) - k0)).slice(0, 4)
+      .sort();
+  }, [selMonth, tradeMonths]);
+  const monthLabel = (ym: string) => `${MONTHS[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}`;
+
   const chart = useMemo(() => {
     if (!sum || !sum.dates.length) return null;
     const N = sum.equity.length, stride = Math.max(1, Math.ceil(N / 520));
@@ -232,7 +247,21 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
                         ) : tradesErr ? (
                           <div className="qc-trades-empty qc-err">{tradesErr}</div>
                         ) : monthTrades.length === 0 ? (
-                          <div className="qc-trades-empty">{tradesFor === sel ? 'В этом месяце сделок не было.' : '—'}</div>
+                          <div className="qc-trades-empty">
+                            {(trades?.length ?? 0) === 0 ? (
+                              <>По стратегии не загрузились сделки — у бектеста нет ордеров или нет доступа к ним.</>
+                            ) : (
+                              <>
+                                В этом месяце сделок не было.
+                                <div className="qc-trades-meta">
+                                  Всего по стратегии: {trades!.length} сделок в {tradeMonths.length} мес.
+                                  {nearestMonths.length > 0 && <> · ближайшие: {nearestMonths.map((m, i) => (
+                                    <button key={m} className="qc-trades-near" onClick={() => clickMonth(m)}>{monthLabel(m)}{i < nearestMonths.length - 1 ? ',' : ''}</button>
+                                  ))}</>}
+                                </div>
+                              </>
+                            )}
+                          </div>
                         ) : (
                           <>
                             <div className="qc-trades-sum">
