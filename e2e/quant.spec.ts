@@ -140,7 +140,10 @@ test.describe('Аналитика алгоритмов /quant', () => {
     await mockConfigured(page);
     await page.goto('/quant');
     await page.getByRole('button', { name: 'Сводка по стратегии' }).click();
-    await expect(page.locator('.qc-panel-h').filter({ hasText: 'Просадки (underwater' })).toBeVisible();
+    const uwPanel = page.locator('.qc-panel', { hasText: 'Просадки (underwater' });
+    await expect(uwPanel.locator('.qc-panel-h')).toBeVisible();
+    // underwater сравнивается с SPY — есть легенда SPY
+    await expect(uwPanel.locator('.qc-legend', { hasText: 'SPY' })).toBeVisible();
     await expect(page.locator('.qc-matrix').getByText('Глубина')).toBeVisible();
     await expect(page.locator('.qc-matrix').getByText('Восстановление')).toBeVisible();
   });
