@@ -285,6 +285,22 @@ test.describe('Аналитика алгоритмов /quant', () => {
     await expect(page.locator('.qc-msg.assistant .qc-md')).toContainText('leverage with control DD');
   });
 
+  test('AI-чат: веб-поиск показывает источники', async ({ page }) => {
+    await mockConfigured(page);
+    await page.route('**/api/quantconnect/chat**', r => r.fulfill({ json: {
+      reply: 'В октябре 2015 в Японии **Банк Японии** сохранил ставку.',
+      web: true,
+      citations: ['https://www.reuters.com/article/boj', 'https://www.bloomberg.com/news/japan'],
+    } }));
+    await page.goto('/quant');
+    await page.locator('.qc-chat-fab').click();
+    await page.locator('.qc-chat-input textarea').fill('что было в Японии в октябре 2015?');
+    await page.locator('.qc-chat-input').getByRole('button').click();
+    await expect(page.locator('.qc-msg-web')).toContainText('поиск в интернете');
+    await expect(page.locator('.qc-cites a').first()).toContainText('reuters.com');
+    await expect(page.locator('.qc-cites a')).toHaveCount(2);
+  });
+
   test('редактирование: статус, markdown-редактор, генерация из кода', async ({ page }) => {
     await mockConfigured(page);
     await page.goto('/quant');
