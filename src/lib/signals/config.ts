@@ -151,7 +151,7 @@ export function normalizeStudyConfig(body: any): StudyConfig {
   if (mode === 'setops') {
     const f = FACTOR_BY_ID[String(body?.factor)] || FACTOR_BY_ID.xbench;
     const bins = body?.bins === 'range' ? 'range' : body?.bins === 'quantile' ? 'quantile' : 'cumulative';
-    const op = ['or', 'and', 'diff'].includes(body?.op) ? body.op : 'and';
+    const op = ['or', 'and', 'diff', 'xor'].includes(body?.op) ? body.op : 'and';
     const skip = Math.round(clampNum(body?.skip, 0, 0, 60));
     // Ячейки одной группы: {param ∈ paramOptions, region}. Порядок сохраняем — для diff важно (A — первая).
     const cells = (Array.isArray(body?.cells) ? body.cells : [])

@@ -435,6 +435,9 @@ async def main():
             comb = masks[0].copy()
             for mk in masks[1:]:
                 comb = comb & (~mk)
+        elif op == 'xor':
+            # «Либо одно, либо другое» — наблюдение попало РОВНО в одну ячейку (объединение без пересечения).
+            comb = (np.sum(masks, axis=0) == 1)
         else:
             comb = np.logical_and.reduce(masks)
         sub = base[comb]

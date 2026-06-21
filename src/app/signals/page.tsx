@@ -1917,7 +1917,14 @@ function FactorGroup({ gi, data, group, isRange, isQ, multi, winFrom, winTo, pic
   );
 }
 
-type SetOp = 'or' | 'and' | 'diff';
+type SetOp = 'or' | 'and' | 'diff' | 'xor';
+
+const SETOP_TITLE: Record<SetOp, string> = {
+  or: 'ИЛИ (объединение)',
+  and: 'И (пересечение)',
+  diff: 'A без B',
+  xor: 'Либо одно, либо другое',
+};
 
 // Панель выбора (поверх ВСЕХ групп): 1 ячейка → детали; ≥2 → операции над множествами наблюдений:
 //  • ИЛИ (объединение) — клиентский пул по агрегатам (быстро, работает и между странами);
@@ -1958,6 +1965,7 @@ function SelectionPanel({ data, f, isRange, isQ, multi, mainH, selected, winFrom
           { value: 'or', label: 'ИЛИ (объедин.)' },
           { value: 'and', label: 'И (пересеч.)' },
           { value: 'diff', label: 'A без B' },
+          { value: 'xor', label: 'Либо/либо' },
         ]}
       />
     </div>
@@ -1973,7 +1981,7 @@ function SelectionPanel({ data, f, isRange, isQ, multi, mainH, selected, winFrom
         <CardHeader>
           <div className="flex items-start justify-between gap-3">
             <div>
-              <CardTitle>{op === 'and' ? 'И (пересечение)' : 'A без B'} — в пределах одной страны</CardTitle>
+              <CardTitle>{SETOP_TITLE[op]} — в пределах одной страны</CardTitle>
               <CardDescription>
                 Пересечение и разность считаются по одним и тем же наблюдениям (дата×тикер), поэтому имеют смысл только
                 внутри одной таблицы/страны (инструмент не может одновременно быть в двух корзинах). Выберите ячейки одной
@@ -2048,9 +2056,11 @@ function SetOpsCard({ op, data, group, tickers, benchmark, cells, labels, winFro
 
   const res = state.res;
   const st = res?.stat;
-  const title = op === 'and' ? 'И (пересечение)' : 'A без B';
+  const title = SETOP_TITLE[op];
   const desc = op === 'and'
     ? 'Наблюдения (дата×тикер), удовлетворяющие ВСЕМ выбранным условиям одновременно. Избыток — к бенчмарку страны.'
+    : op === 'xor'
+    ? 'Наблюдения (дата×тикер), попавшие РОВНО в одно из выбранных условий — объединение без пересечения. Избыток — к бенчмарку страны.'
     : 'Наблюдения первого условия (A), исключая попавшие в остальные (B). Избыток — к бенчмарку страны.';
   return (
     <Card>
@@ -2092,7 +2102,7 @@ function SetOpsCard({ op, data, group, tickers, benchmark, cells, labels, winFro
           </>
         ) : (
           <p className="text-[13px] text-ink-3">
-            {op === 'and' ? 'Пересечение пустое или слишком мало наблюдений' : 'После исключения B слишком мало наблюдений'} — ослабьте условия или расширьте окно лет.
+            {op === 'and' ? 'Пересечение пустое или слишком мало наблюдений' : op === 'xor' ? 'Симметрическая разность пустая или слишком мало наблюдений' : 'После исключения B слишком мало наблюдений'} — ослабьте условия или расширьте окно лет.
           </p>
         )}
       </CardContent>
