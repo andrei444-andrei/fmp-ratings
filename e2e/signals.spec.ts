@@ -217,6 +217,20 @@ test.describe('Signals /signals', () => {
     await expect(out.getByText(/Ср\. изб\. дох\.|мало наблюдений/).first()).toBeVisible({ timeout: 150000 });
   });
 
+  test('операции над ячейками: «Либо/либо» (XOR — объединение без пересечения)', async ({ page }) => {
+    await setup(page);
+    await page.getByTestId('run-study').click();
+    await expect(page.getByTestId('heat-cell').first()).toBeVisible({ timeout: 150000 });
+    const out = page.locator('[data-testid="signals-output"]');
+    // Две ячейки ОДНОЙ таблицы → доступна новая операция «Либо/либо» (ровно в одной ячейке).
+    await page.getByTestId('heat-cell').nth(0).click();
+    await page.getByTestId('heat-cell').nth(2).click();
+    await out.getByRole('tab', { name: /Либо/ }).click();
+    // Серверный расчёт XOR по членству: заголовок + метрика (или явное «мало наблюдений»).
+    await expect(out.getByText(/Либо одно, либо другое/).first()).toBeVisible({ timeout: 150000 });
+    await expect(out.getByText(/Ср\. изб\. дох\.|мало наблюдений/).first()).toBeVisible({ timeout: 150000 });
+  });
+
   test('режим Просадки: калибровка покупки просадок по странам (свод)', async ({ page }) => {
     await setup(page);
     await page.getByTestId('tab-dipcal').click();
