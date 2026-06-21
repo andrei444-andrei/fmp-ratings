@@ -58,6 +58,12 @@ test.describe('Backtest /backtest', () => {
     await expect(page.locator('.research-output .rt-cap', { hasText: 'Сделки' })).toBeVisible({ timeout: 60000 });
     // Ни одной карточки ошибки.
     await expect(page.locator('.research-output .rerrblk')).toHaveCount(0);
+    // Регресс: no-trade band отсекает «пустые» микро-сделки — в колонке «Кол-во» нет нулевых строк.
+    const tradesBlock = page.locator('.research-output .rkit-tableblock', {
+      has: page.locator('.rt-cap', { hasText: 'Сделки' }),
+    });
+    await expect(tradesBlock).toBeVisible({ timeout: 60000 });
+    await expect(tradesBlock.locator('tbody tr td:nth-child(4)').filter({ hasText: /^0\.00$/ })).toHaveCount(0);
     // Автосохранение: прогон без активной стратегии авто-создаёт стратегию и кладёт прогон ВНУТРЬ неё.
     await expect(
       page.getByTestId('saved-strategies').locator('[data-testid="strategy-runs"]').first()
