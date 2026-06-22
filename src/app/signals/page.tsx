@@ -593,10 +593,14 @@ function Signals() {
     try {
       const start = yearFrom ? `${yearFrom}-01-01` : undefined;
       const end = yearTo ? `${yearTo}-12-31` : undefined;
+      const benchU = benchmark.toUpperCase().trim() || 'SPY';
+      // Вшиваем конфиг запроса в результат: тикеры групп нужны setops и должны пережить
+      // сохранение/перезаход/пермалинк (в самом ответе движка тикеров нет).
+      const reqMeta = { groups: (payload as any).groups, universe, benchmark: benchU };
       const res = await fetch('/api/signals/study', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ...payload, universe, benchmark: benchmark.toUpperCase().trim() || 'SPY', horizon, start, end }),
+        body: JSON.stringify({ ...payload, universe, benchmark: benchU, horizon, start, end }),
       });
       if (!res.body) throw new Error('Нет потока ответа');
       const reader = res.body.getReader();
@@ -618,7 +622,7 @@ function Signals() {
             continue;
           }
           if (ev.type === 'status') setStatus(ev.text);
-          else if (ev.type === 'result') setResult(ev.data);
+          else if (ev.type === 'result') setResult({ ...ev.data, _req: reqMeta });
           else if (ev.type === 'error') setErrMsg(ev.text || 'ошибка');
           else if (ev.type === 'done') setStatus('Готово');
         }
@@ -1779,6 +1783,12 @@ function LeaderboardView({ data, groups, winFrom, winTo }: { data: any; groups: 
 
 function FactorResult({ data, onSave, reqGroups = [], reqUniverse = [], reqBenchmark = 'SPY' }: { data: any; onSave: (d: SignalDef, name?: string) => void; reqGroups?: { label?: string; tickers: string[]; benchmark?: string }[]; reqUniverse?: string[]; reqBenchmark?: string }) {
   const f = FACTOR_BY_ID[data.factor];
+  // Конфиг запроса вшит в результат (_req): тикеры групп нужны для setops (И/А без В) и доступны
+  // без живого состояния страницы — после перезахода, восстановления из localStorage или открытия
+  // по пермалинку. Фолбэк — на живые пропсы (старые снимки без _req).
+  const rGroups = Array.isArray(data._req?.groups) && data._req.groups.length ? data._req.groups : reqGroups;
+  const rUniverse = Array.isArray(data._req?.universe) && data._req.universe.length ? data._req.universe : reqUniverse;
+  const rBenchmark = data._req?.benchmark || reqBenchmark;
   const isRange = data.bins === 'range';
   const groups: any[] = data.groups && data.groups.length ? data.groups : [{ label: null, baseline: data.baseline, grid: data.grid }];
   const multi = groups.length > 1;
@@ -1836,9 +1846,9 @@ function FactorResult({ data, onSave, reqGroups = [], reqUniverse = [], reqBench
         winFrom={winFrom}
         winTo={winTo}
         fullWindow={full}
-        reqGroups={reqGroups}
-        reqUniverse={reqUniverse}
-        reqBenchmark={reqBenchmark}
+        reqGroups={rGroups}
+        reqUniverse={rUniverse}
+        reqBenchmark={rBenchmark}
         onClear={() => setPicks(new Set())}
         onSave={onSave}
       />
