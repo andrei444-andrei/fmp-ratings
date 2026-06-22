@@ -16,11 +16,20 @@ export type YearAllocation = {
   cash: number;                    // средняя доля «вне рынка» (0..1)
   months: number;                  // сколько концов месяцев учтено
 };
+// Вклад тикера в доходность и сравнение с SPY (помесячная атрибуция, накопл. арифм.):
+// contrib = Σ w·r_тикера; spyEquiv = Σ w·r_SPY за те же периоды; excess = contrib − spyEquiv.
+export type TickerAttribution = {
+  symbol: string;
+  contrib: number;   // вклад тикера в доходность (доля, напр. 0.35 = +35 п.п. накопл.)
+  spyEquiv: number;  // что дал бы SPY на этой же экспозиции
+  excess: number;    // насколько тикер обыграл SPY (contrib − spyEquiv)
+};
 export type AllocationResult = {
   id: number;
   name: string;
   years: YearAllocation[];
   symbols: string[];   // символы по убыванию средней значимости (для колонок таблицы)
+  attribution: TickerAttribution[]; // по убыванию excess
   approx: boolean;     // были ли инструменты без рыночной цены (оценка по сделкам)
   capped: boolean;     // ордера обрезаны лимитом → состав может быть неполным
   error: string | null;
@@ -83,16 +92,17 @@ function monthEnds(firstMs: number, lastMs: number): { ms: number; year: number 
 
 export async function getStrategyAllocation(id: number, force = false): Promise<AllocationResult> {
   const tr = await getStrategyTrades(id, force);
-  if (tr.error) return { id, name: tr.name, years: [], symbols: [], approx: false, capped: tr.capped, error: tr.error };
+  const empty = (error: string | null): AllocationResult => ({ id, name: tr.name, years: [], symbols: [], attribution: [], approx: false, capped: tr.capped, error });
+  if (tr.error) return empty(tr.error);
   const trades = (tr.trades || []).filter(t => t.time && (t.direction === 'buy' || t.direction === 'sell') && t.quantity > 0);
-  if (!trades.length) return { id, name: tr.name, years: [], symbols: [], approx: false, capped: tr.capped, error: null };
+  if (!trades.length) return empty(null);
 
   // события позиций по символам (signed qty)
   const events = trades
     .map(t => ({ ms: Date.parse(t.time), symbol: t.symbol, dq: (t.direction === 'buy' ? 1 : -1) * t.quantity }))
     .filter(e => isFinite(e.ms))
     .sort((a, b) => a.ms - b.ms);
-  if (!events.length) return { id, name: tr.name, years: [], symbols: [], approx: false, capped: tr.capped, error: null };
+  if (!events.length) return empty(null);
 
   const firstMs = events[0].ms, lastMs = events[events.length - 1].ms;
   const symbolsAll = [...new Set(events.map(e => e.symbol))];
@@ -109,9 +119,23 @@ export async function getStrategyAllocation(id: number, force = false): Promise<
   }));
   const tradePx = tradePriceLookup(trades);
 
-  // по концам месяцев: позиция → стоимость → доли; усредняем по году
+  // SPY-цены для сравнения вклада тикеров (уже могут быть в priceById)
+  let spyLk = priceById.get('SPY') ?? null;
+  if (!spyLk) {
+    try { const r = await getPrices('SPY', from, to); spyLk = new PriceLookup(r.map(x => ({ date: x.date, close: x.close }))); }
+    catch { spyLk = new PriceLookup([]); }
+  }
+  // цена символа на дату: рыночная (FMP) → фолбэк на последнюю цену сделки
+  const priceAt = (sym: string, ms: number): number | null => {
+    const p = priceById.get(sym)?.at(ms) ?? null;
+    return p != null ? p : lastTradePrice(tradePx.get(sym), ms);
+  };
+
+  // по концам месяцев: позиция → стоимость → доли; усредняем по году. Параллельно
+  // копим снимки (signed value + gross) для помесячной атрибуции вклада тикеров.
   const ends = monthEnds(firstMs, lastMs);
   const acc = new Map<number, { weights: Map<string, number>; cash: number; months: number }>();
+  const snapshots: { ms: number; signed: Map<string, number>; gross: number }[] = [];
   let approx = false;
 
   for (const me of ends) {
@@ -122,19 +146,21 @@ export async function getStrategyAllocation(id: number, force = false): Promise<
       if (e.ms > me.ms) break;
       pos.set(e.symbol, (pos.get(e.symbol) || 0) + e.dq);
     }
-    // стоимость позиций
+    // стоимость позиций (|value| для долей, signed для атрибуции)
     const value = new Map<string, number>();
+    const signed = new Map<string, number>();
     let gross = 0;
     for (const [sym, q] of pos) {
       if (Math.abs(q) < 1e-9) continue;
       let px = priceById.get(sym)?.at(me.ms) ?? null;
       if (px == null) { px = lastTradePrice(tradePx.get(sym), me.ms); if (px != null) approx = true; }
       if (px == null || !(px > 0)) continue;
-      const v = Math.abs(q * px);
-      value.set(sym, v); gross += v;
+      const sv = q * px;
+      value.set(sym, Math.abs(sv)); signed.set(sym, sv); gross += Math.abs(sv);
     }
     const a = acc.get(me.year) ?? acc.set(me.year, { weights: new Map(), cash: 0, months: 0 }).get(me.year)!;
     a.months++;
+    snapshots.push({ ms: me.ms, signed, gross });
     if (gross <= 0) { a.cash += 1; continue; }
     for (const [sym, v] of value) a.weights.set(sym, (a.weights.get(sym) || 0) + v / gross);
   }
@@ -152,5 +178,25 @@ export async function getStrategyAllocation(id: number, force = false): Promise<
   });
   const symbols = [...importance.entries()].sort((x, y) => y[1] - x[1]).map(([s]) => s);
 
-  return { id, name: tr.name, years, symbols, approx, capped: tr.capped, error: null };
+  // атрибуция: помесячно w_(t-1)·(r_тикера − r_SPY), накопл. арифм. signed-веса (учитывают шорты)
+  const contribM = new Map<string, number>(), spyM = new Map<string, number>();
+  for (let i = 1; i < snapshots.length; i++) {
+    const prev = snapshots[i - 1], cur = snapshots[i];
+    if (prev.gross <= 0) continue;
+    const sp0 = spyLk?.at(prev.ms) ?? null, sp1 = spyLk?.at(cur.ms) ?? null;
+    const rSpy = (sp0 != null && sp1 != null && sp0 > 0) ? sp1 / sp0 - 1 : null;
+    for (const [sym, sv] of prev.signed) {
+      const p0 = priceAt(sym, prev.ms), p1 = priceAt(sym, cur.ms);
+      if (p0 == null || p1 == null || !(p0 > 0)) continue;
+      const w = sv / prev.gross;
+      contribM.set(sym, (contribM.get(sym) || 0) + w * (p1 / p0 - 1));
+      if (rSpy != null) spyM.set(sym, (spyM.get(sym) || 0) + w * rSpy);
+    }
+  }
+  const attribution: TickerAttribution[] = [...contribM.keys()].map(sym => {
+    const c = contribM.get(sym) || 0, s = spyM.get(sym) || 0;
+    return { symbol: sym, contrib: c, spyEquiv: s, excess: c - s };
+  }).sort((x, y) => y.excess - x.excess);
+
+  return { id, name: tr.name, years, symbols, attribution, approx, capped: tr.capped, error: null };
 }
