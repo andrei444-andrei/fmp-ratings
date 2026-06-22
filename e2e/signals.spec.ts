@@ -322,6 +322,20 @@ test.describe('Signals /signals', () => {
     await expect(out.getByText(/Покупать просадки:|Недостаточно истории/)).toBeVisible({ timeout: 150000 });
   });
 
+  test('режим Просадки: look-ahead (hold-out) даёт колонку OOS edge и метку калибровки', async ({ page }) => {
+    await setup(page);
+    await page.getByTestId('tab-dipcal').click();
+    await page.locator('#dho').selectOption('2'); // отложить 2 года на проверку
+    await page.getByTestId('run-study').click();
+    const out = page.locator('[data-testid="signals-output"]');
+    await expect(out.getByText(/Покупать просадки:|Недостаточно истории/)).toBeVisible({ timeout: 150000 });
+    // На синтетике (5000 дней/символ) рынки проходят → видна метка look-ahead и колонка OOS.
+    if (await out.getByText(/Покупать просадки:/).count()) {
+      await expect(out.getByText(/look-ahead: калибровка/)).toBeVisible();
+      await expect(out.getByRole('columnheader', { name: 'OOS edge' })).toBeVisible();
+    }
+  });
+
   test('режим Сигнал: событийный анализ рендерит статистику', async ({ page }) => {
     await setup(page);
     await page.getByTestId('tab-signal').click();

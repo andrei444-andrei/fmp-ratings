@@ -140,11 +140,13 @@ export function normalizeStudyConfig(body: any): StudyConfig {
 
   if (mode === 'dipcal') {
     // Калибровка покупки просадок по каждому инструменту: окно просадки, окно волатильности, мин. событий.
+    // holdout — сколько последних лет отложить для look-ahead проверки (порог калибруется на train).
     return {
       ...base,
       dipWindow: Math.round(clampNum(body?.dipWindow, 21, 5, 252)),
       volWindow: Math.round(clampNum(body?.volWindow, 63, 20, 252)),
       minN: Math.round(clampNum(body?.minN, 20, 5, 1000)),
+      holdout: Math.round(clampNum(body?.holdout, 0, 0, 10)),
     };
   }
 
