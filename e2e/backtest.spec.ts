@@ -56,6 +56,10 @@ test.describe('Backtest /backtest', () => {
     // Таблица модели издержек по рынкам и лог сделок.
     await expect(page.locator('.research-output .rt-cap', { hasText: 'Модель издержек по рынкам' })).toBeVisible({ timeout: 60000 });
     await expect(page.locator('.research-output .rt-cap', { hasText: 'Сделки' })).toBeVisible({ timeout: 60000 });
+    // Период прогона показан карточкой (полный диапазон данных виден, даже если таблица сделок усечена до 200).
+    await expect(page.locator('.research-output').getByText('Период', { exact: true })).toBeVisible({ timeout: 60000 });
+    // Заголовок таблицы сделок проясняет, что это лишь последние строки, а прогон — за весь период.
+    await expect(page.locator('.research-output .rt-cap', { hasText: 'полный прогон' })).toBeVisible({ timeout: 60000 });
     // Ни одной карточки ошибки.
     await expect(page.locator('.research-output .rerrblk')).toHaveCount(0);
     // Регресс: no-trade band отсекает «пустые» микро-сделки — в колонке «Кол-во» нет нулевых строк.

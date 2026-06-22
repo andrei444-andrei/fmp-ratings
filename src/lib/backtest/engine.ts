@@ -527,10 +527,15 @@ if ok:
         h_tot = (bench + " " + ("%+.1f%%" % (b_tot * 100.0))) if b_tot is not None else None
         h_cagr = (bench + " " + ("%+.1f%%" % (bm["cagr"] * 100.0))) if bm is not None else None
         h_mdd = (bench + " " + ("%.1f%%" % (bm["maxdd"] * 100.0))) if bm is not None else None
+        # Фактический ПЕРИОД прогона (вся история, по которой считались метрики) — отдельной карточкой,
+        # чтобы не путать с таблицей сделок (там показаны лишь последние 200 строк).
+        d_first = str(pd.Timestamp(equity.index[0]).date())
+        d_last = str(pd.Timestamp(equity.index[-1]).date())
         emit(cards(
             kpi("Итог. доходность", "%.1f%%" % (tot * 100.0), delta=delta_bm, hint=h_tot),
             kpi("CAGR", "%.1f%%" % (cagr * 100.0), hint=h_cagr),
             kpi("Макс. просадка", "%.1f%%" % (maxdd * 100.0), hint=h_mdd),
+            kpi("Период", d_first + " → " + d_last, hint=(str(n_days) + " баров · " + ("%.1f" % years) + " лет")),
         ))
 
         # --- Прочие метрики — таблицей, с колонкой бенчмарка (— там, где для buy & hold неприменимо). ---
@@ -669,7 +674,8 @@ if ok:
                            formats={"Дата": "date", "Тикер": "ticker", "Сторона": "text",
                                     "Кол-во": "num", "Цена": "money", "Объём": "money",
                                     "% экв": "num", "Издержки": "money", "Ставка, бп": "num"},
-                           title="Сделки (последние " + str(min(200, len(trades))) + " из " + str(len(trades)) + ")"))
+                           title=("Сделки: последние " + str(min(200, len(trades))) + " из " + str(len(trades))
+                                  + " (полный прогон: " + d_first + "…" + d_last + ")")))
             else:
                 _warn("Стратегия не совершила ни одной сделки. Торгуемая вселенная (ctx.symbols): "
                       + ", ".join(TRADE_SYMS[:25]) + ". Тикеры задаются в скрипте переменной UNIVERSE = [...] "
