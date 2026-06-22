@@ -97,7 +97,7 @@ function monthEnds(firstMs: number, lastMs: number): { ms: number; year: number 
   return out;
 }
 
-export async function getStrategyAllocation(id: number, force = false): Promise<AllocationResult> {
+export async function getStrategyAllocation(id: number, force = false, endIso?: string): Promise<AllocationResult> {
   const tr = await getStrategyTrades(id, force);
   const empty = (error: string | null): AllocationResult => ({ id, name: tr.name, years: [], symbols: [], attribution: [], attributionByYear: [], approx: false, capped: tr.capped, error });
   if (tr.error) return empty(tr.error);
@@ -111,7 +111,12 @@ export async function getStrategyAllocation(id: number, force = false): Promise<
     .sort((a, b) => a.ms - b.ms);
   if (!events.length) return empty(null);
 
-  const firstMs = events[0].ms, lastMs = events[events.length - 1].ms;
+  // Конец таймлайна — до конца бэктеста (если передан endIso): позиции после последней
+  // сделки держатся, и их нужно довести mark-to-market до конца ряда, а не до последнего ордера.
+  const firstMs = events[0].ms;
+  const lastOrderMs = events[events.length - 1].ms;
+  const endMs = endIso ? Date.parse(endIso + 'T00:00:00Z') : NaN;
+  const lastMs = (isFinite(endMs) && endMs > lastOrderMs) ? endMs : lastOrderMs;
   const symbolsAll = [...new Set(events.map(e => e.symbol))];
 
   // рыночные цены по каждому символу (FMP, кэш в Turso). Параллельно, лимит на всякий.

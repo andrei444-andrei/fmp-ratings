@@ -6,14 +6,16 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-// GET /api/quantconnect/allocation?id=<algoId>          — оценка состава активов по годам
-// GET /api/quantconnect/allocation?id=<algoId>&force=1  — минуя кэш сделок
+// GET /api/quantconnect/allocation?id=<algoId>             — оценка состава активов по годам
+// GET /api/quantconnect/allocation?id=<algoId>&force=1     — минуя кэш сделок
+// GET /api/quantconnect/allocation?id=<algoId>&end=YYYY-MM-DD — довести таймлайн до конца бэктеста
 export async function GET(req: NextRequest) {
   try {
     const sp = new URL(req.url).searchParams;
     const id = Number(sp.get('id'));
     if (!id) return NextResponse.json({ error: 'id обязателен', years: [], symbols: [] }, { status: 400 });
-    const data = await getStrategyAllocation(id, !!sp.get('force'));
+    const end = sp.get('end') || undefined;
+    const data = await getStrategyAllocation(id, !!sp.get('force'), end);
     return NextResponse.json(data);
   } catch (e: any) {
     await logAppError({ route: '/api/quantconnect/allocation', message: e.message, stack: e.stack });
