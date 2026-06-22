@@ -491,9 +491,12 @@ async def main():
     # по vol-режиму. Форвард — АБСОЛЮТНЫЙ (это P&L покупки ETF), edge = к безусловному среднему тикера.
     if mode == 'dipcal':
         N = int(CFG.get('dipWindow', 21)); W = int(CFG.get('volWindow', 63)); minN = int(CFG.get('minN', 20))
+        hold = int(CFG.get('holdout', 0) or 0)
         Hs = sorted(set([5, 10, 21, 42, H]))
         pcts = [30, 20, 10, 5]
         pxs = px.sort_index()
+        # Look-ahead hold-out: последние hold лет панели — отложенный OOS-период (порог калибруем на train).
+        cutoff = (pd.Timestamp(pxs.index.max()) - pd.DateOffset(years=hold)) if hold > 0 else None
         out_rows = []
         for s in [col for col in pxs.columns if col != bench]:
             c = pxs[s]
@@ -512,6 +515,11 @@ async def main():
                 continue
             fcol = 'fwd_' + str(H)
             df[fcol] = df[fcol].clip(df[fcol].quantile(0.005), df[fcol].quantile(0.995))
+            df_oos = df.iloc[:0] if cutoff is None else df[df['date'] > cutoff].copy()
+            if cutoff is not None:
+                df = df[df['date'] <= cutoff].copy()   # train становится рабочим фреймом калибровки
+                if len(df) < 40:
+                    continue
             base = float(df[fcol].mean())
             sig_med = float(df['sigN'].median()) if df['sigN'].notna().any() else float('nan')
             med_vol = float(df['vol'].median())
@@ -573,6 +581,14 @@ async def main():
                              'n': int(len(ss))})
             m, t, n, hit = _stat(sel)
             for r in curve: r.pop('_thr', None)
+            # OOS-проверка: тот же порог thr (с train) применяем к отложенному периоду — без переподбора.
+            oos = None
+            if cutoff is not None and len(df_oos) >= 2:
+                base_o = float(df_oos[fcol].mean())
+                so = df_oos[df_oos['dd'] <= thr]
+                mo, to_, no_, hito = _stat(so)
+                oos = {'fwd': _f(mo), 'edge': _f((mo - base_o) if mo == mo else float('nan')),
+                       't': _f(to_), 'n': int(no_), 'hit': _f(hito), 'n_total': int(len(df_oos))}
             out_rows.append({
                 'sym': s, 'n_total': int(len(df)), 'baseline': _f(base),
                 'pctile': best['pctile'], 'dd': _f(thr), 'sigma': best.get('sigma'),
@@ -582,7 +598,7 @@ async def main():
                 'stable': stable, 'e1': _f(e1), 'e2': _f(e2),
                 'reversion': {'corr': _f(rcorr), 't': _f(rt), 'flag': rflag},
                 'regime': {'calm_fwd': _f(cm), 'calm_n': int(cn), 'storm_fwd': _f(sm), 'storm_n': int(sn)},
-                'by_h': by_h, 'curve': curve,
+                'by_h': by_h, 'curve': curve, 'oos': oos,
             })
         # Ранжируем для use-case «что покупать»: сперва реальные реверсеры (по edge), затем нейтральные,
         # падающие ножи (trend) — в самом низу, как бы ни был велик edge к их же провальному baseline.
@@ -590,6 +606,7 @@ async def main():
         out_rows.sort(key=lambda r: (_ford.get(r['reversion']['flag'], 1), -(r['edge'] if r['edge'] is not None else -1e9)))
         dts = sorted(pd.to_datetime(pxs.index).unique())
         return {'mode': 'dipcal', 'horizon': H, 'dipWindow': N, 'volWindow': W, 'minN': minN,
+                'holdout': hold, 'cutoff': (str(pd.Timestamp(cutoff).date()) if cutoff is not None else None),
                 'rows': out_rows,
                 'meta': {'symbols': len(out_rows),
                          'first': str(pd.Timestamp(dts[0]).date()) if dts else '',

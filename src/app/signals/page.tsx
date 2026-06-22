@@ -338,6 +338,7 @@ function Signals() {
   const [dipN, setDipN] = useState(21);
   const [dipVolW, setDipVolW] = useState(63);
   const [dipMinN, setDipMinN] = useState(20);
+  const [dipHold, setDipHold] = useState(0); // лет на look-ahead (OOS-проверку)
 
   // ── Сохранённые результаты (снимки) ──
   const [savedResults, setSavedResults] = useState<{ id: number; title: string; mode: string; created_at: string }[] | null>(null);
@@ -695,7 +696,8 @@ function Signals() {
   }
 
   function runDipcal() {
-    runStudy({ mode: 'dipcal', dipWindow: dipN, volWindow: dipVolW, minN: dipMinN });
+    // start/end (год от-до) добавляет runStudy из yearFrom/yearTo; holdout — хвост на OOS-проверку.
+    runStudy({ mode: 'dipcal', dipWindow: dipN, volWindow: dipVolW, minN: dipMinN, holdout: dipHold });
   }
 
   function togglePicked(id: number) {
@@ -875,6 +877,12 @@ function Signals() {
                   setMinN={setDipMinN}
                   horizon={horizon}
                   setHorizon={setHorizon}
+                  yearFrom={yearFrom}
+                  setYearFrom={setYearFrom}
+                  yearTo={yearTo}
+                  setYearTo={setYearTo}
+                  hold={dipHold}
+                  setHold={setDipHold}
                   onRun={runDipcal}
                   running={running}
                   canRun={universe.length >= 4}
@@ -1337,6 +1345,32 @@ function DipcalForm(p: any) {
           <Input id="dm" type="number" value={p.minN} onChange={(e: any) => p.setMinN(Number(e.target.value) || 20)} />
         </Field>
       </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field>
+          <Label htmlFor="dyf">Год от</Label>
+          <Select id="dyf" value={p.yearFrom} onChange={(e: any) => p.setYearFrom(e.target.value)}>
+            <option value="">самый ранний</option>
+            {YEARS.map((y) => (<option key={y} value={y}>{y}</option>))}
+          </Select>
+        </Field>
+        <Field>
+          <Label htmlFor="dyt">Год до</Label>
+          <Select id="dyt" value={p.yearTo} onChange={(e: any) => p.setYearTo(e.target.value)}>
+            <option value="">текущий</option>
+            {YEARS.map((y) => (<option key={y} value={y}>{y}</option>))}
+          </Select>
+        </Field>
+      </div>
+      <Field>
+        <Label htmlFor="dho">Look-ahead — лет отложить на проверку</Label>
+        <Select id="dho" value={String(p.hold)} onChange={(e: any) => p.setHold(Number(e.target.value) || 0)}>
+          <option value="0">без проверки (вся история на калибровку)</option>
+          <option value="1">1 год — порог с прошлого, проверка на последнем</option>
+          <option value="2">2 года</option>
+          <option value="3">3 года</option>
+          <option value="5">5 лет</option>
+        </Select>
+      </Field>
       <Button onClick={p.onRun} loading={p.running} fullWidth data-testid="run-study" disabled={!p.canRun}>
         Калибровать просадки по странам
       </Button>
@@ -1355,6 +1389,7 @@ const DIP_FLAG: Record<string, { label: string; variant: 'up' | 'down' | 'neutra
 // форвардная доходность/edge, флаг поведения (реверсия/тренд) и стабильность. Строка раскрывается.
 function DipcalResult({ data }: { data: any }) {
   const rows: any[] = data.rows || [];
+  const hold: number = data.holdout || 0;
   const [open, setOpen] = useState<string | null>(null);
   if (!rows.length) return <p className="text-sm text-ink-3">Недостаточно истории для калибровки — расширьте вселенную или окно лет.</p>;
   const reverters = rows.filter((r) => r.reversion?.flag === 'revert' && (r.edge ?? 0) > 0 && (r.t ?? 0) >= 1).map((r) => r.sym);
@@ -1363,6 +1398,7 @@ function DipcalResult({ data }: { data: any }) {
     <div className="space-y-4">
       <p className="text-[11px] text-ink-3">
         {data.meta?.symbols} инстр. · окно {data.meta?.first} — {data.meta?.last} · просадка {data.dipWindow}д · горизонт {data.horizon}д · vol {data.volWindow}д
+        {hold > 0 && data.cutoff && <span className="text-brand-700"> · look-ahead: калибровка ≤ {data.cutoff}, проверка после</span>}
         {data.meta?.cleaned > 0 && <span className="text-warn-strong"> · очищено {data.meta.cleaned} баров</span>}
       </p>
       <div className="space-y-1 rounded-fk border border-line bg-surface-2 p-3 text-[12px]">
@@ -1372,6 +1408,12 @@ function DipcalResult({ data }: { data: any }) {
           Порог подобран по СОБСТВЕННОЙ истории каждого рынка (перцентиль просадки от {data.dipWindow}-дн. пика). «Форвард» — абсолютная
           доходность за {data.horizon}д после входа; «edge» — сверх обычного удержания этого ETF. Клик по строке — детали.
         </p>
+        {hold > 0 && (
+          <p className="text-ink-3">
+            <span className="font-medium text-brand-700">Look-ahead:</span> порог калибруется только на истории до отсечки, а «OOS edge / n» — тот же порог,
+            применённый к отложенным последним {hold} {hold === 1 ? 'году' : 'годам'} (в подборе не участвовали). Близкие edge и OOS = устойчиво; OOS ≪ edge = переподгонка.
+          </p>
+        )}
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-[12px]">
@@ -1382,6 +1424,7 @@ function DipcalResult({ data }: { data: any }) {
               <th className="py-1.5 pr-2">Порог входа</th>
               <th className="py-1.5 pr-2 text-right">Форвард</th>
               <th className="py-1.5 pr-2 text-right">Edge</th>
+              {hold > 0 && <th className="py-1.5 pr-2 text-right">OOS edge</th>}
               <th className="py-1.5 pr-2 text-right">t</th>
               <th className="py-1.5 pr-2 text-right">Hit</th>
               <th className="py-1.5 pr-2 text-right">N</th>
@@ -1400,6 +1443,11 @@ function DipcalResult({ data }: { data: any }) {
                     <td className="py-1.5 pr-2 tabular-nums">{fpct(r.dd, 1)} <span className="text-ink-3">/ {fnum(r.sigma, 1)}σ / p{r.pctile}</span></td>
                     <td className={`py-1.5 pr-2 text-right tabular-nums ${(r.fwd ?? 0) >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{fpct(r.fwd)}</td>
                     <td className={`py-1.5 pr-2 text-right tabular-nums ${(r.edge ?? 0) >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{fpct(r.edge)}</td>
+                    {hold > 0 && (
+                      <td className={`py-1.5 pr-2 text-right tabular-nums ${(r.oos?.edge ?? 0) >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>
+                        {r.oos && r.oos.edge != null ? (<>{fpct(r.oos.edge)} <span className="text-[10px] text-ink-3">n={r.oos.n}</span></>) : <span className="text-ink-3">—</span>}
+                      </td>
+                    )}
                     <td className="py-1.5 pr-2 text-right tabular-nums">{fnum(r.t, 1)}</td>
                     <td className="py-1.5 pr-2 text-right tabular-nums">{fnum(r.hit, 0)}%</td>
                     <td className="py-1.5 pr-2 text-right tabular-nums">{r.n}</td>
@@ -1407,7 +1455,7 @@ function DipcalResult({ data }: { data: any }) {
                   </tr>
                   {isOpen && (
                     <tr>
-                      <td colSpan={9} className="bg-surface-2 px-3 py-2">
+                      <td colSpan={hold > 0 ? 10 : 9} className="bg-surface-2 px-3 py-2">
                         <DipcalDetail r={r} />
                       </td>
                     </tr>
