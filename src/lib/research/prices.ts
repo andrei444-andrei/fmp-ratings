@@ -40,7 +40,9 @@ export type PriceRow = { date: string; close: number; volume: number | null };
 const REFRESH_TTL_MS = 12 * 3600 * 1000; // освежаем хвост не чаще раза в ~12ч (EOD-данные)
 // Версия кэша цен. Бамп → одноразовый полный рефетч на тикер (лечит битый/короткий кэш, напр. после
 // неудачного переключения провайдера). Меняем, когда нужно пере-набрать историю у всех бумаг.
-const PRICES_EPOCH = '3';
+// '4': принудительный одноразовый рефетч — лечит кэши, «застрявшие» на старой дате (напр. 2022)
+// из-за прежнего бага (сбой/устаревший хвост основного провайдера не давал добор резервным).
+const PRICES_EPOCH = '4';
 const MIN_FULL_ROWS = 60; // меньше — считаем, что нормальной истории нет (не затираем чужой кэш этим)
 
 type Meta = { fetched_from: string; last_date: string; refreshed_at: string; provider: string; epoch: string };
@@ -118,6 +120,51 @@ function priceProviders(): Provider[] {
   return list;
 }
 
+function lastDateOf(rs: PriceRow[]): string {
+  return rs.length ? rs[rs.length - 1].date : '';
+}
+function minusDaysISO(iso: string, n: number): string {
+  const d = new Date(iso + 'T00:00:00Z');
+  if (isNaN(d.getTime())) return iso;
+  d.setUTCDate(d.getUTCDate() - n);
+  return d.toISOString().slice(0, 10);
+}
+
+// Грузим у основного провайдера, НО устойчиво к его сбоям: если основной упал (исключение),
+// вернул слишком мало ИЛИ его хвост устарел относительно запрошенного конца `to` — пробуем
+// резервного и берём ряд, покрывающий ДАЛЬШЕ/полнее. Это чинит «застревание» на старой дате
+// (напр. 2022), когда EODHD для тикера недоступен/не обновляет хвост, а FMP имеет свежие данные
+// (раньше исключение основного провайдера вообще пропускало добор и отдавало только кэш).
+async function fetchResilient(
+  provs: Provider[],
+  sym: string,
+  from: string,
+  to: string,
+): Promise<{ rows: PriceRow[]; used: string }> {
+  const primary = provs[0];
+  let rows: PriceRow[] = [];
+  let used = primary?.name ?? '';
+  try {
+    rows = primary ? await primary.fetch(sym, from, to) : [];
+  } catch {
+    rows = []; // сбой основного НЕ должен прерывать добор резервным
+  }
+  const staleCut = minusDaysISO(to, 10); // нормальный EOD-лаг (выходные/праздники) не считаем «устаревшим»
+  const needAlt = rows.length === 0 || rows.length < MIN_FULL_ROWS || lastDateOf(rows) < staleCut;
+  if (needAlt && provs[1]) {
+    try {
+      const alt = await provs[1].fetch(sym, from, to);
+      if (alt.length && (rows.length === 0 || lastDateOf(alt) > lastDateOf(rows) || alt.length > rows.length)) {
+        rows = alt;
+        used = provs[1].name;
+      }
+    } catch {
+      /* резервный недоступен — оставляем, что есть */
+    }
+  }
+  return { rows, used };
+}
+
 /** Возвращает дневные close+volume за период. Кэш-первым; в FMP идём только если тикер не покрыт
  *  с нужного начала ИЛИ устарел — и тогда доливаем только хвост [last_date..to]. */
 export async function getPrices(symbol: string, from: string, to: string): Promise<PriceRow[]> {
@@ -154,17 +201,8 @@ export async function getPrices(symbol: string, from: string, to: string): Promi
   const fullFetch = epochStale || !haveStart;
   const fetchFrom = fullFetch ? from : meta!.last_date;
   try {
-    // Основной провайдер; при полном наборе и нехватке данных — добор резервным (заполняем пробелы FMP).
-    let rows = await primary.fetch(sym, fetchFrom, to);
-    let used = primary.name;
-    if (fullFetch && rows.length < MIN_FULL_ROWS && provs[1]) {
-      try {
-        const alt = await provs[1].fetch(sym, fetchFrom, to);
-        if (alt.length > rows.length) { rows = alt; used = provs[1].name; }
-      } catch {
-        /* резервный недоступен */
-      }
-    }
+    // Основной провайдер с устойчивым добором резервным (при сбое/нехватке/устаревшем хвосте).
+    const { rows, used } = await fetchResilient(provs, sym, fetchFrom, to);
 
     if (fullFetch) {
       // НЕ ухудшаем покрытие: заменяем кэш только если новые данные не короче существующих
