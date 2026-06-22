@@ -161,6 +161,33 @@ test.describe('Signals /signals', () => {
     await expect(page.getByTestId('result-copy-link')).toBeVisible();
   });
 
+  test('setops после открытия по ссылке: тикеры группы берутся из снимка (_req), а не из живого конфига', async ({ page, baseURL }) => {
+    await setup(page);
+    await page.getByTestId('run-study').click();
+    await expect(page.getByTestId('heat-cell').first()).toBeVisible({ timeout: 150000 });
+    await page.getByTestId('save-result-btn').click();
+    await page.getByTestId('save-name-input').fill('setops-перм');
+    await page.getByTestId('save-name-confirm').click();
+    await expect(page.getByText('Результат сохранён')).toBeVisible({ timeout: 15000 });
+    const id = new URL(page.url()).searchParams.get('result');
+    expect(id).toBeTruthy();
+
+    // Чистый контекст: НЕТ выбранной вселенной/custom. Раньше setops падал «Не удалось определить
+    // тикеры группы», т.к. resolveGroup брал тикеры из живого (пустого) конфига страницы.
+    const ctx = await page.context().browser()!.newContext({ baseURL });
+    const p2 = await ctx.newPage();
+    await p2.goto(`/signals?result=${id}`);
+    await expect(p2.getByTestId('heat-cell').first()).toBeVisible({ timeout: 30000 });
+    await p2.getByTestId('heat-cell').nth(0).click();
+    await p2.getByTestId('heat-cell').nth(2).click();
+    const out = p2.locator('[data-testid="signals-output"]');
+    await out.getByRole('tab', { name: /И \(пересеч/ }).click();
+    // Тикеры взяты из вшитого в снимок конфига → расчёт идёт, ошибки определения тикеров нет.
+    await expect(p2.getByText('Не удалось определить тикеры группы')).toHaveCount(0);
+    await expect(out.getByText(/Ср\. изб\. дох\.|слишком мало наблюдений/).first()).toBeVisible({ timeout: 150000 });
+    await ctx.close();
+  });
+
   test('иностранные тикеры (7203.T) принимаются и строят карту', async ({ page }) => {
     await page.goto('/signals');
     await page.getByPlaceholder('SMH, GLD, TLT').fill('7203.T, 6758.T, PKN.WA, AAA, BBB');
