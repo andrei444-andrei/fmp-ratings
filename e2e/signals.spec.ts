@@ -86,6 +86,25 @@ test.describe('Signals /signals', () => {
     await expect(page.getByText('Сигнал сохранён')).toBeVisible({ timeout: 15000 });
   });
 
+  test('дрилл-даун по году: клик по году в «Изменение по годам» раскрывает случаи по датам (cellobs)', async ({ page }) => {
+    await setup(page);
+    await page.getByTestId('run-study').click();
+    await expect(page.getByTestId('heat-cell').first()).toBeVisible({ timeout: 150000 });
+    // Открываем детали ячейки → видим «Изменение по годам».
+    await page.getByTestId('heat-cell').first().click();
+    const out = page.locator('[data-testid="signals-output"]');
+    const yearRow = out.getByTestId('yearly-row').first();
+    await expect(yearRow).toBeVisible({ timeout: 30000 });
+    await yearRow.click();
+    // Появляется панель случаев; после серверного пересчёта — таблица случаев ИЛИ «нет случаев», без ошибок.
+    const drill = out.getByTestId('cellobs');
+    await expect(drill).toBeVisible();
+    await expect(drill.getByText(/Случаи за \d{4}/)).toBeVisible();
+    await expect(drill.getByText('Считаю случаи по датам…')).toHaveCount(0, { timeout: 150000 });
+    await expect(drill.getByText('Не удалось определить тикеры группы')).toHaveCount(0);
+    await expect(drill.locator('table tbody tr').or(drill.getByText('Нет случаев за этот год')).first()).toBeVisible({ timeout: 30000 });
+  });
+
   test('последний результат переживает перезаход во вкладку (авто-восстановление)', async ({ page }) => {
     await setup(page);
     await page.getByTestId('run-study').click();
