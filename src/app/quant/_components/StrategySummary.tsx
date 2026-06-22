@@ -79,11 +79,12 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
   const [tradesLoading, setTradesLoading] = useState(false);
   const [tradesErr, setTradesErr] = useState<string | null>(null);
 
-  async function ensureTrades(algoId: number) {
-    if (tradesFor === algoId && trades) return;
+  async function ensureTrades(algoId: number, force = false) {
+    // не перезапрашиваем, только если уже есть НЕпустой результат (пустой/ошибку — пробуем снова)
+    if (!force && tradesFor === algoId && trades && trades.length > 0) return;
     setTradesLoading(true); setTradesErr(null);
     try {
-      const r: TradesResponse = await fetch(`/api/quantconnect/trades?id=${algoId}`).then(res => res.json());
+      const r: TradesResponse = await fetch(`/api/quantconnect/trades?id=${algoId}${force ? '&force=1' : ''}`).then(res => res.json());
       if (r.error) setTradesErr(r.error);
       setTrades(r.trades || []);
       setTradesCapped(!!r.capped);
@@ -201,7 +202,12 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
           ) : monthTrades.length === 0 ? (
             <div className="qc-trades-empty">
               {(trades?.length ?? 0) === 0 ? (
-                <>По стратегии не загрузились сделки — у бектеста нет ордеров или нет доступа к ним.</>
+                <>
+                  По стратегии не загрузились сделки — у бектеста нет ордеров или нет доступа к ним.
+                  {sel != null && <div style={{ marginTop: 10 }}>
+                    <button className="qc-btn" onClick={() => ensureTrades(sel, true)} disabled={tradesLoading}>↻ Повторить</button>
+                  </div>}
+                </>
               ) : (
                 <>
                   В этом месяце сделок не было.
@@ -444,6 +450,40 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
                         {alloc.approx && ' Часть инструментов без рыночной цены оценена по последней цене сделки (приблизительно).'}
                         {alloc.capped && ' Ордера обрезаны лимитом — состав может быть неполным.'}
                       </div>
+
+                      {/* вклад каждого тикера в доходность и сравнение с SPY */}
+                      {alloc.attribution.length > 0 && (() => {
+                        const att = alloc.attribution.filter(a => Math.abs(a.excess) > 0.0005 || Math.abs(a.contrib) > 0.005).slice(0, 24);
+                        const maxAbs = Math.max(...att.map(a => Math.abs(a.excess)), 1e-9);
+                        return (
+                          <div style={{ marginTop: 20 }}>
+                            <div className="qc-panel-h">Вклад в доходность vs {benchName} по тикерам <span className="c">накопл., помесячная атрибуция</span></div>
+                            <div className="qc-tblwrap" style={{ border: 0 }}>
+                              <table className="qc-attr">
+                                <thead><tr>
+                                  <th className="lbl">Тикер</th><th className="r">Вклад</th><th className="r">Если бы {benchName}</th><th className="r">Δ к {benchName}</th><th className="bar"></th>
+                                </tr></thead>
+                                <tbody>
+                                  {att.map(a => (
+                                    <tr key={a.symbol}>
+                                      <td className="lbl">{a.symbol}</td>
+                                      <td className={'r ' + cls(a.contrib)}>{fmtPct(a.contrib)}</td>
+                                      <td className="r qc-mut">{fmtPct(a.spyEquiv)}</td>
+                                      <td className={'r ' + cls(a.excess)} style={{ fontWeight: 700 }}>{fmtPct(a.excess)}</td>
+                                      <td className="bar"><div className="track"><div className={'fill ' + (a.excess >= 0 ? 'pos' : 'neg')} style={{ width: (Math.abs(a.excess) / maxAbs * 100) + '%' }} /></div></td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                            <div className="qc-alloc-note">
+                              «Вклад» — накопленный (арифм.) вклад тикера в доходность: доля экспозиции × доходность тикера, помесячно.
+                              «Δ к {benchName}» — насколько тикер обыграл {benchName} на той же экспозиции (зелёное = добавил альфу, красное = тянул вниз).
+                              Приближение по месячной сетке; сумма Δ по тикерам ≈ опережение портфелем {benchName}.
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </>
                   );
                 })()}

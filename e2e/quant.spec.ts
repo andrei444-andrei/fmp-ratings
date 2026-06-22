@@ -89,6 +89,10 @@ async function mockConfigured(page: Page) {
       { year: 2022, weights: { SPY: 0.6, AAPL: 0.3 }, cash: 0.1, months: 12 },
       { year: 2023, weights: { SPY: 0.5, AAPL: 0.4 }, cash: 0.1, months: 12 },
     ],
+    attribution: [
+      { symbol: 'AAPL', contrib: 0.42, spyEquiv: 0.25, excess: 0.17 },
+      { symbol: 'SPY', contrib: 0.30, spyEquiv: 0.30, excess: 0 },
+    ],
   } }));
   await page.route('**/api/quantconnect/backtests**', r => r.fulfill({ json: { backtests: [
     { backtestId: 'aaa111', name: 'run A', status: 'Completed.', completed: true },
@@ -199,7 +203,12 @@ test.describe('Аналитика алгоритмов /quant', () => {
     await expect(panel.locator('.qc-heat th', { hasText: 'SPY' })).toBeVisible();
     await expect(panel.locator('.qc-heat th', { hasText: 'Кэш' })).toBeVisible();
     await expect(panel.locator('.qc-heat td.lbl', { hasText: '2023' })).toBeVisible();
-    await expect(panel.locator('.qc-alloc-note')).toContainText('Оценка');
+    await expect(panel.locator('.qc-alloc-note').first()).toContainText('Оценка');
+    // вклад тикеров vs SPY: таблица атрибуции
+    await expect(panel.locator('.qc-panel-h', { hasText: 'Вклад в доходность vs SPY' })).toBeVisible();
+    const aaplRow = panel.locator('.qc-attr tbody tr', { hasText: 'AAPL' });
+    await expect(aaplRow).toContainText('+17.0%'); // excess AAPL vs SPY
+    await expect(panel.locator('.qc-attr .fill.pos').first()).toBeVisible();
   });
 
   test('риск / корреляция: матрица, метрики, downside', async ({ page }) => {

@@ -267,6 +267,18 @@ body:has(.qc-root) {
 .qc-trades-empty { color: var(--qc-tx3); font-size: 12.5px; line-height: 1.5; padding: 18px 6px; text-align: center; }
 .qc-trades-meta { font-size: 11px; color: var(--qc-tx3); margin-top: 8px; line-height: 1.6; }
 .qc-alloc-note { font-size: 11px; color: var(--qc-tx3); margin-top: 10px; line-height: 1.5; }
+/* вклад тикеров в доходность vs SPY */
+.qc-attr { border-collapse: collapse; font-size: 12px; font-family: var(--qc-mono); width: 100%; min-width: 540px; }
+.qc-attr th { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 10px; text-transform: uppercase; letter-spacing: .4px; color: var(--qc-tx3); font-weight: 600; padding: 0 10px 6px; text-align: right; white-space: nowrap; }
+.qc-attr th.lbl, .qc-attr td.lbl { text-align: left; }
+.qc-attr td { padding: 5px 10px; border-top: .5px solid var(--qc-line); color: var(--qc-tx); white-space: nowrap; }
+.qc-attr td.r, .qc-attr th.r { text-align: right; }
+.qc-attr td.lbl { font-weight: 600; }
+.qc-attr th.bar, .qc-attr td.bar { width: 36%; }
+.qc-attr .track { position: relative; height: 8px; background: var(--qc-surf2); border-radius: 4px; overflow: hidden; min-width: 60px; }
+.qc-attr .fill { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 4px; }
+.qc-attr .fill.pos { background: rgba(15, 157, 99, .55); }
+.qc-attr .fill.neg { background: rgba(219, 59, 68, .55); }
 .qc-trades-near { background: transparent; border: 0; color: var(--qc-on-acc); font: inherit; font-size: 11px; cursor: pointer; padding: 0 2px; }
 .qc-trades-near:hover { text-decoration: underline; }
 .qc-trades-h { font-size: 12.5px; font-weight: 700; color: var(--qc-tx); margin-bottom: 6px; }
