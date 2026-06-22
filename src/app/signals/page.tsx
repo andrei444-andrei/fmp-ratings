@@ -292,6 +292,14 @@ function Signals() {
       /* fallback на статический список пресета */
     }
   }
+  // Восстановление тикеров группы по её МЕТКЕ из пресета — для старых снимков без вшитого _req
+  // (setops по сохранённому/открытому по ссылке результату). Динамический пресет подтягиваем на лету.
+  const groupTickersByLabel = (label: string): { tickers: string[]; benchmark?: string } | null => {
+    const pr = UNIVERSE_PRESETS.find((p) => p.label === label);
+    if (!pr) return null;
+    if (pr.dynamic && !dynTickers[pr.id]?.length) loadDyn(pr.id);
+    return { tickers: presetTickers(pr), benchmark: pr.benchmark };
+  };
 
   const [tab, setTab] = useState<Mode>('factor');
   const [running, setRunning] = useState(false);
@@ -1028,6 +1036,7 @@ function Signals() {
                 reqGroups={groups}
                 reqUniverse={universe}
                 reqBenchmark={benchmark.toUpperCase().trim() || 'SPY'}
+                groupTickersByLabel={groupTickersByLabel}
               />
             )}
             {result?.mode === 'signal' && <SignalResult data={result} onSave={saveSignalDef} />}
@@ -1781,7 +1790,7 @@ function LeaderboardView({ data, groups, winFrom, winTo }: { data: any; groups: 
   );
 }
 
-function FactorResult({ data, onSave, reqGroups = [], reqUniverse = [], reqBenchmark = 'SPY' }: { data: any; onSave: (d: SignalDef, name?: string) => void; reqGroups?: { label?: string; tickers: string[]; benchmark?: string }[]; reqUniverse?: string[]; reqBenchmark?: string }) {
+function FactorResult({ data, onSave, reqGroups = [], reqUniverse = [], reqBenchmark = 'SPY', groupTickersByLabel }: { data: any; onSave: (d: SignalDef, name?: string) => void; reqGroups?: { label?: string; tickers: string[]; benchmark?: string }[]; reqUniverse?: string[]; reqBenchmark?: string; groupTickersByLabel?: (label: string) => { tickers: string[]; benchmark?: string } | null }) {
   const f = FACTOR_BY_ID[data.factor];
   // Конфиг запроса вшит в результат (_req): тикеры групп нужны для setops (И/А без В) и доступны
   // без живого состояния страницы — после перезахода, восстановления из localStorage или открытия
@@ -1849,6 +1858,7 @@ function FactorResult({ data, onSave, reqGroups = [], reqUniverse = [], reqBench
         reqGroups={rGroups}
         reqUniverse={rUniverse}
         reqBenchmark={rBenchmark}
+        groupTickersByLabel={groupTickersByLabel}
         onClear={() => setPicks(new Set())}
         onSave={onSave}
       />
@@ -1939,7 +1949,7 @@ const SETOP_TITLE: Record<SetOp, string> = {
 // Панель выбора (поверх ВСЕХ групп): 1 ячейка → детали; ≥2 → операции над множествами наблюдений:
 //  • ИЛИ (объединение) — клиентский пул по агрегатам (быстро, работает и между странами);
 //  • И (пересечение) / A без B — серверный расчёт по реальному членству, ТОЛЬКО внутри одной страны.
-function SelectionPanel({ data, f, isRange, isQ, multi, mainH, selected, winFrom, winTo, fullWindow, reqGroups, reqUniverse, reqBenchmark, onClear, onSave }: { data: any; f: any; isRange: boolean; isQ: boolean; multi: boolean; mainH: number; selected: { gi: number; group: any; cell: any }[]; winFrom: number; winTo: number; fullWindow: boolean; reqGroups: { label?: string; tickers: string[]; benchmark?: string }[]; reqUniverse: string[]; reqBenchmark: string; onClear: () => void; onSave: (d: SignalDef, name?: string) => void }) {
+function SelectionPanel({ data, f, isRange, isQ, multi, mainH, selected, winFrom, winTo, fullWindow, reqGroups, reqUniverse, reqBenchmark, groupTickersByLabel, onClear, onSave }: { data: any; f: any; isRange: boolean; isQ: boolean; multi: boolean; mainH: number; selected: { gi: number; group: any; cell: any }[]; winFrom: number; winTo: number; fullWindow: boolean; reqGroups: { label?: string; tickers: string[]; benchmark?: string }[]; reqUniverse: string[]; reqBenchmark: string; groupTickersByLabel?: (label: string) => { tickers: string[]; benchmark?: string } | null; onClear: () => void; onSave: (d: SignalDef, name?: string) => void }) {
   const [op, setOp] = useState<SetOp>('or');
   if (!selected.length) return null;
   if (selected.length === 1) {
@@ -1958,9 +1968,13 @@ function SelectionPanel({ data, f, isRange, isQ, multi, mainH, selected, winFrom
   // Тикеры/бенчмарк выбранной (единственной) группы — из ОТПРАВЛЕННОГО конфига (в результате их нет).
   const resolveGroup = (group: any): { tickers: string[]; benchmark: string } => {
     const gb = String(group?.benchmark || reqBenchmark || 'SPY').toUpperCase();
-    const byLabel = reqGroups.find((g) => String(g.label || '') === String(group?.label || ''));
-    if (byLabel) return { tickers: byLabel.tickers, benchmark: String(byLabel.benchmark || gb).toUpperCase() };
-    if (reqGroups.length === 1) return { tickers: reqGroups[0].tickers, benchmark: String(reqGroups[0].benchmark || gb).toUpperCase() };
+    const label = String(group?.label || '');
+    const byLabel = reqGroups.find((g) => String(g.label || '') === label);
+    if (byLabel && byLabel.tickers?.length) return { tickers: byLabel.tickers, benchmark: String(byLabel.benchmark || gb).toUpperCase() };
+    // Старые снимки без вшитого _req: восстанавливаем тикеры по МЕТКЕ группы из пресета.
+    const byPreset = label && groupTickersByLabel ? groupTickersByLabel(label) : null;
+    if (byPreset && byPreset.tickers.length) return { tickers: byPreset.tickers, benchmark: String(byPreset.benchmark || gb).toUpperCase() };
+    if (reqGroups.length === 1 && reqGroups[0].tickers?.length) return { tickers: reqGroups[0].tickers, benchmark: String(reqGroups[0].benchmark || gb).toUpperCase() };
     return { tickers: reqUniverse, benchmark: gb };
   };
 

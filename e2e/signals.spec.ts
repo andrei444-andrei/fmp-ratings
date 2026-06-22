@@ -188,6 +188,42 @@ test.describe('Signals /signals', () => {
     await ctx.close();
   });
 
+  test('setops на СТАРОМ снимке (без _req): тикеры группы восстанавливаются по метке пресета', async ({ page, baseURL }) => {
+    await page.goto('/signals');
+    await page.getByRole('button', { name: 'Металлы', exact: true }).click();
+    await page.getByRole('button', { name: 'Сырьё (commodities)', exact: true }).click();
+    await page.getByTestId('run-study').click();
+    await expect(page.getByTestId('heat-cell').first()).toBeVisible({ timeout: 150000 });
+    await page.getByTestId('save-result-btn').click();
+    await page.getByTestId('save-name-input').fill('старый-снимок');
+    await page.getByTestId('save-name-confirm').click();
+    await expect(page.getByText('Результат сохранён')).toBeVisible({ timeout: 15000 });
+    const id = new URL(page.url()).searchParams.get('result');
+    expect(id).toBeTruthy();
+
+    // Чистый контекст + ИМИТАЦИЯ старого снимка: вырезаем _req из ответа (как у результатов до фикса),
+    // чтобы проверить именно фолбэк «метка группы → тикеры пресета».
+    const ctx = await page.context().browser()!.newContext({ baseURL });
+    const p2 = await ctx.newPage();
+    await p2.route('**/api/signals/results/*', async (route) => {
+      const resp = await route.fetch();
+      const json = await resp.json();
+      if (json?.result?.payload?._req) delete json.result.payload._req;
+      await route.fulfill({ response: resp, json });
+    });
+    await p2.goto(`/signals?result=${id}`);
+    await expect(p2.getByTestId('heat-cell').first()).toBeVisible({ timeout: 30000 });
+    // Две ячейки ПЕРВОЙ группы (Металлы) → пересечение внутри одной таблицы.
+    await p2.getByTestId('heat-cell').nth(0).click();
+    await p2.getByTestId('heat-cell').nth(2).click();
+    const out = p2.locator('[data-testid="signals-output"]');
+    await out.getByRole('tab', { name: /И \(пересеч/ }).click();
+    // Тикеры «Металлы» восстановлены по метке из пресета → расчёт идёт, ошибки определения тикеров нет.
+    await expect(p2.getByText('Не удалось определить тикеры группы')).toHaveCount(0);
+    await expect(out.getByText(/Ср\. изб\. дох\.|слишком мало наблюдений/).first()).toBeVisible({ timeout: 150000 });
+    await ctx.close();
+  });
+
   test('иностранные тикеры (7203.T) принимаются и строят карту', async ({ page }) => {
     await page.goto('/signals');
     await page.getByPlaceholder('SMH, GLD, TLT').fill('7203.T, 6758.T, PKN.WA, AAA, BBB');
