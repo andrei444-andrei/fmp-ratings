@@ -24,12 +24,19 @@ export type TickerAttribution = {
   spyEquiv: number;  // что дал бы SPY на этой же экспозиции
   excess: number;    // насколько тикер обыграл SPY (contrib − spyEquiv)
 };
+// Вклад/excess по тикерам в разрезе конкретного года.
+export type YearAttribution = {
+  year: number;
+  contrib: Record<string, number>; // тикер → вклад в доходность за год
+  excess: Record<string, number>;  // тикер → насколько обыграл SPY за год
+};
 export type AllocationResult = {
   id: number;
   name: string;
   years: YearAllocation[];
   symbols: string[];   // символы по убыванию средней значимости (для колонок таблицы)
-  attribution: TickerAttribution[]; // по убыванию excess
+  attribution: TickerAttribution[]; // по убыванию excess (накопл.)
+  attributionByYear: YearAttribution[]; // вклад/excess по годам
   approx: boolean;     // были ли инструменты без рыночной цены (оценка по сделкам)
   capped: boolean;     // ордера обрезаны лимитом → состав может быть неполным
   error: string | null;
@@ -92,7 +99,7 @@ function monthEnds(firstMs: number, lastMs: number): { ms: number; year: number 
 
 export async function getStrategyAllocation(id: number, force = false): Promise<AllocationResult> {
   const tr = await getStrategyTrades(id, force);
-  const empty = (error: string | null): AllocationResult => ({ id, name: tr.name, years: [], symbols: [], attribution: [], approx: false, capped: tr.capped, error });
+  const empty = (error: string | null): AllocationResult => ({ id, name: tr.name, years: [], symbols: [], attribution: [], attributionByYear: [], approx: false, capped: tr.capped, error });
   if (tr.error) return empty(tr.error);
   const trades = (tr.trades || []).filter(t => t.time && (t.direction === 'buy' || t.direction === 'sell') && t.quantity > 0);
   if (!trades.length) return empty(null);
@@ -178,19 +185,28 @@ export async function getStrategyAllocation(id: number, force = false): Promise<
   });
   const symbols = [...importance.entries()].sort((x, y) => y[1] - x[1]).map(([s]) => s);
 
-  // атрибуция: помесячно w_(t-1)·(r_тикера − r_SPY), накопл. арифм. signed-веса (учитывают шорты)
+  // атрибуция: помесячно w_(t-1)·(r_тикера − r_SPY), накопл. арифм. signed-веса (учитывают шорты).
+  // Параллельно копим по годам (доход реализуется в году cur) — для разбивки «что дало в каждый год».
   const contribM = new Map<string, number>(), spyM = new Map<string, number>();
+  const contribY = new Map<number, Map<string, number>>(), spyY = new Map<number, Map<string, number>>();
+  const bump = (m: Map<number, Map<string, number>>, yr: number, sym: string, v: number) => {
+    const row = m.get(yr) ?? m.set(yr, new Map()).get(yr)!;
+    row.set(sym, (row.get(sym) || 0) + v);
+  };
   for (let i = 1; i < snapshots.length; i++) {
     const prev = snapshots[i - 1], cur = snapshots[i];
     if (prev.gross <= 0) continue;
+    const yr = new Date(cur.ms).getUTCFullYear();
     const sp0 = spyLk?.at(prev.ms) ?? null, sp1 = spyLk?.at(cur.ms) ?? null;
     const rSpy = (sp0 != null && sp1 != null && sp0 > 0) ? sp1 / sp0 - 1 : null;
     for (const [sym, sv] of prev.signed) {
       const p0 = priceAt(sym, prev.ms), p1 = priceAt(sym, cur.ms);
       if (p0 == null || p1 == null || !(p0 > 0)) continue;
       const w = sv / prev.gross;
-      contribM.set(sym, (contribM.get(sym) || 0) + w * (p1 / p0 - 1));
-      if (rSpy != null) spyM.set(sym, (spyM.get(sym) || 0) + w * rSpy);
+      const cM = w * (p1 / p0 - 1);
+      contribM.set(sym, (contribM.get(sym) || 0) + cM);
+      bump(contribY, yr, sym, cM);
+      if (rSpy != null) { spyM.set(sym, (spyM.get(sym) || 0) + w * rSpy); bump(spyY, yr, sym, w * rSpy); }
     }
   }
   const attribution: TickerAttribution[] = [...contribM.keys()].map(sym => {
@@ -198,5 +214,13 @@ export async function getStrategyAllocation(id: number, force = false): Promise<
     return { symbol: sym, contrib: c, spyEquiv: s, excess: c - s };
   }).sort((x, y) => y.excess - x.excess);
 
-  return { id, name: tr.name, years, symbols, attribution, approx, capped: tr.capped, error: null };
+  // разбивка вклада/excess по годам (год → тикер → значение)
+  const attributionByYear: YearAttribution[] = [...contribY.keys()].sort((a, b) => a - b).map(year => {
+    const cRow = contribY.get(year)!, sRow = spyY.get(year) ?? new Map<string, number>();
+    const contrib: Record<string, number> = {}, excess: Record<string, number> = {};
+    for (const [sym, c] of cRow) { contrib[sym] = c; excess[sym] = c - (sRow.get(sym) || 0); }
+    return { year, contrib, excess };
+  });
+
+  return { id, name: tr.name, years, symbols, attribution, attributionByYear, approx, capped: tr.capped, error: null };
 }

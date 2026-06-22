@@ -11,6 +11,11 @@ import type { AllocationResult } from '@/lib/quantconnect/allocation';
 const ALLOC_TOPN = 12;
 function wpct(w: number): string { return w > 0.0005 ? (w * 100).toFixed(w < 0.1 ? 1 : 0) + '%' : ''; }
 function heatAlloc(w: number): string { return `rgba(108, 92, 240, ${Math.min(Math.max(w, 0), 1) * 0.78})`; }
+// заливка ячейки вклада/Δ по годам (знаковая: зелёное/красное; полная при ~12%)
+function heatAttr(v: number): string {
+  const a = Math.min(Math.abs(v) / 0.12, 1) * 0.62;
+  return v >= 0 ? `rgba(15, 157, 99, ${a})` : `rgba(219, 59, 68, ${a})`;
+}
 
 const ACC = '#6b5bf0', MUT = '#9aa0ad';
 const MONTHS = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
@@ -102,6 +107,7 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
   const [allocFor, setAllocFor] = useState<number | null>(null);
   const [allocLoading, setAllocLoading] = useState(false);
   const [allocErr, setAllocErr] = useState<string | null>(null);
+  const [attrMode, setAttrMode] = useState<'contrib' | 'excess'>('contrib'); // вклад / Δ к SPY по годам
   async function loadAlloc(algoId: number, force = false) {
     setAllocLoading(true); setAllocErr(null);
     try {
@@ -480,6 +486,50 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
                               «Вклад» — накопленный (арифм.) вклад тикера в доходность: доля экспозиции × доходность тикера, помесячно.
                               «Δ к {benchName}» — насколько тикер обыграл {benchName} на той же экспозиции (зелёное = добавил альфу, красное = тянул вниз).
                               Приближение по месячной сетке; сумма Δ по тикерам ≈ опережение портфелем {benchName}.
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {/* доходность по тикерам в разрезе каждого года */}
+                      {alloc.attributionByYear.length > 0 && (() => {
+                        const cols = alloc.symbols.slice(0, ALLOC_TOPN);
+                        return (
+                          <div style={{ marginTop: 20 }}>
+                            <div className="qc-panel-h">
+                              Доходность по тикерам и годам <span className="c">{attrMode === 'contrib' ? 'вклад в доходность за год' : `Δ к ${benchName} за год`}</span>
+                              <span className="qc-spacer" />
+                              <span className="qc-seg">
+                                <button className={attrMode === 'contrib' ? 'on' : ''} onClick={() => setAttrMode('contrib')}>Вклад</button>
+                                <button className={attrMode === 'excess' ? 'on' : ''} onClick={() => setAttrMode('excess')}>Δ к {benchName}</button>
+                              </span>
+                            </div>
+                            <div className="qc-tblwrap" style={{ border: 0 }}>
+                              <table className="qc-heat">
+                                <thead><tr><th className="lbl">Год</th>{cols.map(s => <th key={s}>{s}</th>)}<th className="tot">Итог</th></tr></thead>
+                                <tbody>
+                                  {alloc.attributionByYear.map(y => {
+                                    const src = attrMode === 'contrib' ? y.contrib : y.excess;
+                                    const total = Object.values(src).reduce((s, x) => s + x, 0);
+                                    return (
+                                      <tr key={y.year}>
+                                        <td className="lbl">{y.year}</td>
+                                        {cols.map(s => {
+                                          const v = src[s];
+                                          return <td key={s} style={{ background: v != null ? heatAttr(v) : 'transparent' }} title={v != null ? `${s}: ${fmtPct(v)}` : undefined}>{v != null ? fmtPct(v) : ''}</td>;
+                                        })}
+                                        <td className={'tot ' + cls(total)}>{fmtPct(total)}</td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                            <div className="qc-alloc-note">
+                              {attrMode === 'contrib'
+                                ? `Вклад тикера в доходность стратегии за конкретный год (доля экспозиции × доходность тикера, помесячно). «Итог» по строке ≈ доходность портфеля за год.`
+                                : `Насколько тикер обыграл ${benchName} за год на своей экспозиции. «Итог» ≈ опережение портфелем ${benchName} за год.`}
+                              {' '}Показаны топ-{ALLOC_TOPN} тикеров; «Итог» учитывает все.
                             </div>
                           </div>
                         );
