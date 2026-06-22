@@ -20,7 +20,8 @@ export async function getStrategyTrades(id: number, force = false): Promise<Trad
   }
   if (!backtestId) return { id, name: a.name, trades: [], capped: false, total: 0, error: 'в проекте нет бектестов', resolvedBacktestId: null };
 
-  const key = `trades|v1|${a.projectId}|${backtestId}`;
+  // v2: раньше тянули только первые 2500 ордеров (кап) → старый кэш неполный, игнорируем.
+  const key = `trades|v2|${a.projectId}|${backtestId}`;
   if (!force) {
     const cached = await qcCacheGet<{ trades: QcTrade[]; capped: boolean }>(key);
     if (cached && cached.trades) {

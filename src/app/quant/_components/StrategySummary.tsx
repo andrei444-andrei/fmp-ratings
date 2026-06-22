@@ -111,7 +111,11 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
   async function loadAlloc(algoId: number, force = false) {
     setAllocLoading(true); setAllocErr(null);
     try {
-      const r: AllocationResult = await fetch(`/api/quantconnect/allocation?id=${algoId}${force ? '&force=1' : ''}`).then(res => res.json());
+      // конец дневного ряда стратегии — чтобы состав/атрибуция доходили до конца бэктеста,
+      // а не до последнего ордера (позиции после последней сделки держатся).
+      const dly = (series?.algos || []).find(a => a.id === algoId)?.daily;
+      const end = dly && dly.length ? `&end=${dly[dly.length - 1].d}` : '';
+      const r: AllocationResult = await fetch(`/api/quantconnect/allocation?id=${algoId}${force ? '&force=1' : ''}${end}`).then(res => res.json());
       if (r.error) setAllocErr(r.error);
       setAlloc(r); setAllocFor(algoId);
     } catch (e: any) { setAllocErr(e.message); }

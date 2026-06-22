@@ -214,27 +214,50 @@ export async function qcReadBacktestOrders(
 }
 
 // Детальные сделки (ордера) бектеста: дата, инструмент, сторона, кол-во, цена, объём.
-// Пагинация ≤100/стр., кап на число страниц. Ошибку ПЕРВОЙ страницы пробрасываем
-// (чтобы реальная причина «нет сделок» — напр. ошибка API — была видна), дальше —
-// отдаём что успели собрать.
+// Берём ВСЕ ордера: 0-я страница даёт total (`length`), остальные догружаем параллельно
+// батчами (быстро, в рамках таймаута). Ошибку первой страницы пробрасываем (реальная
+// причина «нет сделок»); единичные сбойные страницы пропускаем. Кап — на крайний случай.
 export async function qcReadBacktestTrades(
   projectId: number | string,
   backtestId: string,
-  maxPages = 25,
+  maxOrders = 40000,
 ): Promise<{ trades: QcTrade[]; capped: boolean }> {
-  const out: QcTrade[] = [];
-  for (let page = 0; page < maxPages; page++) {
-    const start = page * 100;
-    let data: any;
-    try {
-      data = await qcPost('/backtests/orders/read', { projectId: Number(projectId), backtestId: String(backtestId), start, end: start + 100 });
-    } catch (e) {
-      if (page === 0) throw e;
-      return { trades: out, capped: false };
+  const pid = Number(projectId), bt = String(backtestId);
+  const ordersOf = (d: any): any[] => (Array.isArray(d?.orders) ? d.orders : Array.isArray(d?.Orders) ? d.Orders : []);
+  const readPage = (start: number) => qcPost('/backtests/orders/read', { projectId: pid, backtestId: bt, start, end: start + 100 });
+
+  // первая страница — ошибку пробрасываем (чтобы реальная причина была видна)
+  const first = await readPage(0);
+  const firstArr = ordersOf(first);
+  const out: QcTrade[] = firstArr.map(qcParseOrder);
+  const total = Number(first?.length ?? first?.Length);
+
+  // total неизвестен → добираем последовательно, пока страница полная
+  if (!isFinite(total) || total <= 0) {
+    if (firstArr.length < 100) return { trades: out, capped: false };
+    for (let start = 100; start < maxOrders; start += 100) {
+      let arr: any[];
+      try { arr = ordersOf(await readPage(start)); } catch { return { trades: out, capped: false }; }
+      for (const o of arr) out.push(qcParseOrder(o));
+      if (arr.length < 100) return { trades: out, capped: false };
     }
-    const arr = Array.isArray(data?.orders) ? data.orders : Array.isArray(data?.Orders) ? data.Orders : [];
-    for (const o of arr) out.push(qcParseOrder(o));
-    if (arr.length < 100) return { trades: out, capped: false };
+    return { trades: out, capped: true };
   }
-  return { trades: out, capped: true };
+  if (firstArr.length >= total || total <= 100) return { trades: out, capped: false };
+
+  // знаем total → догружаем остальные страницы параллельно батчами (с одним ретраем)
+  const cap = Math.min(total, maxOrders);
+  const starts: number[] = [];
+  for (let s = 100; s < cap; s += 100) starts.push(s);
+  const CONC = 6;
+  for (let i = 0; i < starts.length; i += CONC) {
+    const pages = await Promise.all(starts.slice(i, i + CONC).map(async s => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try { return ordersOf(await readPage(s)); } catch { if (attempt === 1) return null; }
+      }
+      return null;
+    }));
+    for (const arr of pages) if (arr) for (const o of arr) out.push(qcParseOrder(o));
+  }
+  return { trades: out, capped: total > maxOrders };
 }
