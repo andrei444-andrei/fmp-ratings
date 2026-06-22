@@ -89,10 +89,10 @@ function normSignal(raw: any): SignalDef | null {
   return { factor: f.id as FactorId, param, side, threshold, skip };
 }
 
-export type StudyConfig = Record<string, unknown> & { mode: 'factor' | 'signal' | 'combine' | 'setops' | 'dipcal' };
+export type StudyConfig = Record<string, unknown> & { mode: 'factor' | 'signal' | 'combine' | 'setops' | 'cellobs' | 'dipcal' };
 
 export function normalizeStudyConfig(body: any): StudyConfig {
-  const mode = ['factor', 'signal', 'combine', 'setops', 'dipcal'].includes(body?.mode) ? body.mode : 'factor';
+  const mode = ['factor', 'signal', 'combine', 'setops', 'cellobs', 'dipcal'].includes(body?.mode) ? body.mode : 'factor';
   const benchmark = (typeof body?.benchmark === 'string' && body.benchmark.trim() ? body.benchmark : 'SPY')
     .toUpperCase()
     .trim();
@@ -163,6 +163,17 @@ export function normalizeStudyConfig(body: any): StudyConfig {
       })
       .filter((c: unknown): c is { param: number; region: Record<string, unknown> } => c != null);
     return { ...base, factor: f.id, bins, op, skip, cells };
+  }
+
+  if (mode === 'cellobs') {
+    // Дрилл-даун одной ячейки: сырые наблюдения (дата×тикер) за конкретный год — «осознать эффект».
+    const f = FACTOR_BY_ID[String(body?.factor)] || FACTOR_BY_ID.xbench;
+    const bins = body?.bins === 'range' ? 'range' : body?.bins === 'quantile' ? 'quantile' : 'cumulative';
+    const skip = Math.round(clampNum(body?.skip, 0, 0, 60));
+    const param = f.paramOptions.includes(Number(body?.cell?.param)) ? Number(body.cell.param) : f.defaultParams[0];
+    const region = normRegion(body?.cell?.region, bins);
+    const year = Math.round(clampNum(body?.year, 0, 1900, 2100));
+    return { ...base, factor: f.id, bins, skip, cell: region ? { param, region } : null, year };
   }
 
   // combine

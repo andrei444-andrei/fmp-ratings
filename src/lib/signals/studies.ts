@@ -452,6 +452,38 @@ async def main():
                 'tickers': ticker_breakdown(sub, maincol), 'kw': kruskal(sub, maincol),
                 'meta': meta_of(tgt, px, bench, n_cleaned)}
 
+    # cellobs — дрилл-даун ОДНОЙ ячейки: сырые наблюдения (дата×тикер) за конкретный год с форвардной
+    # изб. доходностью на основном горизонте. Чтобы «осознать эффект» — увидеть каждый случай по датам.
+    if mode == 'cellobs':
+        fid = CFG['factor']; bins = CFG.get('bins', 'cumulative'); skip = int(CFG.get('skip', 0))
+        cell = CFG.get('cell') or {}; year = int(CFG.get('year') or 0)
+        if not cell:
+            return {'mode': 'cellobs', 'rows': []}
+        param = int(cell.get('param', 0)); reg = cell.get('region') or {}
+        tgt = build_targets(px, bench, HZ, H)
+        fv = build_fval(px, bench, fid, param, H, skip)
+        if tgt.empty or fv.empty:
+            return {'mode': 'cellobs', 'rows': []}
+        m = tgt.merge(fv, on=['symbol', 'date'], how='inner')
+        if bins == 'quantile':
+            sv = m[m['fval'].notna()]
+            if len(sv):
+                gd = sv.groupby('date')['fval']; n_by = gd.transform('size')
+                rank = gd.rank(method='first', ascending=(reg.get('side') == 'pct_low'))
+                k = np.maximum(1.0, np.round(n_by * float(reg.get('q', 10)) / 100.0))
+                sel = sv[(rank <= k).values]
+            else:
+                sel = m.iloc[:0]
+        else:
+            sel = m[region_mask(m['fval'], reg).fillna(False).values]
+        sel = sel.dropna(subset=[maincol])
+        if year:
+            sel = sel[pd.to_datetime(sel['date']).dt.year == year]
+        sel = sel.sort_values(['date', 'symbol'])
+        rows = [{'date': str(pd.Timestamp(r['date']).date()), 'symbol': str(r['symbol']),
+                 'fval': _f(float(r['fval'])), 'ret': _f(float(r[maincol]))} for _, r in sel.iterrows()]
+        return {'mode': 'cellobs', 'horizon': H, 'year': year, 'n': len(rows), 'rows': rows}
+
     # dipcal — калибровка покупки просадок ПО КАЖДОМУ инструменту (стране) отдельно.
     # Глубина просадки ранжируется по СОБСТВЕННОЙ истории (перцентиль) — непараметрично, корректно
     # к жирным хвостам (где общая σ врёт). Автоподбор порога по форвардному edge; флаг стабильности

@@ -1539,25 +1539,44 @@ function DecayBlock({ points, mainH }: { points: { h: number; mean: number | nul
   );
 }
 
-function YearlyBars({ yearly }: { yearly: any[] }) {
+function YearlyBars({ yearly, onYearClick, activeYear }: { yearly: any[]; onYearClick?: (year: number) => void; activeYear?: number | null }) {
   if (!Array.isArray(yearly) || yearly.length === 0) return null;
+  const clickable = !!onYearClick;
+  const rowInner = (y: any) => (
+    <>
+      <span className="w-10 shrink-0 tabular-nums text-ink-2">{y.year}</span>
+      <div className="relative h-3 flex-1 rounded-fk-pill bg-surface-2">
+        <div
+          className={`absolute top-0 h-3 rounded-fk-pill ${(y.mean ?? 0) >= 0 ? 'bg-up' : 'bg-down'}`}
+          style={{ left: '50%', width: `${Math.min(50, Math.abs(y.mean ?? 0) * 6)}%`, transform: (y.mean ?? 0) < 0 ? 'translateX(-100%)' : 'none' }}
+        />
+      </div>
+      <span className={`w-16 shrink-0 text-right tabular-nums ${(y.mean ?? 0) >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{fpct(y.mean)}</span>
+      <span className="w-12 shrink-0 text-right text-[10px] text-ink-3">n={y.n}</span>
+    </>
+  );
   return (
     <div>
-      <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-ink-3">Изменение по годам (ср. изб. дох.)</div>
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">Изменение по годам (ср. изб. дох.)</span>
+        {clickable && <span className="text-[10px] text-ink-3">клик по году — случаи по датам</span>}
+      </div>
       <div className="space-y-1">
-        {yearly.map((y: any) => (
-          <div key={y.year} className="flex items-center gap-2 text-[12px]">
-            <span className="w-10 shrink-0 tabular-nums text-ink-2">{y.year}</span>
-            <div className="relative h-3 flex-1 rounded-fk-pill bg-surface-2">
-              <div
-                className={`absolute top-0 h-3 rounded-fk-pill ${(y.mean ?? 0) >= 0 ? 'bg-up' : 'bg-down'}`}
-                style={{ left: '50%', width: `${Math.min(50, Math.abs(y.mean ?? 0) * 6)}%`, transform: (y.mean ?? 0) < 0 ? 'translateX(-100%)' : 'none' }}
-              />
-            </div>
-            <span className={`w-16 shrink-0 text-right tabular-nums ${(y.mean ?? 0) >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{fpct(y.mean)}</span>
-            <span className="w-12 shrink-0 text-right text-[10px] text-ink-3">n={y.n}</span>
-          </div>
-        ))}
+        {yearly.map((y: any) =>
+          clickable ? (
+            <button
+              key={y.year}
+              type="button"
+              data-testid="yearly-row"
+              onClick={() => onYearClick!(y.year)}
+              className={`flex w-full items-center gap-2 rounded-fk-sm px-1 py-0.5 text-left text-[12px] transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)] ${activeYear === y.year ? 'bg-surface-2 ring-1 ring-brand' : ''}`}
+            >
+              {rowInner(y)}
+            </button>
+          ) : (
+            <div key={y.year} className="flex items-center gap-2 text-[12px]">{rowInner(y)}</div>
+          ),
+        )}
       </div>
     </div>
   );
@@ -1951,21 +1970,8 @@ const SETOP_TITLE: Record<SetOp, string> = {
 //  • И (пересечение) / A без B — серверный расчёт по реальному членству, ТОЛЬКО внутри одной страны.
 function SelectionPanel({ data, f, isRange, isQ, multi, mainH, selected, winFrom, winTo, fullWindow, reqGroups, reqUniverse, reqBenchmark, groupTickersByLabel, onClear, onSave }: { data: any; f: any; isRange: boolean; isQ: boolean; multi: boolean; mainH: number; selected: { gi: number; group: any; cell: any }[]; winFrom: number; winTo: number; fullWindow: boolean; reqGroups: { label?: string; tickers: string[]; benchmark?: string }[]; reqUniverse: string[]; reqBenchmark: string; groupTickersByLabel?: (label: string) => { tickers: string[]; benchmark?: string } | null; onClear: () => void; onSave: (d: SignalDef, name?: string) => void }) {
   const [op, setOp] = useState<SetOp>('or');
-  if (!selected.length) return null;
-  if (selected.length === 1) {
-    const { group, cell } = selected[0];
-    const agg = Array.isArray(cell.years) ? aggCell(cell.years, winFrom, winTo, mainH) : null;
-    return (
-      <CellDetailCard data={data} group={group} cell={cell} agg={agg} f={f} isQ={isQ} mainH={mainH} fullWindow={fullWindow} winFrom={winFrom} winTo={winTo} onClear={onClear} onSave={onSave} />
-    );
-  }
-  const colWord = isQ ? 'хвост' : isRange ? 'диап.' : 'порог';
-  const cellLabel = (s: { group: any; cell: any }) => `${multi && s.group.label ? s.group.label + ' ' : ''}${s.cell.param}д/${colWord} ${s.cell.col}`;
-  const labels = selected.map(cellLabel);
-  const countries = [...new Set(selected.map((s) => s.group.label).filter(Boolean))] as string[];
-  const sameGroup = new Set(selected.map((s) => s.gi)).size === 1;
-
-  // Тикеры/бенчмарк выбранной (единственной) группы — из ОТПРАВЛЕННОГО конфига (в результате их нет).
+  // Тикеры/бенчмарк группы — из вшитого в результат конфига (_req), иначе по метке пресета (старые
+  // снимки), иначе живой конфиг. Нужны для серверного пересчёта: setops и дрилл-даун случаев по году.
   const resolveGroup = (group: any): { tickers: string[]; benchmark: string } => {
     const gb = String(group?.benchmark || reqBenchmark || 'SPY').toUpperCase();
     const label = String(group?.label || '');
@@ -1977,6 +1983,20 @@ function SelectionPanel({ data, f, isRange, isQ, multi, mainH, selected, winFrom
     if (reqGroups.length === 1 && reqGroups[0].tickers?.length) return { tickers: reqGroups[0].tickers, benchmark: String(reqGroups[0].benchmark || gb).toUpperCase() };
     return { tickers: reqUniverse, benchmark: gb };
   };
+  if (!selected.length) return null;
+  if (selected.length === 1) {
+    const { group, cell } = selected[0];
+    const agg = Array.isArray(cell.years) ? aggCell(cell.years, winFrom, winTo, mainH) : null;
+    const g1 = resolveGroup(group);
+    return (
+      <CellDetailCard data={data} group={group} cell={cell} agg={agg} f={f} isQ={isQ} mainH={mainH} fullWindow={fullWindow} winFrom={winFrom} winTo={winTo} tickers={g1.tickers} benchmark={g1.benchmark} onClear={onClear} onSave={onSave} />
+    );
+  }
+  const colWord = isQ ? 'хвост' : isRange ? 'диап.' : 'порог';
+  const cellLabel = (s: { group: any; cell: any }) => `${multi && s.group.label ? s.group.label + ' ' : ''}${s.cell.param}д/${colWord} ${s.cell.col}`;
+  const labels = selected.map(cellLabel);
+  const countries = [...new Set(selected.map((s) => s.group.label).filter(Boolean))] as string[];
+  const sameGroup = new Set(selected.map((s) => s.gi)).size === 1;
 
   const opControl = (
     <div className="flex flex-wrap items-center gap-2">
@@ -2134,13 +2154,27 @@ function SetOpsCard({ op, data, group, tickers, benchmark, cells, labels, winFro
   );
 }
 
-function CellDetailCard({ data, group, cell, agg, f, isQ, mainH, fullWindow, winFrom, winTo, onClear, onSave }: { data: any; group: any; cell: any; agg: any; f: any; isQ: boolean; mainH: number; fullWindow: boolean; winFrom: number; winTo: number; onClear: () => void; onSave: (d: SignalDef, name?: string) => void }) {
+function CellDetailCard({ data, group, cell, agg, f, isQ, mainH, fullWindow, winFrom, winTo, tickers, benchmark, onClear, onSave }: { data: any; group: any; cell: any; agg: any; f: any; isQ: boolean; mainH: number; fullWindow: boolean; winFrom: number; winTo: number; tickers: string[]; benchmark: string; onClear: () => void; onSave: (d: SignalDef, name?: string) => void }) {
   const head = agg || { mean: cell.mean, t: cell.t, hit: cell.hit, n: cell.n, periods: cell.periods, decay: null, yearly: cell.yearly };
   const decayPoints = agg
     ? agg.decay
     : cell.decay
       ? (data.hz || []).map((h: number) => ({ h, mean: cell.decay[String(h)] ?? null }))
       : [];
+  // Дрилл-даун по году: серверный пересчёт сырых наблюдений (дата×тикер) ячейки за выбранный год.
+  const [obsYear, setObsYear] = useState<number | null>(null);
+  const [obs, setObs] = useState<{ loading: boolean; rows: any[]; err: string }>({ loading: false, rows: [], err: '' });
+  async function openYear(year: number) {
+    if (obsYear === year) { setObsYear(null); return; } // повторный клик — свернуть
+    setObsYear(year);
+    if (!tickers.length) { setObs({ loading: false, rows: [], err: 'Не удалось определить тикеры группы.' }); return; }
+    setObs({ loading: true, rows: [], err: '' });
+    const r = await streamSetOps({
+      mode: 'cellobs', factor: data.factor, bins: data.bins, skip: data.skip || 0, horizon: data.horizon,
+      universe: tickers, benchmark, cell: { param: cell.param, region: cell.region }, year,
+    });
+    setObs({ loading: false, rows: Array.isArray(r.data?.rows) ? r.data.rows : [], err: r.error || (r.data?.error ?? '') });
+  }
   return (
     <Card>
       <CardHeader>
@@ -2167,7 +2201,47 @@ function CellDetailCard({ data, group, cell, agg, f, isQ, mainH, fullWindow, win
           <p className="text-[13px] text-ink-3">В выбранном окне лет слишком мало наблюдений — расширьте окно.</p>
         )}
         {decayPoints.length > 0 && <DecayBlock points={decayPoints} mainH={mainH} />}
-        <YearlyBars yearly={head?.yearly ?? cell.yearly} />
+        <YearlyBars yearly={head?.yearly ?? cell.yearly} onYearClick={openYear} activeYear={obsYear} />
+        {obsYear != null && (
+          <div className="rounded-fk border border-line bg-surface-2 p-2.5" data-testid="cellobs">
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <span className="text-[12px] font-semibold text-ink">
+                Случаи за {obsYear}{!obs.loading && !obs.err ? ` · ${obs.rows.length}` : ''}
+              </span>
+              <button type="button" onClick={() => setObsYear(null)} className="text-[11px] font-medium text-ink-3 hover:text-ink-2">скрыть</button>
+            </div>
+            {obs.loading ? (
+              <div className="flex items-center gap-2 text-[12px] text-ink-3"><Spinner /> Считаю случаи по датам…</div>
+            ) : obs.err ? (
+              <p className="text-[12px] text-warn-strong">{obs.err}</p>
+            ) : obs.rows.length === 0 ? (
+              <p className="text-[12px] text-ink-3">Нет случаев за этот год.</p>
+            ) : (
+              <div className="max-h-72 overflow-auto">
+                <table className="w-full text-[12px]">
+                  <thead className="sticky top-0 bg-surface-2">
+                    <tr className="text-ink-3">
+                      <th className="px-2 py-1 text-left font-medium">Дата</th>
+                      <th className="px-2 py-1 text-left font-medium">Тикер</th>
+                      <th className="px-2 py-1 text-right font-medium">{f?.paramLabel?.includes('избыт') ? 'Избыток' : 'Фактор'}</th>
+                      <th className="px-2 py-1 text-right font-medium">Изб. дох. +{data.horizon}д</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {obs.rows.map((r: any, i: number) => (
+                      <tr key={i} className="border-t border-line">
+                        <td className="px-2 py-1 text-left tabular-nums text-ink-2">{r.date}</td>
+                        <td className="px-2 py-1 text-left">{r.symbol}</td>
+                        <td className="px-2 py-1 text-right tabular-nums text-ink-2">{fnum(r.fval, 2)}{f?.unit || ''}</td>
+                        <td className={`px-2 py-1 text-right tabular-nums ${(r.ret ?? 0) >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{fpct(r.ret)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
         <TickerTable tickers={cell.tickers} kw={cell.kw} />
         {!isQ && (
           <Button size="sm" variant="secondary" onClick={() => onSave({ factor: data.factor, param: cell.param, ...cell.region, skip: data.skip || 0 })}>
