@@ -330,19 +330,19 @@ test.describe('Signals /signals', () => {
     }
   });
 
-  test('режим SMA/EMA: работает с ОДНИМ тикером, совпадающим с бенчмарком (SPY)', async ({ page }) => {
+  test('режим SMA/EMA: один тикер SPY (= бенчмарк) даёт НЕпустую матрицу с данными', async ({ page }) => {
     await page.goto('/signals');
     await page.getByTestId('tab-ma').click();
     await page.locator('#bm').fill('SPY');
-    // Один свой тикер = SPY (он же бенчмарк) — раньше вселенная обнулялась и кнопка была заблокирована.
+    // Один свой тикер = SPY (он же бенчмарк) — раньше сервер выкидывал его из вселенной → «0 инстр.».
     await page.getByPlaceholder('SMH, GLD, TLT').fill('SPY');
     await expect(page.getByTestId('run-study')).toBeEnabled();
     await page.getByTestId('run-study').click();
     const out = page.locator('[data-testid="signals-output"]');
-    await expect(out.getByText(/SMA — простая|Недостаточно истории/)).toBeVisible({ timeout: 150000 });
-    if (await out.getByText(/SMA — простая/).count()) {
-      await expect(out.getByTestId('ma-table')).toHaveCount(2);
-    }
+    await expect(out.getByText('SMA — простая скользящая средняя')).toBeVisible({ timeout: 150000 });
+    // Результат НЕ пустой: инструмент посчитан (не «0 инстр.»), в первой строке матрицы есть проценты.
+    await expect(out.getByText('0 инстр.')).toHaveCount(0);
+    await expect(out.getByTestId('ma-table').first().locator('tbody tr').first()).toContainText('%');
   });
 
   test('режим Сигнал: событийный анализ рендерит статистику', async ({ page }) => {
