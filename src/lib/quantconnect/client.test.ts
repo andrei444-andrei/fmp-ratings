@@ -59,4 +59,18 @@ describe('qcReadBacktestTrades — пагинация (тянем ВСЕ орд�
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 403, text: async () => '{"message":"no access"}' } as any)));
     await expect(qcReadBacktestTrades('111', 'bt')).rejects.toThrow();
   });
+
+  it('пустая первая страница ретраится (rate-limit отдал 200 с []) и восстанавливается', async () => {
+    let zeros = 0;
+    vi.stubGlobal('fetch', vi.fn(async (_url: any, opts: any) => {
+      const body = JSON.parse(opts.body);
+      // первые два запроса start=0 → 200 с пустотой (как под rate-limit), потом ордера
+      if (body.start === 0 && zeros < 2) { zeros++; return { ok: true, status: 200, text: async () => JSON.stringify({ orders: [], length: 0, success: true }) } as any; }
+      const orders: any[] = [];
+      for (let i = body.start; i < Math.min(body.end, 50); i++) orders.push(mkOrder(i));
+      return { ok: true, status: 200, text: async () => JSON.stringify({ orders, length: 50, success: true }) } as any;
+    }));
+    const { trades } = await qcReadBacktestTrades('111', 'bt');
+    expect(trades.length).toBe(50); // ретрай вытащил данные, а не «нет сделок»
+  });
 });
