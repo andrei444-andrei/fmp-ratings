@@ -313,26 +313,32 @@ test.describe('Signals /signals', () => {
     await expect(out.getByText(/Ср\. изб\. дох\.|мало наблюдений/).first()).toBeVisible({ timeout: 150000 });
   });
 
-  test('режим Просадки: калибровка покупки просадок по странам (свод)', async ({ page }) => {
+  test('режим Просадки (v2): фикс. −kσ правило, избыток над бенчмарком, FDR-колонка', async ({ page }) => {
     await setup(page);
     await page.getByTestId('tab-dipcal').click();
     await page.getByTestId('run-study').click();
     const out = page.locator('[data-testid="signals-output"]');
     // Свод появляется: либо таблица «Покупать просадки …», либо сообщение о нехватке истории.
-    await expect(out.getByText(/Покупать просадки:|Недостаточно истории/)).toBeVisible({ timeout: 150000 });
+    await expect(out.getByText(/Покупать просадки|Недостаточно истории/)).toBeVisible({ timeout: 150000 });
+    if (await out.getByText(/Покупать просадки/).count()) {
+      // Новые колонки v2: Нетто (после издержек), Shrunk (стянуто к среднему), FDR (мультитест).
+      await expect(out.getByRole('columnheader', { name: 'Нетто' })).toBeVisible();
+      await expect(out.getByRole('columnheader', { name: 'Shrunk' })).toBeVisible();
+      await expect(out.getByRole('columnheader', { name: 'FDR' })).toBeVisible();
+    }
   });
 
-  test('режим Просадки: look-ahead (hold-out) даёт колонку OOS edge и метку калибровки', async ({ page }) => {
+  test('режим Просадки (v2): look-ahead (hold-out) даёт колонку OOS и метку отсечки', async ({ page }) => {
     await setup(page);
     await page.getByTestId('tab-dipcal').click();
     await page.locator('#dho').selectOption('2'); // отложить 2 года на проверку
     await page.getByTestId('run-study').click();
     const out = page.locator('[data-testid="signals-output"]');
-    await expect(out.getByText(/Покупать просадки:|Недостаточно истории/)).toBeVisible({ timeout: 150000 });
-    // На синтетике (5000 дней/символ) рынки проходят → видна метка look-ahead и колонка OOS.
-    if (await out.getByText(/Покупать просадки:/).count()) {
-      await expect(out.getByText(/look-ahead: калибровка/)).toBeVisible();
-      await expect(out.getByRole('columnheader', { name: 'OOS edge' })).toBeVisible();
+    await expect(out.getByText(/Покупать просадки|Недостаточно истории/)).toBeVisible({ timeout: 150000 });
+    // На синтетике (5000 дней/символ) рынки проходят → видна метка OOS и колонка OOS.
+    if (await out.getByText(/Покупать просадки/).count()) {
+      await expect(out.getByText(/OOS после/)).toBeVisible();
+      await expect(out.getByRole('columnheader', { name: 'OOS', exact: true })).toBeVisible();
     }
   });
 
