@@ -24,7 +24,7 @@ import { FACTORS, FACTOR_BY_ID, signalLabel, supportsSkip, type FactorId, type S
 import { UNIVERSE_PRESETS, type UniversePreset } from '@/lib/signals/presets';
 import { Heatmap, type HeatCell } from './Heatmap';
 
-type Mode = 'factor' | 'signal' | 'combine' | 'dipcal';
+type Mode = 'factor' | 'signal' | 'combine' | 'ma';
 type SavedSignal = { id: number; name: string; def: SignalDef };
 
 const CUR_YEAR = new Date().getFullYear();
@@ -235,7 +235,7 @@ function Tabs({ tab, setTab }: { tab: Mode; setTab: (m: Mode) => void }) {
     { id: 'factor', label: '1 · Фактор' },
     { id: 'signal', label: '2 · Сигнал' },
     { id: 'combine', label: '3 · Комбинация' },
-    { id: 'dipcal', label: '4 · Просадки' },
+    { id: 'ma', label: '4 · SMA/EMA' },
   ];
   return (
     <div className="flex gap-1 rounded-fk bg-surface-2 p-1">
@@ -334,14 +334,7 @@ function Signals() {
   const [grid1, setGrid1] = useState('');
   const [minN, setMinN] = useState(30);
   const [folds, setFolds] = useState(4);
-  // dipcal — калибровка покупки просадок: окно просадки N, окно волатильности, мин. число событий.
-  const [dipN, setDipN] = useState(21);
-  const [dipVolW, setDipVolW] = useState(63);
-  const [dipMinN, setDipMinN] = useState(8);
-  const [dipHold, setDipHold] = useState(0); // лет на look-ahead (OOS-проверку)
-  const [dipK, setDipK] = useState(1.5);     // глубина входа: просадка ≤ −kσ
-  const [dipCost, setDipCost] = useState(10); // round-trip издержки, бп
-  const [dipExcess, setDipExcess] = useState(true); // форвард как избыток над бенчмарком
+  // ma — матрица доходности след. дня выше/ниже SMA/EMA. Доп. состояния нет (вселенная/год общие).
 
   // ── Сохранённые результаты (снимки) ──
   const [savedResults, setSavedResults] = useState<{ id: number; title: string; mode: string; created_at: string }[] | null>(null);
@@ -437,7 +430,7 @@ function Signals() {
         if (Number.isFinite(c.horizon)) setHorizon(c.horizon);
         if (typeof c.yearFrom === 'string') setYearFrom(c.yearFrom);
         if (typeof c.yearTo === 'string') setYearTo(c.yearTo);
-        if (c.tab === 'factor' || c.tab === 'signal' || c.tab === 'combine' || c.tab === 'dipcal') setTab(c.tab);
+        if (c.tab === 'factor' || c.tab === 'signal' || c.tab === 'combine' || c.tab === 'ma') setTab(c.tab);
         if (typeof c.factorId === 'string' && FACTOR_BY_ID[c.factorId as FactorId]) setFactorId(c.factorId);
         if (c.fSide === 'high' || c.fSide === 'low' || c.fSide === 'band') setFSide(c.fSide);
         if (c.fBins === 'cumulative' || c.fBins === 'range' || c.fBins === 'quantile') setFBins(c.fBins);
@@ -547,7 +540,7 @@ function Signals() {
       setRunning(false);
       setErrMsg('');
       setResult(res.payload);
-      if (['factor', 'signal', 'combine', 'dipcal'].includes(res.payload.mode)) setTab(res.payload.mode);
+      if (['factor', 'signal', 'combine', 'ma'].includes(res.payload.mode)) setTab(res.payload.mode);
       reflectResultId(id); // адресная строка → пермалинк на этот снимок
       setStatus('Сохранённый результат');
     } catch (e: any) {
@@ -698,12 +691,9 @@ function Signals() {
     });
   }
 
-  function runDipcal() {
-    // start/end (год от-до) добавляет runStudy из yearFrom/yearTo; holdout — хвост на OOS-проверку.
-    runStudy({
-      mode: 'dipcal', dipWindow: dipN, volWindow: dipVolW, minN: dipMinN, holdout: dipHold,
-      kSigma: dipK, costBps: dipCost, excess: dipExcess,
-    });
+  function runMa() {
+    // Матрица SMA/EMA: вселенную/бенчмарк/окно лет (start/end из yearFrom/yearTo) добавляет runStudy.
+    runStudy({ mode: 'ma' });
   }
 
   function togglePicked(id: number) {
@@ -873,29 +863,13 @@ function Signals() {
                   onDelete={deleteSaved}
                 />
               )}
-              {tab === 'dipcal' && (
-                <DipcalForm
-                  dipN={dipN}
-                  setDipN={setDipN}
-                  volW={dipVolW}
-                  setVolW={setDipVolW}
-                  minN={dipMinN}
-                  setMinN={setDipMinN}
-                  horizon={horizon}
-                  setHorizon={setHorizon}
+              {tab === 'ma' && (
+                <MaForm
                   yearFrom={yearFrom}
                   setYearFrom={setYearFrom}
                   yearTo={yearTo}
                   setYearTo={setYearTo}
-                  hold={dipHold}
-                  setHold={setDipHold}
-                  kSigma={dipK}
-                  setKSigma={setDipK}
-                  cost={dipCost}
-                  setCost={setDipCost}
-                  excess={dipExcess}
-                  setExcess={setDipExcess}
-                  onRun={runDipcal}
+                  onRun={runMa}
                   running={running}
                   canRun={universe.length >= 4}
                 />
@@ -1061,7 +1035,7 @@ function Signals() {
             )}
             {result?.mode === 'signal' && <SignalResult data={result} onSave={saveSignalDef} />}
             {result?.mode === 'combine' && <CombineResult data={result} />}
-            {result?.mode === 'dipcal' && <DipcalResult data={result} />}
+            {result?.mode === 'ma' && <MaResult data={result} />}
           </div>
         </Card>
       </main>
@@ -1329,171 +1303,69 @@ function CombineForm(p: any) {
   );
 }
 
-function DipcalForm(p: any) {
+function MaForm(p: any) {
   return (
     <>
       <p className="text-[12px] text-ink-3">
-        Единое правило для всех рынков: вход, когда просадка от {p.dipN}-дн. пика глубже <b>−{p.kSigma}σ</b> (vol-масштаб, без
-        авто-подбора порога — против переобучения). Метрика — <b>{p.excess ? 'избыток над бенчмарком' : 'абсолютная доходность'}</b>;
-        с защитами: shrinkage к среднему, FDR по рынкам, hold-out OOS, издержки. Лучший пресет —{' '}
-        <span className="font-medium text-ink-2">«Страновые ETF»</span> слева.
+        Доходность рынка <b>на следующий день</b> в зависимости от того, выше или ниже цена своей скользящей средней.
+        Пул по всей выбранной вселенной; матрица окон 10/20/50/100/200 для SMA и EMA. «Разница» = выше − ниже, с t-стат и FDR-поправкой.
       </p>
       <div className="grid grid-cols-2 gap-3">
         <Field>
-          <Label htmlFor="dn">Окно просадки (дн.)</Label>
-          <Input id="dn" type="number" value={p.dipN} onChange={(e: any) => p.setDipN(Number(e.target.value) || 21)} />
-        </Field>
-        <Field>
-          <Label htmlFor="dh">Горизонт удержания (дн.)</Label>
-          <Input id="dh" type="number" value={p.horizon} onChange={(e: any) => p.setHorizon(Number(e.target.value) || 21)} />
-        </Field>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <Field>
-          <Label htmlFor="dk">Глубина входа (−kσ)</Label>
-          <Input id="dk" type="number" step="0.1" value={p.kSigma} onChange={(e: any) => p.setKSigma(Number(e.target.value) || 1.5)} />
-        </Field>
-        <Field>
-          <Label htmlFor="dv">Окно волатильности (дн.)</Label>
-          <Input id="dv" type="number" value={p.volW} onChange={(e: any) => p.setVolW(Number(e.target.value) || 63)} />
-        </Field>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <Field>
-          <Label htmlFor="dc">Издержки round-trip (бп)</Label>
-          <Input id="dc" type="number" value={p.cost} onChange={(e: any) => p.setCost(Number(e.target.value) || 0)} />
-        </Field>
-        <Field>
-          <Label htmlFor="dm">Мин. число входов</Label>
-          <Input id="dm" type="number" value={p.minN} onChange={(e: any) => p.setMinN(Number(e.target.value) || 8)} />
-        </Field>
-      </div>
-      <label className="flex items-center gap-2 text-[12px] text-ink-2">
-        <input type="checkbox" checked={p.excess} onChange={(e: any) => p.setExcess(e.target.checked)} className="accent-brand" data-testid="dip-excess" />
-        Считать избыток над бенчмарком (цель — обогнать его, а не просто заработать)
-      </label>
-      <div className="grid grid-cols-2 gap-3">
-        <Field>
-          <Label htmlFor="dyf">Год от</Label>
-          <Select id="dyf" value={p.yearFrom} onChange={(e: any) => p.setYearFrom(e.target.value)}>
+          <Label htmlFor="myf">Год от</Label>
+          <Select id="myf" value={p.yearFrom} onChange={(e: any) => p.setYearFrom(e.target.value)}>
             <option value="">самый ранний</option>
             {YEARS.map((y) => (<option key={y} value={y}>{y}</option>))}
           </Select>
         </Field>
         <Field>
-          <Label htmlFor="dyt">Год до</Label>
-          <Select id="dyt" value={p.yearTo} onChange={(e: any) => p.setYearTo(e.target.value)}>
+          <Label htmlFor="myt">Год до</Label>
+          <Select id="myt" value={p.yearTo} onChange={(e: any) => p.setYearTo(e.target.value)}>
             <option value="">текущий</option>
             {YEARS.map((y) => (<option key={y} value={y}>{y}</option>))}
           </Select>
         </Field>
       </div>
-      <Field>
-        <Label htmlFor="dho">Look-ahead — лет отложить на проверку</Label>
-        <Select id="dho" value={String(p.hold)} onChange={(e: any) => p.setHold(Number(e.target.value) || 0)}>
-          <option value="0">без проверки (вся история на калибровку)</option>
-          <option value="1">1 год — порог с прошлого, проверка на последнем</option>
-          <option value="2">2 года</option>
-          <option value="3">3 года</option>
-          <option value="5">5 лет</option>
-        </Select>
-      </Field>
       <Button onClick={p.onRun} loading={p.running} fullWidth data-testid="run-study" disabled={!p.canRun}>
-        Калибровать просадки по странам
+        Построить матрицу SMA / EMA
       </Button>
       {!p.canRun && <p className="text-[11px] font-medium text-warn-strong">Кнопка неактивна: выберите вселенную (≥ 4 инстр.) выше.</p>}
     </>
   );
 }
 
-const DIP_FLAG: Record<string, { label: string; variant: 'up' | 'down' | 'neutral' }> = {
-  revert: { label: 'реверсия', variant: 'up' },
-  neutral: { label: 'нейтр.', variant: 'neutral' },
-  trend: { label: 'нож ↓', variant: 'down' },
-};
-
-// Свод калибровки покупки просадок: по каждому рынку — подобранный порог (в %, σ и перцентиле),
-// форвардная доходность/edge, флаг поведения (реверсия/тренд) и стабильность. Строка раскрывается.
-function DipcalResult({ data }: { data: any }) {
-  const rows: any[] = data.rows || [];
-  const hold: number = data.holdout || 0;
-  const [open, setOpen] = useState<string | null>(null);
-  if (!rows.length) return <p className="text-sm text-ink-3">Недостаточно истории для калибровки — расширьте вселенную или окно лет.</p>;
-  const bench = data.meta?.benchmark || 'SPY';
-  const excess = data.excess !== false;
-  // «Покупать» = значимо после FDR И положительный нетто-избыток (и OOS не разваливается, если включён).
-  const buys = rows.filter((r) => r.fdr && (r.net ?? 0) > 0 && (hold === 0 || !r.oos || (r.oos?.net ?? -1) > 0)).map((r) => r.sym);
-  const knives = rows.filter((r) => r.reversion?.flag === 'trend').map((r) => r.sym);
-  const metric = excess ? `избыток над ${bench}` : 'абсолют';
+// Матрица доходности следующего дня выше/ниже скользящей средней по окнам.
+function MaTable({ title, rows }: { title: string; rows: any[] }) {
   return (
-    <div className="space-y-4">
-      <p className="text-[11px] text-ink-3">
-        {data.meta?.symbols} инстр. · окно {data.meta?.first} — {data.meta?.last} · просадка {data.dipWindow}д · вход −{fnum(data.kSigma, 1)}σ · горизонт {data.horizon}д · {metric} · издержки {fnum(data.costBps, 0)}бп
-        {hold > 0 && data.cutoff && <span className="text-brand-700"> · OOS после {data.cutoff}</span>}
-        {data.meta?.cleaned > 0 && <span className="text-warn-strong"> · очищено {data.meta.cleaned} баров</span>}
-      </p>
-      <div className="space-y-1 rounded-fk border border-line bg-surface-2 p-3 text-[12px]">
-        <p><span className="font-semibold text-up-strong">Покупать просадки</span> <span className="text-ink-3">(значимо после FDR, нетто &gt; 0{hold > 0 ? ', держит OOS' : ''}):</span> {buys.length ? buys.join(', ') : '—'}</p>
-        <p><span className="font-semibold text-down-strong">Падающий нож (избегать):</span> {knives.length ? knives.join(', ') : '—'}</p>
-        <p className="text-ink-3">
-          Единое правило: вход, когда просадка от {data.dipWindow}-дн. пика глубже <b>−{fnum(data.kSigma, 1)}σ</b> (vol-масштаб, без авто-подбора).
-          «{excess ? `Изб./${bench}` : 'Форвард'}» — {excess ? `избыток над ${bench}` : 'абсолютная доходность'} за {data.horizon}д после входа (после издержек — «Нетто»);
-          «Shrunk» — оценка, стянутая к среднему по рынкам (стабильнее на малых N); <b>FDR</b> ✓ — пережил поправку на множественную проверку. Клик по строке — детали.
-        </p>
-        {hold > 0 && (
-          <p className="text-ink-3">
-            <span className="font-medium text-brand-700">OOS:</span> то же правило на отложенных последних {hold} {hold === 1 ? 'году' : 'годах'} (после {data.cutoff}). Близкие Нетто и OOS = устойчиво; OOS ≪ Нетто = эффект только в истории.
-          </p>
-        )}
-      </div>
+    <div>
+      <div className="mb-1 text-[12px] font-semibold text-ink">{title}</div>
       <div className="overflow-x-auto">
-        <table className="w-full text-[12px]">
+        <table className="w-full text-[12px]" data-testid="ma-table">
           <thead>
-            <tr className="text-left text-ink-3">
-              <th className="py-1.5 pr-2">Рынок</th>
-              <th className="py-1.5 pr-2">Поведение</th>
-              <th className="py-1.5 pr-2">Вход (−{fnum(data.kSigma, 1)}σ)</th>
-              <th className="py-1.5 pr-2 text-right">{excess ? `Изб./${bench}` : 'Форвард'}</th>
-              <th className="py-1.5 pr-2 text-right">Нетто</th>
-              {hold > 0 && <th className="py-1.5 pr-2 text-right">OOS</th>}
-              <th className="py-1.5 pr-2 text-right">Shrunk</th>
-              <th className="py-1.5 pr-2 text-right">t</th>
-              <th className="py-1.5 pr-2 text-right">N</th>
-              <th className="py-1.5 pr-2 text-center">FDR</th>
+            <tr className="text-ink-3">
+              <th className="px-2 py-1 text-left font-medium">Окно</th>
+              <th className="px-2 py-1 text-right font-medium">Выше: ср.</th>
+              <th className="px-2 py-1 text-right font-medium">n</th>
+              <th className="px-2 py-1 text-right font-medium">Ниже: ср.</th>
+              <th className="px-2 py-1 text-right font-medium">n</th>
+              <th className="px-2 py-1 text-right font-medium">Разница</th>
+              <th className="px-2 py-1 text-right font-medium">t</th>
+              <th className="px-2 py-1 text-center font-medium">FDR</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => {
-              const fm = DIP_FLAG[r.reversion?.flag as string] || DIP_FLAG.neutral;
-              const isOpen = open === r.sym;
-              return (
-                <Fragment key={r.sym}>
-                  <tr className="cursor-pointer border-t border-line hover:bg-surface-2" onClick={() => setOpen(isOpen ? null : r.sym)}>
-                    <td className="py-1.5 pr-2 font-semibold text-ink">{r.sym}</td>
-                    <td className="py-1.5 pr-2"><Badge variant={fm.variant}>{fm.label}</Badge></td>
-                    <td className="py-1.5 pr-2 tabular-nums">{fpct(r.dd, 1)} <span className="text-ink-3">/ {fnum(r.sigma, 1)}σ</span></td>
-                    <td className={`py-1.5 pr-2 text-right tabular-nums ${(r.fwd ?? 0) >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{fpct(r.fwd)}</td>
-                    <td className={`py-1.5 pr-2 text-right tabular-nums ${(r.net ?? 0) >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{fpct(r.net)}</td>
-                    {hold > 0 && (
-                      <td className={`py-1.5 pr-2 text-right tabular-nums ${(r.oos?.net ?? 0) >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>
-                        {r.oos && r.oos.net != null ? (<>{fpct(r.oos.net)} <span className="text-[10px] text-ink-3">n={r.oos.n}</span></>) : <span className="text-ink-3">—</span>}
-                      </td>
-                    )}
-                    <td className={`py-1.5 pr-2 text-right tabular-nums ${(r.shrunk ?? 0) >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{fpct(r.shrunk)}</td>
-                    <td className="py-1.5 pr-2 text-right tabular-nums">{fnum(r.t, 1)}</td>
-                    <td className="py-1.5 pr-2 text-right tabular-nums">{r.n}</td>
-                    <td className="py-1.5 pr-2 text-center">{r.fdr ? <span className="text-up-strong">✓</span> : <span className="text-ink-3">—</span>}</td>
-                  </tr>
-                  {isOpen && (
-                    <tr>
-                      <td colSpan={hold > 0 ? 10 : 9} className="bg-surface-2 px-3 py-2">
-                        <DipcalDetail r={r} />
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
-              );
-            })}
+            {rows.map((r: any) => (
+              <tr key={r.w} className="border-t border-line">
+                <td className="px-2 py-1 text-left font-semibold text-ink">{r.w}</td>
+                <td className={`px-2 py-1 text-right tabular-nums ${(r.above?.mean ?? 0) >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{fpct(r.above?.mean)}</td>
+                <td className="px-2 py-1 text-right text-[10px] tabular-nums text-ink-3">{r.above?.n ?? '—'}</td>
+                <td className={`px-2 py-1 text-right tabular-nums ${(r.below?.mean ?? 0) >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{fpct(r.below?.mean)}</td>
+                <td className="px-2 py-1 text-right text-[10px] tabular-nums text-ink-3">{r.below?.n ?? '—'}</td>
+                <td className={`px-2 py-1 text-right font-semibold tabular-nums ${(r.diff ?? 0) >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{fpct(r.diff)}</td>
+                <td className="px-2 py-1 text-right tabular-nums">{fnum(r.dt, 1)}</td>
+                <td className="px-2 py-1 text-center">{r.sig ? <span className="text-up-strong">✓</span> : <span className="text-ink-3">—</span>}</td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
@@ -1501,36 +1373,23 @@ function DipcalResult({ data }: { data: any }) {
   );
 }
 
-function DipcalDetail({ r }: { r: any }) {
-  const rev = r.reversion || {};
-  const reg = r.regime || {};
-  const bestH = (r.by_h || []).reduce((a: any, b: any) => ((b.edge ?? -1e9) > (a?.edge ?? -1e9) ? b : a), null);
+function MaResult({ data }: { data: any }) {
+  const sma: any[] = data.sma || [];
+  const ema: any[] = data.ema || [];
+  if (!sma.length && !ema.length) return <p className="text-sm text-ink-3">Недостаточно истории — расширьте вселенную или окно лет.</p>;
   return (
-    <div className="space-y-2 text-[11px]">
-      <div className="flex flex-wrap gap-x-5 gap-y-1 text-ink-2">
-        <span><span className="font-semibold">Edge сверх безусловного:</span> {fpct(r.edge, 2)} <span className="text-ink-3">(вход {fpct(r.fwd, 2)} vs обычно {fpct(r.baseline, 2)})</span></span>
-        <span><span className="font-semibold">Доля плюс:</span> {fnum(r.hit, 0)}%</span>
-        <span><span className="font-semibold">Лет с плюсом:</span> {r.pos_years}/{r.tot_years}</span>
-        {r.oos && <span><span className="font-semibold">OOS:</span> нетто {fpct(r.oos.net, 2)} (t {fnum(r.oos.t, 1)}, n{r.oos.n})</span>}
+    <div className="space-y-5" data-testid="ma-result">
+      <p className="text-[11px] text-ink-3">
+        {data.meta?.symbols} инстр. · окно {data.meta?.first} — {data.meta?.last} · доходность на следующий день (+1д)
+        {data.baseline != null && <> · безусловная средняя {fpct(data.baseline)}</>}
+        {data.meta?.cleaned > 0 && <span className="text-warn-strong"> · очищено {data.meta.cleaned} баров</span>}
+      </p>
+      <div className="rounded-fk border border-line bg-surface-2 p-3 text-[12px] text-ink-3">
+        Для каждого окна — средняя доходность СЛЕДУЮЩЕГО дня, когда цена <b className="text-ink-2">выше</b> своей средней и когда <b className="text-ink-2">ниже</b>;
+        «Разница» = выше − ниже (трендовый эффект). t — значимость разницы (Welch), FDR ✓ — значимо после поправки на множественную проверку (BH по 10 ячейкам). Доходность абсолютная, пул по вселенной.
       </div>
-      <div>
-        <span className="font-semibold text-ink-2">По горизонтам (изб. над бенч): </span>
-        {(r.by_h || []).map((h: any) => (
-          <span key={h.h} className={`mr-2 tabular-nums ${bestH && h.h === bestH.h ? 'font-semibold text-brand-700' : 'text-ink-2'}`}>
-            {h.h}д {fpct(h.fwd, 1)}
-          </span>
-        ))}
-        {bestH && <span className="text-ink-3">· сильнее всего ≈ {bestH.h}д</span>}
-      </div>
-      <div className="flex flex-wrap gap-x-5 gap-y-1 text-ink-2">
-        <span>
-          <span className="font-semibold">Поведение:</span> corr(глубина→форвард) {fnum(rev.corr, 2)} (t {fnum(rev.t, 1)}) —{' '}
-          {rev.flag === 'revert' ? 'глубже падение → выше отскок' : rev.flag === 'trend' ? 'глубже падение → дальше вниз (нож)' : 'нет связи'}
-        </span>
-        <span>
-          <span className="font-semibold">Режим входа:</span> тихо {fpct(reg.calm_fwd, 1)} (n{reg.calm_n}) · паника {fpct(reg.storm_fwd, 1)} (n{reg.storm_n})
-        </span>
-      </div>
+      <MaTable title="SMA — простая скользящая средняя" rows={sma} />
+      <MaTable title="EMA — экспоненциальная скользящая средняя" rows={ema} />
     </div>
   );
 }

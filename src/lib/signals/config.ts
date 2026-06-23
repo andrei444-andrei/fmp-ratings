@@ -89,10 +89,10 @@ function normSignal(raw: any): SignalDef | null {
   return { factor: f.id as FactorId, param, side, threshold, skip };
 }
 
-export type StudyConfig = Record<string, unknown> & { mode: 'factor' | 'signal' | 'combine' | 'setops' | 'cellobs' | 'dipcal' };
+export type StudyConfig = Record<string, unknown> & { mode: 'factor' | 'signal' | 'combine' | 'setops' | 'cellobs' | 'ma' };
 
 export function normalizeStudyConfig(body: any): StudyConfig {
-  const mode = ['factor', 'signal', 'combine', 'setops', 'cellobs', 'dipcal'].includes(body?.mode) ? body.mode : 'factor';
+  const mode = ['factor', 'signal', 'combine', 'setops', 'cellobs', 'ma'].includes(body?.mode) ? body.mode : 'factor';
   const benchmark = (typeof body?.benchmark === 'string' && body.benchmark.trim() ? body.benchmark : 'SPY')
     .toUpperCase()
     .trim();
@@ -138,20 +138,10 @@ export function normalizeStudyConfig(body: any): StudyConfig {
     return { ...base, signal: sig };
   }
 
-  if (mode === 'dipcal') {
-    // Покупка просадок (v2): фикс. правило −kσ, избыток над бенчмарком, hold-out OOS, shrinkage, FDR, издержки.
-    return {
-      ...base,
-      dipWindow: Math.round(clampNum(body?.dipWindow, 21, 5, 252)),
-      volWindow: Math.round(clampNum(body?.volWindow, 63, 20, 252)),
-      minN: Math.round(clampNum(body?.minN, 8, 2, 1000)),       // мин. число входов для показа рынка
-      kSigma: clampNum(body?.kSigma, 1.5, 0.3, 5),              // глубина входа: просадка ≤ −kσ
-      costBps: clampNum(body?.costBps, 10, 0, 200),             // round-trip издержки, бп
-      excess: body?.excess !== false,                          // форвард как избыток над бенчмарком (по умолч. да)
-      shrink: body?.shrink !== false,                          // empirical-Bayes shrinkage к среднему
-      fdrAlpha: clampNum(body?.fdrAlpha, 0.1, 0.01, 0.5),
-      holdout: Math.round(clampNum(body?.holdout, 0, 0, 10)),
-    };
+  if (mode === 'ma') {
+    // Доходность след. дня при цене выше/ниже SMA/EMA (окна 10/20/50/100/200). Доп. параметров нет —
+    // вселенная/бенчмарк/окно лет берутся из base; матрица окон фиксирована в движке.
+    return { ...base };
   }
 
   if (mode === 'setops') {

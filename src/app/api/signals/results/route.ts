@@ -13,7 +13,7 @@ export async function GET() {
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const payload = body?.payload;
-  const mode = ['factor', 'signal', 'combine', 'dipcal'].includes(body?.mode) ? body.mode : 'factor';
+  const mode = ['factor', 'signal', 'combine', 'ma'].includes(body?.mode) ? body.mode : 'factor';
   if (payload == null || typeof payload !== 'object') {
     return Response.json({ error: 'nothing to save' }, { status: 400 });
   }
