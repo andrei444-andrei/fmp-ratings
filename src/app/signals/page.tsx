@@ -316,6 +316,7 @@ function Signals() {
   const [fParams, setFParams] = useState<number[]>(factorDef.defaultParams);
   const [fThresholds, setFThresholds] = useState<string>(factorDef.defaultThresholds.join(', '));
   const [fSkip, setFSkip] = useState(0);
+  const [fOutcome, setFOutcome] = useState<'excess' | 'alpha'>('excess'); // исход: превышение бенчмарка vs β-альфа
 
   // ── Сигнал ──
   const [sFactor, setSFactor] = useState<FactorId>('momentum');
@@ -438,6 +439,7 @@ function Signals() {
         if (Array.isArray(c.fParams)) setFParams(c.fParams.filter((x: any) => Number.isFinite(x)));
         if (typeof c.fThresholds === 'string') setFThresholds(c.fThresholds);
         if (Number.isFinite(c.fSkip)) setFSkip(c.fSkip);
+        if (c.fOutcome === 'excess' || c.fOutcome === 'alpha') setFOutcome(c.fOutcome);
       }
     } catch {
       /* ignore */
@@ -461,12 +463,12 @@ function Signals() {
     try {
       localStorage.setItem(
         'signals:config',
-        JSON.stringify({ presets: [...presets], custom, benchmark, horizon, yearFrom, yearTo, tab, factorId, fSide, fBins, fParams, fThresholds, fSkip }),
+        JSON.stringify({ presets: [...presets], custom, benchmark, horizon, yearFrom, yearTo, tab, factorId, fSide, fBins, fParams, fThresholds, fSkip, fOutcome }),
       );
     } catch {
       /* ignore */
     }
-  }, [hydrated, presets, custom, benchmark, horizon, yearFrom, yearTo, tab, factorId, fSide, fBins, fParams, fThresholds, fSkip]);
+  }, [hydrated, presets, custom, benchmark, horizon, yearFrom, yearTo, tab, factorId, fSide, fBins, fParams, fThresholds, fSkip, fOutcome]);
 
   // Пермалинк: отражаем id открытого снимка в адресной строке (?result=<id>) БЕЗ навигации —
   // ссылку можно скопировать и открыть напрямую. id=null убирает параметр (свежий прогон).
@@ -671,7 +673,7 @@ function Signals() {
   function runFactor() {
     runStudy({
       mode: 'factor', factor: factorId, side: fSide, bins: fBins, params: fParams,
-      thresholds: parseList(fThresholds), skip: supportsSkip(factorId) ? fSkip : 0, groups,
+      thresholds: parseList(fThresholds), skip: supportsSkip(factorId) ? fSkip : 0, outcome: fOutcome, groups,
     });
   }
   function runSignal() {
@@ -818,6 +820,8 @@ function Signals() {
                   setThresholds={setFThresholds}
                   skip={fSkip}
                   setSkip={setFSkip}
+                  outcome={fOutcome}
+                  setOutcome={setFOutcome}
                   onRun={runFactor}
                   running={running}
                   canRun={universe.length >= 4}
@@ -1129,6 +1133,28 @@ function FactorForm(p: any) {
             </button>
           ))}
         </div>
+      </Field>
+      <Field>
+        <Label>Исход (что меряем)</Label>
+        <div className="flex gap-1 rounded-fk bg-surface-2 p-1">
+          {([['excess', 'Превышение бенчм.'], ['alpha', 'Альфа (β-скоррект.)']] as const).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => p.setOutcome(id)}
+              className={`flex-1 rounded-fk-sm px-2 py-1 text-[12px] font-semibold transition-colors ${
+                p.outcome === id ? 'bg-surface-elev text-ink shadow-fk-sm' : 'text-ink-3'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] text-ink-3">
+          {p.outcome === 'alpha'
+            ? 'Форвард = r − β·r_бенч (убираем рыночную бету; β — трейлинг ~год).'
+            : 'Форвард = r − r_бенч (простое превышение бенчмарка).'}
+        </p>
       </Field>
       {p.bins === 'cumulative' && (
         <Field>
@@ -1892,6 +1918,9 @@ function FactorResult({ data, onSave, reqGroups = [], reqUniverse = [], reqBench
         {f.label} · {data.bins === 'quantile' ? 'топ/дно %' : isRange ? 'диапазоны' : data.side === 'high' ? '≥ порог' : '≤ порог'} · гор. {data.horizon}д
         {data.skip ? ` · gap ${data.skip}д` : ''}
       </Badge>
+      {data.outcome === 'alpha' && (
+        <Badge variant="brand">исход: альфа (β-скоррект.) — «изб. дох.» = r − β·r_бенч</Badge>
+      )}
       {hasYears && <YearRange min={minY} max={maxY} from={winFrom} to={winTo} setFrom={setWinFrom} setTo={setWinTo} />}
       <SelectionPanel
         data={data}

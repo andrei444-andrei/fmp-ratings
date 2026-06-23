@@ -105,6 +105,15 @@ test.describe('Signals /signals', () => {
     await expect(drill.locator('table tbody tr').or(drill.getByText('Нет случаев за этот год')).first()).toBeVisible({ timeout: 30000 });
   });
 
+  test('режим Фактор: исход «Альфа (β-скоррект.)» строит карту и показывает бейдж', async ({ page }) => {
+    await setup(page);
+    await page.getByRole('button', { name: 'Альфа (β-скоррект.)' }).click();
+    await page.getByTestId('run-study').click();
+    await expect(page.getByTestId('heat-cell').first()).toBeVisible({ timeout: 150000 });
+    // Бейдж исхода виден → forward = r − β·r_бенч (а не простое превышение).
+    await expect(page.locator('[data-testid="signals-output"]').getByText(/исход: альфа/)).toBeVisible();
+  });
+
   test('последний результат переживает перезаход во вкладку (авто-восстановление)', async ({ page }) => {
     await setup(page);
     await page.getByTestId('run-study').click();

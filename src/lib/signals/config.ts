@@ -129,6 +129,7 @@ export function normalizeStudyConfig(body: any): StudyConfig {
       thresholds,
       fdrAlpha: clampNum(body?.fdrAlpha, 0.1, 0.01, 0.5),
       skip: Math.round(clampNum(body?.skip, 0, 0, 60)),
+      outcome: body?.outcome === 'alpha' ? 'alpha' : 'excess', // исход: превышение vs β-альфа
       groups: groups.length ? groups : undefined,
     };
   }

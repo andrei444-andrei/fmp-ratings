@@ -140,17 +140,28 @@ def factor_series(c, bc, fid, param, has_b, skip=0):
         rs = up / dn.replace(0, np.nan); return 100.0 - 100.0 / (1.0 + rs)
     return c * np.nan
 
-def build_targets(px, bench, horizons, step):
+def build_targets(px, bench, horizons, step, outcome='excess', betaW=252):
+    # outcome='excess' → forward = r_i − r_bench (простое превышение).
+    # outcome='alpha'  → forward = r_i − β·r_bench, β — трейлинг-наклон к бенчмарку (β-скоррект., point-in-time).
     px = px.sort_index(); has_b = bench in px.columns; bc = px[bench] if has_b else None
     keep = px.index[::max(1, step)]
+    rb = bc.pct_change() if has_b else None
+    varb = rb.rolling(betaW, min_periods=60).var() if has_b else None
     frames = []
     for s in [c for c in px.columns if c != bench]:
         c = px[s]
         if c.notna().sum() < 260: continue
         d = pd.DataFrame(index=px.index)
+        beta = None
+        if has_b and outcome == 'alpha':
+            beta = c.pct_change().rolling(betaW, min_periods=60).cov(rb) / varb.replace(0, np.nan)
         for h in horizons:
             fwd = c.shift(-h) / c - 1.0
-            d['t_' + str(h)] = ((fwd - (bc.shift(-h) / bc - 1.0)) * 100.0) if has_b else (fwd * 100.0)
+            if has_b:
+                fwb = bc.shift(-h) / bc - 1.0
+                d['t_' + str(h)] = ((fwd - beta * fwb) * 100.0) if (beta is not None) else ((fwd - fwb) * 100.0)
+            else:
+                d['t_' + str(h)] = fwd * 100.0
         # Сэмплируем (без перекрытия) ДО конкатенации — иначе панель из полной дневной истории
         # на большой вселенной (сотни тикеров) исчерпывает память.
         d = d.reindex(keep)
@@ -294,6 +305,7 @@ async def main():
 
     if mode == 'factor':
         fid = CFG['factor']; side = CFG['side']; bins = CFG.get('bins', 'cumulative')
+        outcome = 'alpha' if CFG.get('outcome') == 'alpha' else 'excess'   # исход: превышение vs β-альфа
         params = [int(p) for p in CFG['params']]
         thresholds = sorted([float(t) for t in CFG['thresholds']])
         alpha = float(CFG.get('fdrAlpha', 0.1))
@@ -336,7 +348,7 @@ async def main():
             cols_g = [c for c in px.columns if c in gsyms or c == gbench]
             pxg = px[cols_g] if cols_g else px.iloc[:, :0]
             has_b_g = gbench in pxg.columns
-            tgt_g = build_targets(pxg, gbench, HZ, H)
+            tgt_g = build_targets(pxg, gbench, HZ, H, outcome)
             if tgt_g.empty:
                 out_groups.append({'label': grp.get('label'), 'baseline': None, 'symbols': 0,
                                    'benchmark': gbench, 'has_bench': has_b_g, 'grid': []})
@@ -391,6 +403,7 @@ async def main():
                 'last': str(pd.Timestamp(dts[-1]).date()) if len(dts) else '',
                 'benchmark': bench, 'has_bench': True, 'cleaned': int(n_cleaned)}
         return {'mode': 'factor', 'factor': fid, 'side': side, 'bins': bins, 'horizon': H, 'skip': skip,
+                'outcome': outcome,
                 'fdrAlpha': alpha, 'params': params, 'cols': col_labels, 'hz': HZ, 'groups': out_groups, 'meta': meta}
 
     # setops — операции над множествами наблюдений ВЫБРАННЫХ ячеек одной группы (страны):
