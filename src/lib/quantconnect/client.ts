@@ -214,50 +214,47 @@ export async function qcReadBacktestOrders(
 }
 
 // Детальные сделки (ордера) бектеста: дата, инструмент, сторона, кол-во, цена, объём.
-// Берём ВСЕ ордера: 0-я страница даёт total (`length`), остальные догружаем параллельно
-// батчами (быстро, в рамках таймаута). Ошибку первой страницы пробрасываем (реальная
-// причина «нет сделок»); единичные сбойные страницы пропускаем. Кап — на крайний случай.
+// ПОСЛЕДОВАТЕЛЬНАЯ пагинация по 100 (параллельная упиралась в rate-limit QC → 200 с
+// пустыми ордерами → «нет сделок»). Идём, пока страница полная; высокий кап + бюджет
+// по времени, чтобы не упереться в таймаут роута. Ошибку первой страницы пробрасываем.
 export async function qcReadBacktestTrades(
   projectId: number | string,
   backtestId: string,
-  maxOrders = 40000,
+  maxOrders = 30000,
+  timeBudgetMs = 45000,
 ): Promise<{ trades: QcTrade[]; capped: boolean }> {
   const pid = Number(projectId), bt = String(backtestId);
   const ordersOf = (d: any): any[] => (Array.isArray(d?.orders) ? d.orders : Array.isArray(d?.Orders) ? d.Orders : []);
   const readPage = (start: number) => qcPost('/backtests/orders/read', { projectId: pid, backtestId: bt, start, end: start + 100 });
+  const t0 = Date.now();
+  const out: QcTrade[] = [];
 
-  // первая страница — ошибку пробрасываем (чтобы реальная причина была видна)
-  const first = await readPage(0);
-  const firstArr = ordersOf(first);
-  const out: QcTrade[] = firstArr.map(qcParseOrder);
-  const total = Number(first?.length ?? first?.Length);
-
-  // total неизвестен → добираем последовательно, пока страница полная
-  if (!isFinite(total) || total <= 0) {
-    if (firstArr.length < 100) return { trades: out, capped: false };
-    for (let start = 100; start < maxOrders; start += 100) {
-      let arr: any[];
-      try { arr = ordersOf(await readPage(start)); } catch { return { trades: out, capped: false }; }
-      for (const o of arr) out.push(qcParseOrder(o));
-      if (arr.length < 100) return { trades: out, capped: false };
+  // Первая страница с ретраем: QC под rate-limit иногда отдаёт 200 с пустыми ордерами
+  // (отсюда «нет сделок» на ровном месте). Ретраим и на ошибку, и на пустоту.
+  let firstArr: any[] = [];
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let data: any;
+    try {
+      data = await readPage(0);
+    } catch (e) {
+      if (attempt === 2) throw e; // реальная причина видна после ретраев
+      await sleep(500); continue;
     }
-    return { trades: out, capped: true };
+    firstArr = ordersOf(data);
+    if (firstArr.length > 0 || attempt === 2) break;
+    await sleep(500); // пусто — вероятно rate-limit, пробуем ещё
   }
-  if (firstArr.length >= total || total <= 100) return { trades: out, capped: false };
+  for (const o of firstArr) out.push(qcParseOrder(o));
+  if (firstArr.length < 100) return { trades: out, capped: false };
 
-  // знаем total → догружаем остальные страницы параллельно батчами (с одним ретраем)
-  const cap = Math.min(total, maxOrders);
-  const starts: number[] = [];
-  for (let s = 100; s < cap; s += 100) starts.push(s);
-  const CONC = 6;
-  for (let i = 0; i < starts.length; i += CONC) {
-    const pages = await Promise.all(starts.slice(i, i + CONC).map(async s => {
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try { return ordersOf(await readPage(s)); } catch { if (attempt === 1) return null; }
-      }
-      return null;
-    }));
-    for (const arr of pages) if (arr) for (const o of arr) out.push(qcParseOrder(o));
+  // дальше — последовательно, пока страница полная (с бюджетом по времени)
+  for (let start = 100; start < maxOrders; start += 100) {
+    let arr: any[];
+    try { arr = ordersOf(await readPage(start)); }
+    catch { return { trades: out, capped: true }; }
+    for (const o of arr) out.push(qcParseOrder(o));
+    if (arr.length < 100) return { trades: out, capped: false };
+    if (Date.now() - t0 > timeBudgetMs) return { trades: out, capped: true };
   }
-  return { trades: out, capped: total > maxOrders };
+  return { trades: out, capped: true };
 }
