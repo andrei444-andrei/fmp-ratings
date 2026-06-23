@@ -553,6 +553,61 @@ async def main():
                          'last': str(pd.Timestamp(dts[-1]).date()) if dts else '',
                          'benchmark': bench, 'cleaned': int(n_cleaned)}}
 
+    if mode == 'maops':
+        # Доходность след. дня на КОМБИНАЦИИ условий выше/ниже MA (пересечение/исключение).
+        # conds = [{type, window, side}]; op ∈ and/or/diff/xor. Пул по вселенной, маски на общих датах.
+        pxs = px.sort_index()
+        req = set(str(s).upper() for s in syms)
+        cols = [c for c in pxs.columns if c in req] or [col for col in pxs.columns if col != bench]
+        conds = CFG.get('conds') or []
+        op = CFG.get('op', 'and')
+        nC = len(conds)
+        if nC < 1:
+            return {'mode': 'maops', 'op': op, 'stat': None, 'baseline': None, 'diff': None, 'operands': [], 'n_total': 0}
+        sel_fwd = []; base_fwd = []; op_counts = [0] * nC
+        for s in cols:
+            c = pxs[s].dropna()
+            if len(c) < 230:
+                continue
+            data = {'f': (c.shift(-1) / c - 1.0) * 100.0}   # доходность следующего дня
+            for i, cd in enumerate(conds):
+                w = int(cd.get('window', 50)); kind = cd.get('type', 'sma')
+                ma = c.rolling(w).mean() if kind == 'sma' else c.ewm(span=w, adjust=False).mean()
+                data['m%d' % i] = (c > ma) if cd.get('side') == 'above' else (c < ma)
+            d = pd.DataFrame(data).dropna()
+            if not len(d):
+                continue
+            base_fwd.append(d['f'].values)
+            M = np.vstack([d['m%d' % i].values.astype(bool) for i in range(nC)])   # nC × rows
+            for i in range(nC):
+                op_counts[i] += int(M[i].sum())
+            if op == 'or':
+                comb = M.any(axis=0)
+            elif op == 'diff':                                  # A но НЕ остальные
+                comb = M[0] & (~M[1:].any(axis=0)) if nC > 1 else M[0]
+            elif op == 'xor':
+                comb = (M.sum(axis=0) == 1)
+            else:                                               # and (пересечение)
+                comb = M.all(axis=0)
+            sel_fwd.append(d['f'].values[comb])
+        sel = np.concatenate(sel_fwd) if sel_fwd else np.array([])
+        bas = np.concatenate(base_fwd) if base_fwd else np.array([])
+
+        def _st(x):
+            n = int(len(x))
+            if n < 2: return None
+            m = float(np.mean(x)); sd = float(np.std(x, ddof=1))
+            t = m / (sd / math.sqrt(n)) if sd > 0 else 0.0
+            return {'mean': _f(m), 't': _f(t), 'n': n, 'hit': _f(float((x > 0).mean() * 100.0))}
+
+        sel_m = float(np.mean(sel)) if len(sel) else None
+        base_m = float(np.mean(bas)) if len(bas) else None
+        return {'mode': 'maops', 'op': op, 'stat': _st(sel), 'baseline': _f(base_m),
+                'diff': _f((sel_m - base_m)) if (sel_m is not None and base_m is not None) else None,
+                'operands': [{'type': cd.get('type'), 'window': int(cd.get('window', 0)),
+                              'side': cd.get('side'), 'n': op_counts[i]} for i, cd in enumerate(conds)],
+                'n_total': int(len(bas))}
+
     if mode == 'signal':
         s0 = CFG['signal']
         fv = build_fval(px, bench, s0['factor'], int(s0['param']), H, int(s0.get('skip', 0)))

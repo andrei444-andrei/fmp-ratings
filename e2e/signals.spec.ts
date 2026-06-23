@@ -345,6 +345,25 @@ test.describe('Signals /signals', () => {
     await expect(out.getByTestId('ma-table').first().locator('tbody tr').first()).toContainText('%');
   });
 
+  test('режим SMA/EMA: клик по ячейкам комбинирует правила (пересечение, maops)', async ({ page }) => {
+    await setup(page);
+    await page.getByTestId('tab-ma').click();
+    await page.getByTestId('run-study').click();
+    const out = page.locator('[data-testid="signals-output"]');
+    await expect(out.getByText('SMA — простая скользящая средняя')).toBeVisible({ timeout: 150000 });
+    // Кликаем две ячейки SMA-таблицы: «выше SMA10» (nth 0) и «ниже SMA200» (nth 9) → пересечение.
+    const cells = out.getByTestId('ma-cell');
+    await cells.nth(0).click();
+    await cells.nth(9).click();
+    const panel = out.getByTestId('maops');
+    await expect(panel).toBeVisible();
+    await expect(panel.getByText(/Комбинация правил/)).toBeVisible();
+    // После серверного пересчёта — статистика комбинации ИЛИ «мало наблюдений», без ошибок.
+    await expect(panel.getByText('Считаю комбинацию по членству наблюдений…')).toHaveCount(0, { timeout: 150000 });
+    await expect(panel.getByText('Не удалось определить вселенную — перезапустите прогон.')).toHaveCount(0);
+    await expect(panel.getByText('Ср. дох. (+1д)').or(panel.getByText(/слишком мало наблюдений/)).first()).toBeVisible({ timeout: 30000 });
+  });
+
   test('режим Сигнал: событийный анализ рендерит статистику', async ({ page }) => {
     await setup(page);
     await page.getByTestId('tab-signal').click();

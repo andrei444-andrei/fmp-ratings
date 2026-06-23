@@ -89,10 +89,10 @@ function normSignal(raw: any): SignalDef | null {
   return { factor: f.id as FactorId, param, side, threshold, skip };
 }
 
-export type StudyConfig = Record<string, unknown> & { mode: 'factor' | 'signal' | 'combine' | 'setops' | 'cellobs' | 'ma' };
+export type StudyConfig = Record<string, unknown> & { mode: 'factor' | 'signal' | 'combine' | 'setops' | 'cellobs' | 'ma' | 'maops' };
 
 export function normalizeStudyConfig(body: any): StudyConfig {
-  const mode = ['factor', 'signal', 'combine', 'setops', 'cellobs', 'ma'].includes(body?.mode) ? body.mode : 'factor';
+  const mode = ['factor', 'signal', 'combine', 'setops', 'cellobs', 'ma', 'maops'].includes(body?.mode) ? body.mode : 'factor';
   const benchmark = (typeof body?.benchmark === 'string' && body.benchmark.trim() ? body.benchmark : 'SPY')
     .toUpperCase()
     .trim();
@@ -142,6 +142,22 @@ export function normalizeStudyConfig(body: any): StudyConfig {
     // Доходность след. дня при цене выше/ниже SMA/EMA (окна 10/20/50/100/200). Доп. параметров нет.
     // Бенчмарк для ma не используется → НЕ выкидываем его из вселенной (можно анализировать сам SPY).
     return { ...base, universe: normUniverse(body?.universe, '', 520) };
+  }
+
+  if (mode === 'maops') {
+    // Комбинация условий выше/ниже MA: пересечение/исключение. conds=[{type,window,side}], op.
+    const wins = [10, 20, 50, 100, 200];
+    const conds = (Array.isArray(body?.conds) ? body.conds : [])
+      .slice(0, 8)
+      .map((c: any) => {
+        const type = c?.type === 'ema' ? 'ema' : 'sma';
+        const window = wins.includes(Number(c?.window)) ? Number(c.window) : null;
+        const side = c?.side === 'below' ? 'below' : c?.side === 'above' ? 'above' : null;
+        return window != null && side ? { type, window, side } : null;
+      })
+      .filter((c: unknown): c is { type: string; window: number; side: string } => c != null);
+    const op = ['and', 'or', 'diff', 'xor'].includes(body?.op) ? body.op : 'and';
+    return { ...base, universe: normUniverse(body?.universe, '', 520), conds, op };
   }
 
   if (mode === 'setops') {
