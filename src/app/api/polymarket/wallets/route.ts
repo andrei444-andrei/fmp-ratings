@@ -32,11 +32,12 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => ({}));
     const res = await crawlBatch({
       discover: sp.get('discover') === '1' || body.discover === true,
-      discoverMarkets: body.discoverMarkets ?? 30,
-      holdersPer: body.holdersPer ?? 50,
-      scoreWallets: body.scoreWallets ?? 20,
+      discoverMarkets: body.discoverMarkets ?? 40,
+      holdersPer: body.holdersPer ?? 60,
+      scoreWallets: body.scoreWallets ?? 60,
       minHorizonDays: body.minHorizonDays ?? 7,
       minN: body.minN ?? 20,
+      budgetMs: body.budgetMs ?? 45000,
     });
     return NextResponse.json(res);
   } catch (e: any) {

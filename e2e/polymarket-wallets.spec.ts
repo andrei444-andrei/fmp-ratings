@@ -38,12 +38,12 @@ test('лидерборд умных денег: значимость, разби
 
   await expect(page.getByRole('heading', { name: /Умные деньги/ })).toBeVisible();
   await expect(page.getByText('0xaaaa…0001')).toBeVisible({ timeout: 15000 });
-  await expect(page.getByText('значим').first()).toBeVisible();
+  await expect(page.getByText('значим p<0.05').first()).toBeVisible();
 
   // разбивка по категориям раскрывается. dispatchEvent — минуем липкий навбар,
   // который на коротком мобильном вьюпорте перекрывает верх (известная проблема репо).
   await page.getByRole('button', { name: /по категориям/ }).first().dispatchEvent('click');
-  await expect(page.getByText(/Edge по категориям/).first()).toBeVisible();
+  await expect(page.getByText(/Edge по типам событий/).first()).toBeVisible();
 
   // фильтр по категории crypto оставляет только кошелёк с crypto-историей
   await page.getByRole('tab', { name: 'Крипто' }).dispatchEvent('click');
@@ -56,5 +56,5 @@ test('кнопка краула вызывает POST и обновляет', as
   await page.goto('/polymarket/wallets');
   await expect(page.getByText('0xaaaa…0001')).toBeVisible({ timeout: 15000 });
   await page.getByRole('button', { name: /Найти \+ оценить/ }).click();
-  await expect(page.getByText(/в базе кошельков/)).toBeVisible();
+  await expect(page.getByText(/Значимых найдено/)).toBeVisible();
 });
