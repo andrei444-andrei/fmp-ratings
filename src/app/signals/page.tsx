@@ -1339,7 +1339,28 @@ function MaForm(p: any) {
 }
 
 // Матрица доходности следующего дня выше/ниже скользящей средней по окнам.
-function MaTable({ title, rows }: { title: string; rows: any[] }) {
+function maCondLabel(key: string): string {
+  const [type, w, side] = key.split('|');
+  return `${side === 'above' ? 'выше' : 'ниже'} ${type.toUpperCase()}${w}`;
+}
+
+// Матрица доходности следующего дня выше/ниже MA. Ячейки «Выше»/«Ниже» кликабельны — добавляют
+// условие в комбинацию (пересечение/исключение нескольких правил).
+function MaTable({ title, kind, rows, picks, onToggle }: { title: string; kind: 'sma' | 'ema'; rows: any[]; picks: Set<string>; onToggle: (key: string) => void }) {
+  const cell = (w: number, side: 'above' | 'below', mean: any) => {
+    const key = `${kind}|${w}|${side}`;
+    const on = picks.has(key);
+    return (
+      <button
+        type="button"
+        data-testid="ma-cell"
+        onClick={() => onToggle(key)}
+        className={`w-full rounded-fk-sm px-1.5 py-0.5 text-right tabular-nums transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--fk-ring)] ${on ? 'bg-brand-50 ring-1 ring-brand' : ''} ${(mean ?? 0) >= 0 ? 'text-up-strong' : 'text-down-strong'}`}
+      >
+        {fpct(mean)}
+      </button>
+    );
+  };
   return (
     <div>
       <div className="mb-1 text-[12px] font-semibold text-ink">{title}</div>
@@ -1361,9 +1382,9 @@ function MaTable({ title, rows }: { title: string; rows: any[] }) {
             {rows.map((r: any) => (
               <tr key={r.w} className="border-t border-line">
                 <td className="px-2 py-1 text-left font-semibold text-ink">{r.w}</td>
-                <td className={`px-2 py-1 text-right tabular-nums ${(r.above?.mean ?? 0) >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{fpct(r.above?.mean)}</td>
+                <td className="py-0.5 pr-1">{cell(r.w, 'above', r.above?.mean)}</td>
                 <td className="px-2 py-1 text-right text-[10px] tabular-nums text-ink-3">{r.above?.n ?? '—'}</td>
-                <td className={`px-2 py-1 text-right tabular-nums ${(r.below?.mean ?? 0) >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{fpct(r.below?.mean)}</td>
+                <td className="py-0.5 pr-1">{cell(r.w, 'below', r.below?.mean)}</td>
                 <td className="px-2 py-1 text-right text-[10px] tabular-nums text-ink-3">{r.below?.n ?? '—'}</td>
                 <td className={`px-2 py-1 text-right font-semibold tabular-nums ${(r.diff ?? 0) >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{fpct(r.diff)}</td>
                 <td className="px-2 py-1 text-right tabular-nums">{fnum(r.dt, 1)}</td>
@@ -1380,7 +1401,32 @@ function MaTable({ title, rows }: { title: string; rows: any[] }) {
 function MaResult({ data }: { data: any }) {
   const sma: any[] = data.sma || [];
   const ema: any[] = data.ema || [];
+  const [picks, setPicks] = useState<Set<string>>(new Set());
+  const [op, setOp] = useState<'and' | 'or' | 'diff'>('and');
+  const [obs, setObs] = useState<{ loading: boolean; res: any; err: string }>({ loading: false, res: null, err: '' });
+  const univ: string[] = data._req?.universe || [];
+  const bench: string = data._req?.benchmark || 'SPY';
+  const keys = [...picks];
+  const keysKey = keys.join(',') + '|' + op;
+  useEffect(() => {
+    setPicks(new Set());
+  }, [data]);
+  useEffect(() => {
+    if (keys.length < 1) { setObs({ loading: false, res: null, err: '' }); return; }
+    if (!univ.length) { setObs({ loading: false, res: null, err: 'Не удалось определить вселенную — перезапустите прогон.' }); return; }
+    let alive = true;
+    setObs({ loading: true, res: null, err: '' });
+    streamSetOps({
+      mode: 'maops', universe: univ, benchmark: bench, op,
+      conds: keys.map((k) => { const [type, w, side] = k.split('|'); return { type, window: Number(w), side }; }),
+      start: data.meta?.first, end: data.meta?.last,
+    }).then((r) => { if (alive) setObs({ loading: false, res: r.data || null, err: r.error || (r.data?.error ?? '') }); });
+    return () => { alive = false; };
+  }, [keysKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const toggle = (key: string) => setPicks((prev) => { const n = new Set(prev); if (n.has(key)) n.delete(key); else n.add(key); return n; });
+
   if (!sma.length && !ema.length) return <p className="text-sm text-ink-3">Недостаточно истории — расширьте вселенную или окно лет.</p>;
+  const st = obs.res?.stat;
   return (
     <div className="space-y-5" data-testid="ma-result">
       <p className="text-[11px] text-ink-3">
@@ -1390,10 +1436,59 @@ function MaResult({ data }: { data: any }) {
       </p>
       <div className="rounded-fk border border-line bg-surface-2 p-3 text-[12px] text-ink-3">
         Для каждого окна — средняя доходность СЛЕДУЮЩЕГО дня, когда цена <b className="text-ink-2">выше</b> своей средней и когда <b className="text-ink-2">ниже</b>;
-        «Разница» = выше − ниже (трендовый эффект). t — значимость разницы (Welch), FDR ✓ — значимо после поправки на множественную проверку (BH по 10 ячейкам). Доходность абсолютная, пул по вселенной.
+        «Разница» = выше − ниже. <b className="text-ink-2">Кликните по ячейкам «Выше»/«Ниже»</b>, чтобы комбинировать правила (напр. выше SMA20 И ниже SMA200). t — Welch, FDR ✓ — значимо после поправки (BH). Доходность абсолютная, пул по вселенной.
       </div>
-      <MaTable title="SMA — простая скользящая средняя" rows={sma} />
-      <MaTable title="EMA — экспоненциальная скользящая средняя" rows={ema} />
+
+      {picks.size >= 1 && (
+        <Card data-testid="maops">
+          <CardHeader>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle>Комбинация правил · {picks.size}</CardTitle>
+              <button type="button" onClick={() => setPicks(new Set())} className="text-[12px] font-medium text-brand hover:underline">сбросить</button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[12px] text-ink-3">Операция:</span>
+              <SegmentedControl<'and' | 'or' | 'diff'>
+                size="sm"
+                value={op}
+                onChange={setOp}
+                options={[
+                  { value: 'and', label: 'И (пересеч.)' },
+                  { value: 'or', label: 'ИЛИ' },
+                  { value: 'diff', label: 'A без B' },
+                ]}
+              />
+            </div>
+            <div className="flex flex-wrap gap-1.5 text-[11px]">
+              {keys.map((k, i) => (
+                <Badge key={k} variant={op === 'diff' && i === 0 ? 'brand' : 'neutral'}>
+                  {op === 'diff' ? (i === 0 ? 'A: ' : 'B: ') : ''}{maCondLabel(k)}{obs.res?.operands?.[i]?.n != null ? ` · n=${obs.res.operands[i].n}` : ''}
+                </Badge>
+              ))}
+            </div>
+            {obs.loading ? (
+              <div className="flex items-center gap-2 text-[13px] text-ink-3"><Spinner /> Считаю комбинацию по членству наблюдений…</div>
+            ) : obs.err ? (
+              <p className="text-[13px] text-warn-strong">{obs.err}</p>
+            ) : st && st.mean != null ? (
+              <div className="flex flex-wrap gap-3">
+                <Stat label="Ср. дох. (+1д)" value={fpct(st.mean)} tone={(st.mean ?? 0) >= 0 ? 'up' : 'down'} />
+                <Stat label="Разница к безусл." value={fpct(obs.res.diff)} tone={(obs.res.diff ?? 0) >= 0 ? 'up' : 'down'} hint={`безусл. ${fpct(obs.res.baseline)}`} />
+                <Stat label="t" value={fnum(st.t, 1)} />
+                <Stat label="Доля плюс" value={fnum(st.hit, 1) + '%'} />
+                <Stat label="Наблюдений" value={String(st.n)} hint={`из ${obs.res.n_total}`} />
+              </div>
+            ) : (
+              <p className="text-[13px] text-ink-3">{op === 'or' ? 'Объединение' : op === 'diff' ? 'A без B' : 'Пересечение'} пустое или слишком мало наблюдений — ослабьте условия.</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      <MaTable title="SMA — простая скользящая средняя" kind="sma" rows={sma} picks={picks} onToggle={toggle} />
+      <MaTable title="EMA — экспоненциальная скользящая средняя" kind="ema" rows={ema} picks={picks} onToggle={toggle} />
     </div>
   );
 }
