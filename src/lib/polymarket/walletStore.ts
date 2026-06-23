@@ -111,16 +111,19 @@ export async function listWallets(opts: ListOpts = {}): Promise<WalletRow[]> {
     args: [],
   });
   let rows = (r.rows as any[]).map(rowToWallet);
+  const minN = opts.minN ?? 1;
   if (opts.category && opts.category !== 'all') {
     rows = rows
-      .filter((w) => w.byCat[opts.category!] && w.byCat[opts.category!].n >= (opts.minN ?? 1))
+      .filter((w) => w.byCat[opts.category!] && w.byCat[opts.category!].n >= minN)
+      .filter((w) => !opts.sigOnly || w.byCat[opts.category!].significant)
       .sort((a, b) => {
         const A = a.byCat[opts.category!], B = b.byCat[opts.category!];
         return (B.significant ? 1 : 0) - (A.significant ? 1 : 0) || B.meanEdge - A.meanEdge;
       });
   } else {
-    if (opts.minN) rows = rows.filter((w) => w.n >= opts.minN!);
+    if (minN > 1) rows = rows.filter((w) => w.n >= minN);
     if (opts.sigOnly) rows = rows.filter((w) => w.significant);
+    rows.sort((a, b) => (b.significant ? 1 : 0) - (a.significant ? 1 : 0) || b.meanEdge - a.meanEdge);
   }
   return rows.slice(0, limit);
 }

@@ -22,13 +22,27 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (x: T) => Promise<R
 }
 
 export type CrawlOpts = {
-  discover?: boolean;     // обновить пул кандидатов
-  discoverMarkets?: number; // сколько топ-рынков взять для дискавери (×2: active+closed)
-  holdersPer?: number;    // холдеров на рынок
-  scoreWallets?: number;  // сколько кандидатов оценить за вызов
+  discover?: boolean;       // обновить пул кандидатов
+  discoverMarkets?: number; // сколько топ-рынков взять для дискавери
+  holdersPer?: number;      // холдеров на рынок
+  scoreWallets?: number;    // верхняя граница кошельков за вызов
   minHorizonDays?: number;
   minN?: number;
+  budgetMs?: number;        // бюджет на скоринг (цикл пачками)
 };
+
+async function scoreOne(addr: string, minHorizon: number, minN: number, signal: AbortSignal) {
+  const allBets = await resolvedBets(addr, signal);
+  const bets: ResolvedBet[] = allBets.filter((b) => b.horizonDays >= minHorizon);
+  const overall = edgeStats(bets, minN);
+  const byCatStats = statsByCategory(bets, minN);
+  const value = await walletValue(addr, signal);
+  const byCat: WalletRow['byCat'] = {};
+  for (const [k, s] of Object.entries(byCatStats)) {
+    byCat[k] = { n: s.n, meanEdge: s.meanEdge, tStat: s.tStat, significant: s.significant, winRate: s.winRate, totalPnl: s.totalPnl };
+  }
+  return { addr, overall, byCat, value };
+}
 
 export async function crawlBatch(opts: CrawlOpts = {}): Promise<{
   discovered: number;
@@ -38,59 +52,46 @@ export async function crawlBatch(opts: CrawlOpts = {}): Promise<{
 }> {
   const minHorizon = opts.minHorizonDays ?? 7;
   const minN = opts.minN ?? 20;
+  const maxScore = opts.scoreWallets ?? 60;
+  const budgetMs = opts.budgetMs ?? 45000;
+  const started = Date.now();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 55000);
   let discovered = 0;
 
   try {
-    // 1) дискавери
+    // 1) дискавери кандидатов (по запросу)
     if (opts.discover) {
-      const pages = Math.max(1, Math.ceil((opts.discoverMarkets ?? 30) / 100)) || 1;
-      const markets = (await topMarkets(pages, true, ctrl.signal)).slice(0, opts.discoverMarkets ?? 30);
-      const holderLists = await mapLimit(markets, 8, (m) => marketHolders(m.conditionId, opts.holdersPer ?? 50, ctrl.signal));
+      const pages = Math.max(1, Math.ceil((opts.discoverMarkets ?? 40) / 100));
+      const markets = (await topMarkets(pages, true, ctrl.signal)).slice(0, opts.discoverMarkets ?? 40);
+      const holderLists = await mapLimit(markets, 8, (m) => marketHolders(m.conditionId, opts.holdersPer ?? 60, ctrl.signal));
       const all = holderLists.flat().filter(Boolean);
       await addCandidates(all);
       discovered = new Set(all).size;
     }
 
-    // 2) скоринг следующей пачки
-    const batch = await nextUnscored(opts.scoreWallets ?? 25);
+    // 2) скоринг пачками, пока есть бюджет времени и кандидаты (один клик = много кошельков)
+    let scored = 0;
     let smartFound = 0;
-    if (batch.length) {
-      const results = await mapLimit(batch, 6, async (addr) => {
-        const allBets = await resolvedBets(addr, ctrl.signal);
-        const bets: ResolvedBet[] = allBets.filter((b) => b.horizonDays >= minHorizon);
-        const overall = edgeStats(bets, minN);
-        const byCatStats = statsByCategory(bets, minN);
-        const value = await walletValue(addr, ctrl.signal);
-        const byCat: WalletRow['byCat'] = {};
-        for (const [k, s] of Object.entries(byCatStats)) {
-          byCat[k] = { n: s.n, meanEdge: s.meanEdge, tStat: s.tStat, significant: s.significant, winRate: s.winRate, totalPnl: s.totalPnl };
-        }
-        return { addr, overall, byCat, value };
-      });
+    while (scored < maxScore && Date.now() - started < budgetMs) {
+      const want = Math.min(15, maxScore - scored);
+      const batch = await nextUnscored(want);
+      if (!batch.length) break;
+      const results = await mapLimit(batch, 6, (a) => scoreOne(a, minHorizon, minN, ctrl.signal));
       for (const r of results) {
         if (!r) continue;
         if (r.overall.significant) smartFound++;
         await upsertWallet({
-          address: r.addr,
-          n: r.overall.n,
-          meanEdge: r.overall.meanEdge,
-          tStat: r.overall.tStat,
-          pValue: r.overall.pValue,
-          significant: r.overall.significant,
-          winRate: r.overall.winRate,
-          totalPnl: r.overall.totalPnl,
-          roi: r.overall.roi,
-          valueUsd: r.value,
-          byCat: r.byCat,
-          minHorizon,
+          address: r.addr, n: r.overall.n, meanEdge: r.overall.meanEdge, tStat: r.overall.tStat,
+          pValue: r.overall.pValue, significant: r.overall.significant, winRate: r.overall.winRate,
+          totalPnl: r.overall.totalPnl, roi: r.overall.roi, valueUsd: r.value, byCat: r.byCat, minHorizon,
         });
       }
       await markScored(batch);
+      scored += batch.length;
     }
 
-    return { discovered, scored: batch.length, smartFound, progress: await progress() };
+    return { discovered, scored, smartFound, progress: await progress() };
   } finally {
     clearTimeout(timer);
   }
