@@ -37,6 +37,25 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       # Playwright сам соберёт (npm run build) и поднимет next start в CI-режиме.
-      # Mobile-проект пока нестабилен (липкий навбар/тач) — гоняем desktop.
       - name: E2E (desktop)
         run: npm run test:e2e -- --project=desktop
+
+  # Mobile-проект — отдельным НЕобязательным job: на проде он флачит из-за
+  # липкого навбара/тача, но на свежем раннере обычно зелёный. Не в required-чеках,
+  # поэтому его краснота не блокирует мерж. Если будет стабильно зелёным — повысим
+  # до required (добавить "e2e-mobile" в Branch protection).
+  e2e-mobile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install deps
+        run: npm ci
+      - name: Install Playwright (chromium)
+        run: npx playwright install --with-deps chromium
+      - name: E2E (mobile)
+        run: npm run test:e2e -- --project=mobile --retries=2
