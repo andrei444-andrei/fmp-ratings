@@ -1,0 +1,42 @@
+name: CI
+
+# Гоняем проверки на каждом PR и пуше в main. Чтобы сделать обязательными
+# (блокировка мержа на красном) — в Settings → Branches → Branch protection
+# отметить job "test" как Required status check.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Unit tests (vitest)
+        run: npm run test:unit
+
+      - name: Install Playwright (chromium)
+        run: npx playwright install --with-deps chromium
+
+      # Playwright сам соберёт (npm run build) и поднимет next start в CI-режиме.
+      # Mobile-проект пока нестабилен (липкий навбар/тач) — гоняем desktop.
+      - name: E2E (desktop)
+        run: npm run test:e2e -- --project=desktop
