@@ -118,31 +118,80 @@ export async function walletValue(user: string, signal?: AbortSignal): Promise<n
   return Array.isArray(data) && data[0] ? num(data[0].value) : 0;
 }
 
-// Собрать разрешённые пари кошелька (только закрытые рынки с известным исходом).
-export async function resolvedBets(user: string, signal?: AbortSignal): Promise<ResolvedBet[]> {
-  const positions = await walletPositions(user, signal);
-  if (!positions.length) return [];
-  const ids = positions.map((p) => p.conditionId).filter(Boolean);
-  const meta = await marketsByConditionIds(ids, signal);
+// Полная история сделок кошелька (пагинация). Берём TRADE-события.
+export type Trade = { conditionId: string; outcomeIndex: number; side: 'BUY' | 'SELL'; size: number; usdc: number };
+
+export async function walletTrades(user: string, maxPages = 6, signal?: AbortSignal): Promise<Trade[]> {
+  const out: Trade[] = [];
+  let offset = 0;
+  for (let p = 0; p < maxPages; p++) {
+    const data = await getJson(`${DATA}/activity?user=${user}&limit=500&offset=${offset}`, signal);
+    if (!Array.isArray(data) || !data.length) break;
+    for (const a of data) {
+      if (a && typeof a === 'object' && a.type === 'TRADE' && a.conditionId) {
+        out.push({
+          conditionId: String(a.conditionId),
+          outcomeIndex: num(a.outcomeIndex),
+          side: a.side === 'SELL' ? 'SELL' : 'BUY',
+          size: num(a.size),
+          usdc: num(a.usdcSize),
+        });
+      }
+    }
+    if (data.length < 500) break;
+    offset += 500;
+  }
+  return out;
+}
+
+// Чистая реконструкция разрешённых пари из сделок (без survivorship-смещения positions):
+// по каждому закрытому рынку считаем удержанный к разрешению исход, среднюю цену входа,
+// и реализованный PnL (продажи + редемпшн победивших − покупки).
+export function reconstructBets(trades: Trade[], meta: Map<string, MarketMeta>): ResolvedBet[] {
+  // cid -> outcomeIndex -> {boughtShares, boughtCost, soldShares, soldProceeds}
+  const book = new Map<string, Map<number, { bs: number; bc: number; ss: number; sp: number }>>();
+  for (const t of trades) {
+    let outs = book.get(t.conditionId);
+    if (!outs) { outs = new Map(); book.set(t.conditionId, outs); }
+    let d = outs.get(t.outcomeIndex);
+    if (!d) { d = { bs: 0, bc: 0, ss: 0, sp: 0 }; outs.set(t.outcomeIndex, d); }
+    if (t.side === 'BUY') { d.bs += t.size; d.bc += t.usdc; }
+    else { d.ss += t.size; d.sp += t.usdc; }
+  }
 
   const bets: ResolvedBet[] = [];
-  for (const p of positions) {
-    const m = meta.get(p.conditionId);
+  for (const [cid, outs] of book) {
+    const m = meta.get(cid);
     if (!m || !m.closed || m.winningIndex == null) continue; // только разрешённые
-    const entry = num(p.avgPrice);
-    if (entry <= 0 || entry >= 1) continue; // некорректный вход
-    const win: 0 | 1 = num(p.outcomeIndex) === m.winningIndex ? 1 : 0;
-    const cost = num(p.initialValue) || entry * num(p.size);
-    const pnl = p.realizedPnl != null ? num(p.realizedPnl) : num(p.cashPnl);
+    let moneyIn = 0, moneyOut = 0, redemption = 0;
+    let heldOi: number | null = null, heldNet = 0, entry: number | null = null;
+    for (const [oi, o] of outs) {
+      moneyIn += o.bc; moneyOut += o.sp;
+      const net = o.bs - o.ss;
+      if (oi === m.winningIndex && net > 0) redemption += net; // победившие шары гасятся по $1
+      if (net > heldNet && o.bs > 0) { heldNet = net; heldOi = oi; entry = o.bc / o.bs; }
+    }
+    if (moneyIn <= 0 || heldOi == null || entry == null) continue; // не держал позицию к разрешению
+    if (entry <= 0 || entry >= 1) continue;
+    const win: 0 | 1 = heldOi === m.winningIndex ? 1 : 0;
     bets.push({
-      conditionId: p.conditionId,
+      conditionId: cid,
       category: m.category,
       horizonDays: m.horizonDays,
       win,
       entry,
-      pnl,
-      cost,
+      pnl: moneyOut + redemption - moneyIn,
+      cost: moneyIn,
     });
   }
   return bets;
+}
+
+// Собрать разрешённые пари кошелька из полной истории сделок.
+export async function resolvedBets(user: string, signal?: AbortSignal): Promise<ResolvedBet[]> {
+  const trades = await walletTrades(user, 6, signal);
+  if (!trades.length) return [];
+  const ids = Array.from(new Set(trades.map((t) => t.conditionId)));
+  const meta = await marketsByConditionIds(ids, signal);
+  return reconstructBets(trades, meta);
 }

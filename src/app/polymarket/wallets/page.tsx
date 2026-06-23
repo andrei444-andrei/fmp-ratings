@@ -176,6 +176,16 @@ export default function SmartWalletsPage() {
     finally { setCrawling(false); }
   }, [load]);
 
+  const reset = useCallback(async () => {
+    if (!confirm('Очистить базу посчитанных кошельков и пересчитать заново?')) return;
+    setCrawling(true); setError(null);
+    try {
+      await fetch('/api/polymarket/wallets?reset=1', { method: 'POST' });
+      await load();
+    } catch (e: any) { setError(e?.message || 'Сброс не удался'); }
+    finally { setCrawling(false); }
+  }, [load]);
+
   const wallets = useMemo(() => {
     if (!data) return [];
     const get = (w: Wallet) => {
@@ -229,6 +239,8 @@ export default function SmartWalletsPage() {
           <input type="checkbox" checked={sigOnly} onChange={(e) => setSigOnly(e.target.checked)} /> только значимые
         </label>
         <span className="flex-1" />
+        <button type="button" onClick={reset} disabled={crawling}
+                className="text-xs text-ink-3 hover:text-down-strong disabled:opacity-50">сбросить</button>
         <Button variant="secondary" onClick={() => crawl(false)} disabled={crawling}>
           {crawling ? <span className="inline-flex items-center gap-2"><Spinner /> Сканирую…</span> : 'Оценить пачку'}
         </Button>

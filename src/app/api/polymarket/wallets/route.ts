@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { listWallets, progress } from '@/lib/polymarket/walletStore';
+import { listWallets, progress, resetScored } from '@/lib/polymarket/walletStore';
 import { crawlBatch } from '@/lib/polymarket/walletCrawl';
 import { logAppError } from '@/lib/app-errors';
 
@@ -30,6 +30,10 @@ export async function POST(req: Request) {
   try {
     const sp = new URL(req.url).searchParams;
     const body = await req.json().catch(() => ({}));
+    if (sp.get('reset') === '1' || body.reset === true) {
+      await resetScored();
+      return NextResponse.json({ reset: true, progress: await progress() });
+    }
     const res = await crawlBatch({
       discover: sp.get('discover') === '1' || body.discover === true,
       discoverMarkets: body.discoverMarkets ?? 40,

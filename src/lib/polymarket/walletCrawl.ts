@@ -80,6 +80,7 @@ export async function crawlBatch(opts: CrawlOpts = {}): Promise<{
       const results = await mapLimit(batch, 6, (a) => scoreOne(a, minHorizon, minN, ctrl.signal));
       for (const r of results) {
         if (!r) continue;
+        if (r.overall.n === 0) continue; // нет разрешённых пари — не засоряем базу
         if (r.overall.significant) smartFound++;
         await upsertWallet({
           address: r.addr, n: r.overall.n, meanEdge: r.overall.meanEdge, tStat: r.overall.tStat,

@@ -110,7 +110,7 @@ export async function listWallets(opts: ListOpts = {}): Promise<WalletRow[]> {
     sql: `SELECT * FROM pm_smart_wallets ORDER BY (significant) DESC, mean_edge DESC LIMIT 500`,
     args: [],
   });
-  let rows = (r.rows as any[]).map(rowToWallet);
+  let rows = (r.rows as any[]).map(rowToWallet).filter((w) => w.n > 0);
   const minN = opts.minN ?? 1;
   if (opts.category && opts.category !== 'all') {
     rows = rows
@@ -145,6 +145,12 @@ function rowToWallet(x: any): WalletRow {
     byCat,
     minHorizon: Number(x.min_horizon),
   };
+}
+
+// Сброс посчитанных кошельков и флагов scored (для пересчёта новым методом).
+export async function resetScored(): Promise<void> {
+  await ensureSchema();
+  await libsqlClient.batch(['DELETE FROM pm_smart_wallets', 'UPDATE pm_wallet_candidates SET scored = 0'], 'write');
 }
 
 export async function progress(): Promise<{ candidates: number; scored: number; smart: number }> {
