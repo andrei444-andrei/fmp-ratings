@@ -490,122 +490,125 @@ async def main():
     # (edge>0 в обеих половинах истории); классификация реверсия/тренд (corr глубина→форвард) и split
     # по vol-режиму. Форвард — АБСОЛЮТНЫЙ (это P&L покупки ETF), edge = к безусловному среднему тикера.
     if mode == 'dipcal':
-        N = int(CFG.get('dipWindow', 21)); W = int(CFG.get('volWindow', 63)); minN = int(CFG.get('minN', 20))
+        # dipcal v2 — фиксированное vol-масштабированное правило входа (−kσ), БЕЗ авто-подбора порога
+        # (парсимония против переобучения). Форвард = ИЗБЫТОК над бенчмарком (цель — обогнать его).
+        # Защиты: walk-forward OOS (hold-out), shrinkage к кросс-секц. среднему, FDR по рынкам, издержки.
+        N = int(CFG.get('dipWindow', 21)); W = int(CFG.get('volWindow', 63))
+        k = float(CFG.get('kSigma', 1.5))
+        excess = bool(CFG.get('excess', True))
+        cost_bps = float(CFG.get('costBps', 10.0)); cost = cost_bps / 100.0   # round-trip bps -> %
+        alpha = float(CFG.get('fdrAlpha', 0.1))
+        do_shrink = bool(CFG.get('shrink', True))
+        min_ent = max(2, int(CFG.get('minN', 8)))
         hold = int(CFG.get('holdout', 0) or 0)
         Hs = sorted(set([5, 10, 21, 42, H]))
-        pcts = [30, 20, 10, 5]
         pxs = px.sort_index()
-        # Look-ahead hold-out: последние hold лет панели — отложенный OOS-период (порог калибруем на train).
         cutoff = (pd.Timestamp(pxs.index.max()) - pd.DateOffset(years=hold)) if hold > 0 else None
+        bcol = pxs[bench] if bench in pxs.columns else None
         out_rows = []
         for s in [col for col in pxs.columns if col != bench]:
             c = pxs[s]
             if c.notna().sum() < 500:
                 continue
             dd = (c / c.rolling(N).max() - 1.0) * 100.0          # просадка от N-дн. пика (<=0)
-            ddr = (c / c.shift(N) - 1.0) * 100.0                 # точечная N-дн. доходность (справочно)
             vold = c.pct_change().rolling(W).std()               # дневная σ (режим)
-            sigN = vold * math.sqrt(N) * 100.0                   # N-дн. σ в % (для перевода порога в σ)
-            df = pd.DataFrame({'dd': dd, 'ddr': ddr, 'vol': vold, 'sigN': sigN}, index=c.index)
-            for h in Hs:
-                df['fwd_' + str(h)] = (c.shift(-h) / c - 1.0) * 100.0
+            sigN = vold * math.sqrt(N) * 100.0                   # N-дн. σ в %
+            z = dd / sigN.replace(0.0, np.nan)                   # просадка в единицах σ (<=0)
+            data = {'dd': dd, 'sigN': sigN, 'vol': vold, 'z': z}
+            for h in Hs:                                         # форвард — ИЗБЫТОК над бенчмарком
+                fa = (c.shift(-h) / c - 1.0) * 100.0
+                if excess and bcol is not None:
+                    data['fwd_' + str(h)] = fa - (bcol.shift(-h) / bcol - 1.0) * 100.0
+                else:
+                    data['fwd_' + str(h)] = fa
+            df = pd.DataFrame(data, index=c.index)
             df['date'] = df.index
-            df = df.reindex(c.index[::max(1, H)]).dropna(subset=['dd', 'fwd_' + str(H)])
+            fcol = 'fwd_' + str(H)
+            df = df.reindex(c.index[::max(1, H)]).dropna(subset=['z', fcol])  # прорежаем по H (без перекрытий)
             if len(df) < 40:
                 continue
-            fcol = 'fwd_' + str(H)
             df[fcol] = df[fcol].clip(df[fcol].quantile(0.005), df[fcol].quantile(0.995))
-            df_oos = df.iloc[:0] if cutoff is None else df[df['date'] > cutoff].copy()
-            if cutoff is not None:
-                df = df[df['date'] <= cutoff].copy()   # train становится рабочим фреймом калибровки
-                if len(df) < 40:
-                    continue
             base = float(df[fcol].mean())
-            sig_med = float(df['sigN'].median()) if df['sigN'].notna().any() else float('nan')
-            med_vol = float(df['vol'].median())
-            mid = df['date'].median()
-            first = df[df['date'] <= mid]; second = df[df['date'] > mid]
-
-            def _stat(sub):
-                n = len(sub)
-                if n < 2: return (float('nan'), 0.0, n, float('nan'))
-                m = float(sub[fcol].mean()); sd = float(sub[fcol].std(ddof=1))
-                t = m / (sd / math.sqrt(n)) if sd > 0 else 0.0
-                return (m, t, n, float((sub[fcol] > 0).mean() * 100.0))
-
-            curve = []; best = None
-            for p in pcts:
-                thr = float(df['dd'].quantile(p / 100.0))
-                m, t, n, hit = _stat(df[df['dd'] <= thr])
-                edge = (m - base) if m == m else float('nan')
-                sig_u = (thr / sig_med) if (sig_med == sig_med and sig_med != 0) else float('nan')
-                rec = {'pctile': p, 'dd': _f(thr), 'sigma': _f(sig_u), 'fwd': _f(m), 't': _f(t),
-                       'n': int(n), 'hit': _f(hit), 'edge': _f(edge), '_thr': thr}
-                curve.append(rec)
-                if n >= minN and edge == edge and edge > 0 and t >= 1.0:
-                    score = edge * math.sqrt(n)
-                    if best is None or score > best['_score']:
-                        best = dict(rec); best['_score'] = score
-            if best is None:  # ни один порог не прошёл фильтр — берём с макс. edge·√n при n>=minN
-                cand = [r for r in curve if r['n'] >= minN and r['edge'] is not None]
-                if cand:
-                    best = dict(max(cand, key=lambda r: (r['edge'] or -9) * math.sqrt(r['n']))); best['_score'] = 0.0
-            if best is None:
+            sel = df[df['z'] <= -k]                              # фикс. правило: просадка глубже −kσ
+            if len(sel) < min_ent:
                 continue
-            thr = best['_thr']; sel = df[df['dd'] <= thr]
 
-            def _edge_half(part):
-                if len(part) < 2: return float('nan')
-                ss = part[part['dd'] <= thr]
-                if len(ss) < 3: return float('nan')
-                return float(ss[fcol].mean()) - float(part[fcol].mean())
-            e1 = _edge_half(first); e2 = _edge_half(second)
-            stable = bool(e1 == e1 and e2 == e2 and e1 > 0 and e2 > 0)
+            def _stat2(sub):
+                nn = len(sub)
+                if nn < 2: return (float('nan'), float('nan'), 0.0, nn, float('nan'))
+                mm = float(sub[fcol].mean()); sd = float(sub[fcol].std(ddof=1))
+                se = sd / math.sqrt(nn) if sd > 0 else float('nan')
+                tt = mm / se if (se == se and se > 0) else 0.0
+                return (mm, se, tt, nn, float((sub[fcol] > 0).mean() * 100.0))
 
-            cc = df[['dd', fcol]].dropna()
-            rflag = 'neutral'; rcorr = float('nan'); rt = float('nan')
+            m, se, t, n, hit = _stat2(sel)
+            net = m - cost                                      # нетто после round-trip издержек
+            edge = (m - base) if m == m else float('nan')       # сверх безусловного избытка этого ETF
+            ddmed = float(sel['dd'].median()); zmed = float(sel['z'].median())
+            # OOS hold-out: то же правило на отложенном периоде (без переподбора).
+            oos = None
+            if cutoff is not None:
+                so = df[(df['date'] > cutoff) & (df['z'] <= -k)]
+                mo, seo, to_, no_, hito = _stat2(so)
+                oos = {'fwd': _f(mo), 'net': _f(mo - cost) if mo == mo else None,
+                       't': _f(to_), 'n': int(no_), 'hit': _f(hito)}
+            # Консистентность по годам: доля лет с положительным избытком на входах.
+            yrs = pd.to_datetime(sel['date']).dt.year
+            yv = [float(sel[fcol][yrs == y].mean()) for y in sorted(set(yrs))]
+            pos_years = int(sum(1 for v in yv if v == v and v > 0)); tot_years = int(len(yv))
+            # Реверсия/нож: знак связи глубина (z<=0) → форвард.
+            cc = df[['z', fcol]].dropna(); rflag = 'neutral'; rcorr = float('nan'); rt = float('nan')
             if len(cc) >= 10:
-                rcorr = float(cc['dd'].corr(cc[fcol]))
+                rcorr = float(cc['z'].corr(cc[fcol]))
                 if rcorr == rcorr:
                     rt = rcorr * math.sqrt(max(1, len(cc) - 2)) / math.sqrt(max(1e-9, 1 - rcorr * rcorr))
                     if rcorr < 0 and abs(rt) >= 1.5: rflag = 'revert'
                     elif rcorr > 0 and abs(rt) >= 1.5: rflag = 'trend'
-
-            calm = sel[sel['vol'] <= med_vol]; storm = sel[sel['vol'] > med_vol]
-            cm, _, cn, _ = _stat(calm); sm, _, sn, _ = _stat(storm)
+            medv = float(df['vol'].median())
+            cm, _, _, cn, _ = _stat2(sel[sel['vol'] <= medv]); sm, _, _, sn, _ = _stat2(sel[sel['vol'] > medv])
             by_h = []
             for h in Hs:
                 hc = 'fwd_' + str(h); ss = sel[hc].dropna(); bb = df[hc].dropna()
                 by_h.append({'h': h, 'fwd': _f(float(ss.mean())) if len(ss) else None,
                              'edge': _f(float(ss.mean()) - float(bb.mean())) if (len(ss) and len(bb)) else None,
                              'n': int(len(ss))})
-            m, t, n, hit = _stat(sel)
-            for r in curve: r.pop('_thr', None)
-            # OOS-проверка: тот же порог thr (с train) применяем к отложенному периоду — без переподбора.
-            oos = None
-            if cutoff is not None and len(df_oos) >= 2:
-                base_o = float(df_oos[fcol].mean())
-                so = df_oos[df_oos['dd'] <= thr]
-                mo, to_, no_, hito = _stat(so)
-                oos = {'fwd': _f(mo), 'edge': _f((mo - base_o) if mo == mo else float('nan')),
-                       't': _f(to_), 'n': int(no_), 'hit': _f(hito), 'n_total': int(len(df_oos))}
             out_rows.append({
                 'sym': s, 'n_total': int(len(df)), 'baseline': _f(base),
-                'pctile': best['pctile'], 'dd': _f(thr), 'sigma': best.get('sigma'),
-                'ddr_med': _f(float(sel['ddr'].median())) if len(sel) else None,
-                'fwd': _f(m), 't': _f(t), 'n': int(n), 'hit': _f(hit),
-                'edge': _f((m - base) if m == m else float('nan')),
-                'stable': stable, 'e1': _f(e1), 'e2': _f(e2),
+                'dd': _f(ddmed), 'sigma': _f(zmed),
+                'fwd': _f(m), 'net': _f(net), 'se': _f(se), 't': _f(t), 'n': int(n), 'hit': _f(hit),
+                'edge': _f(edge), 'shrunk': None, 'fdr': False,
+                'pos_years': pos_years, 'tot_years': tot_years,
                 'reversion': {'corr': _f(rcorr), 't': _f(rt), 'flag': rflag},
                 'regime': {'calm_fwd': _f(cm), 'calm_n': int(cn), 'storm_fwd': _f(sm), 'storm_n': int(sn)},
-                'by_h': by_h, 'curve': curve, 'oos': oos,
+                'by_h': by_h, 'oos': oos, '_m': m, '_se': (se if se == se else None),
             })
-        # Ранжируем для use-case «что покупать»: сперва реальные реверсеры (по edge), затем нейтральные,
-        # падающие ножи (trend) — в самом низу, как бы ни был велик edge к их же провальному baseline.
-        _ford = {'revert': 0, 'neutral': 1, 'trend': 2}
-        out_rows.sort(key=lambda r: (_ford.get(r['reversion']['flag'], 1), -(r['edge'] if r['edge'] is not None else -1e9)))
+        # Кросс-секционная стабилизация (empirical-Bayes shrinkage) — стягиваем к среднему по рынкам.
+        ms = [r['_m'] for r in out_rows if r['_m'] == r['_m']]
+        if do_shrink and len(ms) >= 3:
+            mu = float(np.mean(ms))
+            ses = [r['_se'] for r in out_rows if r.get('_se')]
+            mean_se2 = float(np.mean([x * x for x in ses])) if ses else 0.0
+            tau2 = max(0.0, float(np.var(ms)) - mean_se2)
+            for r in out_rows:
+                se_i = r.get('_se')
+                if r['_m'] == r['_m'] and se_i:
+                    B = tau2 / (tau2 + se_i * se_i) if (tau2 + se_i * se_i) > 0 else 0.0
+                    r['shrunk'] = _f(mu + B * (r['_m'] - mu))
+                else:
+                    r['shrunk'] = r['fwd']
+        else:
+            for r in out_rows:
+                r['shrunk'] = r['fwd']
+        # FDR (Benjamini–Hochberg) по p-value из t-стат каждого рынка — поправка на мультитест.
+        pv = [(r['sym'], _pval(r['t'])) for r in out_rows if r['t'] is not None]
+        sigset = _bh(pv, alpha)
+        for r in out_rows:
+            r['fdr'] = bool(r['sym'] in sigset); r.pop('_m', None); r.pop('_se', None)
+        # Ранжируем: значимые после FDR сверху, внутри — по shrunk-избытку.
+        out_rows.sort(key=lambda r: (0 if r['fdr'] else 1, -(r['shrunk'] if r['shrunk'] is not None else -1e9)))
         dts = sorted(pd.to_datetime(pxs.index).unique())
-        return {'mode': 'dipcal', 'horizon': H, 'dipWindow': N, 'volWindow': W, 'minN': minN,
+        return {'mode': 'dipcal', 'horizon': H, 'dipWindow': N, 'volWindow': W,
+                'kSigma': k, 'excess': bool(excess), 'costBps': cost_bps, 'fdrAlpha': alpha, 'shrink': bool(do_shrink),
                 'holdout': hold, 'cutoff': (str(pd.Timestamp(cutoff).date()) if cutoff is not None else None),
                 'rows': out_rows,
                 'meta': {'symbols': len(out_rows),

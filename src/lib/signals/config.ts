@@ -139,13 +139,17 @@ export function normalizeStudyConfig(body: any): StudyConfig {
   }
 
   if (mode === 'dipcal') {
-    // Калибровка покупки просадок по каждому инструменту: окно просадки, окно волатильности, мин. событий.
-    // holdout — сколько последних лет отложить для look-ahead проверки (порог калибруется на train).
+    // Покупка просадок (v2): фикс. правило −kσ, избыток над бенчмарком, hold-out OOS, shrinkage, FDR, издержки.
     return {
       ...base,
       dipWindow: Math.round(clampNum(body?.dipWindow, 21, 5, 252)),
       volWindow: Math.round(clampNum(body?.volWindow, 63, 20, 252)),
-      minN: Math.round(clampNum(body?.minN, 20, 5, 1000)),
+      minN: Math.round(clampNum(body?.minN, 8, 2, 1000)),       // мин. число входов для показа рынка
+      kSigma: clampNum(body?.kSigma, 1.5, 0.3, 5),              // глубина входа: просадка ≤ −kσ
+      costBps: clampNum(body?.costBps, 10, 0, 200),             // round-trip издержки, бп
+      excess: body?.excess !== false,                          // форвард как избыток над бенчмарком (по умолч. да)
+      shrink: body?.shrink !== false,                          // empirical-Bayes shrinkage к среднему
+      fdrAlpha: clampNum(body?.fdrAlpha, 0.1, 0.01, 0.5),
       holdout: Math.round(clampNum(body?.holdout, 0, 0, 10)),
     };
   }
