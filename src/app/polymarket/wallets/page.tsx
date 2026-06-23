@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Badge, Button, Card, CardContent, SegmentedControl, Skeleton, Spinner,
 } from '@/components/ui';
@@ -176,6 +176,34 @@ export default function SmartWalletsPage() {
     finally { setCrawling(false); }
   }, [load]);
 
+  // «Сканировать всё»: авто-цикл батчей, пока не оценим всех кандидатов.
+  const stopRef = useRef(false);
+  const [autoRun, setAutoRun] = useState(false);
+  const scanAll = useCallback(async () => {
+    stopRef.current = false; setAutoRun(true); setError(null);
+    try {
+      let r = await fetch('/api/polymarket/wallets?discover=1', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ discover: true, scoreWallets: 60, minHorizonDays: 7, minN: 20 }),
+      });
+      let j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      await load();
+      for (let i = 0; i < 500 && !stopRef.current; i++) {
+        if (j.progress && j.progress.scored >= j.progress.candidates) break;
+        r = await fetch('/api/polymarket/wallets', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ scoreWallets: 60, minHorizonDays: 7, minN: 20 }),
+        });
+        j = await r.json();
+        if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+        await load();
+        if (!j.scored) break; // больше нечего оценивать
+      }
+    } catch (e: any) { setError(e?.message || 'Скан не удался'); }
+    finally { setAutoRun(false); }
+  }, [load]);
+
   const reset = useCallback(async () => {
     if (!confirm('Очистить базу посчитанных кошельков и пересчитать заново?')) return;
     setCrawling(true); setError(null);
@@ -239,15 +267,25 @@ export default function SmartWalletsPage() {
           <input type="checkbox" checked={sigOnly} onChange={(e) => setSigOnly(e.target.checked)} /> только значимые
         </label>
         <span className="flex-1" />
-        <button type="button" onClick={reset} disabled={crawling}
+        <button type="button" onClick={reset} disabled={crawling || autoRun}
                 className="text-xs text-ink-3 hover:text-down-strong disabled:opacity-50">сбросить</button>
-        <Button variant="secondary" onClick={() => crawl(false)} disabled={crawling}>
+        <Button variant="secondary" onClick={() => crawl(false)} disabled={crawling || autoRun}>
           {crawling ? <span className="inline-flex items-center gap-2"><Spinner /> Сканирую…</span> : 'Оценить пачку'}
         </Button>
-        <Button onClick={() => crawl(true)} disabled={crawling}>
-          {crawling ? 'Сканирую…' : 'Найти + оценить'}
+        <Button variant="secondary" onClick={() => crawl(true)} disabled={crawling || autoRun}>
+          Найти + оценить
         </Button>
+        {autoRun ? (
+          <Button variant="secondary" onClick={() => { stopRef.current = true; }}>⏹ Стоп</Button>
+        ) : (
+          <Button onClick={scanAll} disabled={crawling}>Сканировать всё</Button>
+        )}
       </div>
+
+      <p className="mt-2 text-xs text-ink-3">
+        Значимость — <b>калибровочный z</b>: учитывает шансы каждой ставки. Выигрыш «гарантированного»
+        фаворита (p≈0.99) почти не считается скиллом; вес имеют угаданные близкие к 50/50 события.
+      </p>
 
       {error && <div className="mt-4 rounded-fk bg-down-soft text-down-strong text-sm px-4 py-3">Ошибка: {error}</div>}
       {crawling && <div className="mt-3 text-xs text-ink-3">Скан идёт пачками (до ~45с): тянем позиции, считаем edge по разрешённым рынкам и пишем в базу…</div>}

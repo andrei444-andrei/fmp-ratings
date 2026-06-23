@@ -45,6 +45,24 @@ describe('edgeStats', () => {
     expect(s.significant).toBe(false);
   });
 
+  it('99%-фаворит: даже 100/100 выигрышей НЕ значимы (учёт шансов)', () => {
+    const s = edgeStats(many(100, 1, 0.99), 20);
+    expect(s.winRate).toBe(1);          // винрейт 100%
+    expect(s.significant).toBe(false);  // но это не скилл — z мал
+  });
+
+  it('60/40-угадайщик на 50/50-рынках — значим', () => {
+    const s = edgeStats([...many(60, 1, 0.5), ...many(40, 0, 0.5)], 20);
+    expect(s.winRate).toBeCloseTo(0.6, 5);
+    expect(s.significant).toBe(true);   // z=2.0, p<0.05
+  });
+
+  it('фаворит-беттор слабее реального угадайщика по z при равном винрейте', () => {
+    const fav = edgeStats(many(100, 1, 0.9), 20);            // 100% на 0.9
+    const skill = edgeStats([...many(70, 1, 0.5), ...many(30, 0, 0.5)], 20); // 70% на 0.5
+    expect(skill.tStat).toBeGreaterThan(fav.tStat);
+  });
+
   it('пустой ввод безопасен', () => {
     const s = edgeStats([], 20);
     expect(s.n).toBe(0);

@@ -43,15 +43,21 @@ export function edgeStats(bets: ResolvedBet[], minN = 20): EdgeStats {
   };
   if (n === 0) return empty;
 
-  const edges = bets.map((b) => b.win - b.entry);
-  const mean = edges.reduce((a, b) => a + b, 0) / n;
-  const variance = n > 1 ? edges.reduce((a, e) => a + (e - mean) * (e - mean), 0) / (n - 1) : 0;
+  // Калибровочный z-тест (учитывает шансы каждой ставки).
+  // H0: рынок откалиброван, исход_i ~ Bernoulli(entry_i).
+  //   Σ(исход − entry) имеет E=0 и Var=Σ entry(1−entry).
+  //   z = Σ(исход − entry) / √Σ entry(1−entry) ~ N(0,1).
+  // Ставка на 0.99 добавляет в дисперсию лишь ~0.01 → почти не влияет на z
+  // (выигрыш «гарантированного» фаворита — это не скилл).
+  const sumDev = bets.reduce((a, b) => a + (b.win - b.entry), 0);
+  const varSum = bets.reduce((a, b) => a + b.entry * (1 - b.entry), 0) || 1e-9;
+  const z = Math.max(-1e6, Math.min(1e6, sumDev / Math.sqrt(varSum)));
+  const pValue = 1 - normCdf(z);
+
+  const mean = sumDev / n; // средний edge — для отображения
+  // эмпирический разброс edge (информативно)
+  const variance = n > 1 ? bets.reduce((a, b) => a + ((b.win - b.entry) - mean) ** 2, 0) / (n - 1) : 0;
   const sd = Math.sqrt(variance);
-  const se = sd / Math.sqrt(n) || 1e-9;
-  // ограничиваем t, чтобы при near-нулевой дисперсии не получить Infinity (ломает JSON/БД)
-  const tStat = Math.max(-1e6, Math.min(1e6, mean / se));
-  // одностороннее p: P(Z >= t) при H0 (средний edge = 0); нормальное приближение
-  const pValue = 1 - normCdf(tStat);
 
   const wins = bets.reduce((a, b) => a + b.win, 0);
   const totalPnl = bets.reduce((a, b) => a + b.pnl, 0);
@@ -62,9 +68,9 @@ export function edgeStats(bets: ResolvedBet[], minN = 20): EdgeStats {
     n,
     meanEdge: mean,
     sd,
-    tStat,
+    tStat: z, // тест-статистика = калибровочный z
     pValue,
-    significant: n >= minN && mean > 0 && pValue < 0.05,
+    significant: n >= minN && z > 0 && pValue < 0.05,
     winRate: wins / n,
     totalPnl,
     roi,
