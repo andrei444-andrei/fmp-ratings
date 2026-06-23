@@ -19,6 +19,7 @@ export type Movement = {
   direction: -1 | 0 | 1; // знак движения за 24ч
   points: number;
   spark: number[];      // прорежённый ряд за ~7 дней для спарклайна
+  daily: { t: number; p: number }[]; // по одному срезу на день (последние ~14 дней)
 };
 
 function pAtHoursAgo(h: HistPoint[], hours: number): number {
@@ -47,6 +48,17 @@ function downsample(h: HistPoint[], maxPoints: number): number[] {
 }
 
 const sign = (x: number): -1 | 0 | 1 => (x > 1e-9 ? 1 : x < -1e-9 ? -1 : 0);
+
+// По одному срезу вероятности на календарный день (UTC) — последняя точка дня.
+// Возвращает последние `days` дней в хронологическом порядке.
+function dailySamples(h: HistPoint[], days: number): { t: number; p: number }[] {
+  const byDay = new Map<string, HistPoint>();
+  for (const pt of h) {
+    const key = new Date(pt.t * 1000).toISOString().slice(0, 10);
+    byDay.set(key, pt); // h отсортирован по возрастанию → останется последняя точка дня
+  }
+  return Array.from(byDay.values()).slice(-days);
+}
 
 export function computeMovement(raw: HistPoint[]): Movement | null {
   const h = (raw || []).filter((p) => Number.isFinite(p.p) && Number.isFinite(p.t)).sort((a, b) => a.t - b.t);
@@ -94,6 +106,7 @@ export function computeMovement(raw: HistPoint[]): Movement | null {
     direction: sign(d24h),
     points: h.length,
     spark: downsample(h.filter((p) => p.t >= h[h.length - 1].t - 7 * 86400), 48),
+    daily: dailySamples(h, 14),
   };
 }
 

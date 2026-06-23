@@ -19,6 +19,7 @@ type Move = {
   d6h: number; d24h: number; d3d: number; d7d: number; d30d: number;
   breakScore: number; accel: number; reversal: boolean; volSpike: boolean;
   direction: -1 | 0 | 1; points: number; spark: number[];
+  daily?: { t: number; p: number }[];
 };
 type Market = {
   id: string; question: string; ru: string; slug: string;
@@ -73,43 +74,84 @@ function PpDelta({ value, size = 'sm' }: { value: number; size?: 'sm' | 'md' }) 
   );
 }
 
-function MoverRow({ m, win }: { m: Market; win: Win }) {
-  const mv = m.move!;
-  const d = winDelta(mv, win);
+const dmy = (t: number) =>
+  new Date(t * 1000).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+
+// Развёрнутая динамика по дням: вероятность и Δ к предыдущему дню.
+function DailyBreakdown({ daily }: { daily: { t: number; p: number }[] }) {
+  if (!daily || daily.length < 2) {
+    return <div className="text-xs text-ink-3 py-1">Дневных данных пока недостаточно.</div>;
+  }
+  const rows = daily.map((d, i) => ({
+    t: d.t,
+    p: d.p,
+    delta: i > 0 ? d.p - daily[i - 1].p : null,
+  }));
   return (
-    <a href={pmUrl(m.slug)} target="_blank" rel="noreferrer"
-       className="flex items-center gap-3 rounded-fk px-3 py-2.5 hover:bg-surface-2 transition-colors">
-      <Badge variant={probVariant(m.prob)} className="w-12 justify-center tabular-nums shrink-0">{pct(m.prob)}</Badge>
-      <div className="flex-1 min-w-0">
-        <div className="text-sm text-ink truncate" title={m.question}>{m.ru}</div>
-        <div className="mt-0.5 flex items-center gap-2 flex-wrap">
-          <PpDelta value={d} />
-          <Flags m={mv} />
-        </div>
+    <div className="rounded-fk bg-surface-2 px-3 py-2">
+      <div className="text-[11px] font-medium text-ink-3 mb-1.5">
+        Динамика по дням — вероятность и изменение к предыдущему дню
       </div>
-      {mv.spark.length > 1 && <Sparkline data={mv.spark} width={84} height={28} className="shrink-0 hidden sm:block" />}
-      <span className="hidden md:inline text-xs text-ink-3 tabular-nums w-14 text-right shrink-0">{money(m.liq)}</span>
-      <span className="hidden lg:inline text-xs text-ink-3 tabular-nums w-12 text-right shrink-0">
-        {m.daysLeft != null ? `${m.daysLeft}d` : '—'}
-      </span>
-    </a>
+      <div className="flex flex-wrap gap-x-5 gap-y-1">
+        {rows.slice().reverse().map((r) => (
+          <div key={r.t} className="flex items-baseline gap-1.5 tabular-nums">
+            <span className="text-[11px] text-ink-3 w-10">{dmy(r.t)}</span>
+            <span className="text-sm text-ink font-medium w-10">{pct(r.p)}</span>
+            {r.delta != null ? <PpDelta value={r.delta} /> : <span className="text-[10px] text-ink-3">старт</span>}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
-function CatRow({ m }: { m: Market }) {
+// Единая строка рынка: полный текст прогноза + явные дельты по окнам +
+// разворачиваемая динамика по дням. `metric` — что показать справа (ликв./объём).
+function Row({ m, metric }: { m: Market; metric: 'liq' | 'vol' }) {
+  const [open, setOpen] = useState(false);
   const mv = m.move;
   return (
-    <a href={pmUrl(m.slug)} target="_blank" rel="noreferrer"
-       className="flex items-center gap-3 rounded-fk px-3 py-2 hover:bg-surface-2 transition-colors">
-      <Badge variant={probVariant(m.prob)} className="w-12 justify-center tabular-nums shrink-0">{pct(m.prob)}</Badge>
-      <span className="flex-1 text-sm text-ink truncate" title={m.question}>{m.ru}</span>
-      {mv && Math.abs(mv.d24h) >= 0.005 && <PpDelta value={mv.d24h} />}
-      {mv && mv.spark.length > 1 && <Sparkline data={mv.spark} width={64} height={22} className="shrink-0 hidden sm:block" />}
-      <span className="hidden md:inline text-xs text-ink-3 tabular-nums w-14 text-right shrink-0">{money(m.vol)}</span>
-      <span className="hidden lg:inline text-xs text-ink-3 tabular-nums w-12 text-right shrink-0">
-        {m.daysLeft != null ? `${m.daysLeft}d` : '—'}
-      </span>
-    </a>
+    <div className="rounded-fk px-3 py-2.5 hover:bg-surface-2 transition-colors">
+      <div className="flex items-start gap-3">
+        <Badge variant={probVariant(m.prob)} className="w-12 justify-center tabular-nums shrink-0 mt-0.5">
+          {pct(m.prob)}
+        </Badge>
+        <div className="flex-1 min-w-0">
+          {/* полный текст прогноза, без обрезки */}
+          <a href={pmUrl(m.slug)} target="_blank" rel="noreferrer"
+             className="text-sm text-ink hover:underline block">
+            {m.ru}
+          </a>
+          {m.ru !== m.question && (
+            <div className="text-[11px] text-ink-3 mt-0.5">{m.question}</div>
+          )}
+          <div className="mt-1 flex items-center gap-x-3 gap-y-1 flex-wrap text-xs">
+            {mv ? (
+              <>
+                <span className="text-ink-3">24ч</span><PpDelta value={mv.d24h} />
+                <span className="text-ink-3">3д</span><PpDelta value={mv.d3d} />
+                <span className="text-ink-3">7д</span><PpDelta value={mv.d7d} />
+                <Flags m={mv} />
+                <button type="button" onClick={() => setOpen((v) => !v)}
+                        className="text-brand-700 hover:underline">
+                  {open ? 'скрыть дни ▴' : 'по дням ▾'}
+                </button>
+              </>
+            ) : (
+              <span className="text-ink-3">история недоступна</span>
+            )}
+          </div>
+        </div>
+        {mv && mv.spark.length > 1 && (
+          <Sparkline data={mv.spark} width={84} height={28} className="shrink-0 hidden sm:block mt-1" />
+        )}
+        <div className="shrink-0 text-right hidden md:block w-16">
+          <div className="text-xs text-ink-3 tabular-nums">{money(metric === 'liq' ? m.liq : m.vol)}</div>
+          <div className="text-[10px] text-ink-3 tabular-nums">{m.daysLeft != null ? `${m.daysLeft}д` : '—'}</div>
+        </div>
+      </div>
+      {open && mv && <div className="mt-2 sm:ml-[3.75rem]"><DailyBreakdown daily={mv.daily || []} /></div>}
+    </div>
   );
 }
 
@@ -209,7 +251,7 @@ export default function PolymarketPage() {
                 <div className="text-sm text-ink-3 py-3">История вероятностей недоступна (источник не отдал ряды).</div>
               ) : movers.length ? (
                 <div className="-mx-2 divide-y divide-line">
-                  {movers.map((m) => <MoverRow key={m.id} m={m} win={win} />)}
+                  {movers.map((m) => <Row key={m.id} m={m} metric="liq" />)}
                 </div>
               ) : (
                 <div className="text-sm text-ink-3 py-3">За выбранное окно крупных сдвигов (≥3 пп) нет — рынок спокоен.</div>
@@ -240,7 +282,7 @@ export default function PolymarketPage() {
                   <CardContent>
                     {mk.length ? (
                       <div className="-mx-2 divide-y divide-line">
-                        {mk.map((m) => <CatRow key={m.id} m={m} />)}
+                        {mk.map((m) => <Row key={m.id} m={m} metric="vol" />)}
                       </div>
                     ) : (
                       <div className="text-sm text-ink-3 py-3">Нет рынков.</div>
