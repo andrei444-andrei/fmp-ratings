@@ -313,32 +313,20 @@ test.describe('Signals /signals', () => {
     await expect(out.getByText(/Ср\. изб\. дох\.|мало наблюдений/).first()).toBeVisible({ timeout: 150000 });
   });
 
-  test('режим Просадки (v2): фикс. −kσ правило, избыток над бенчмарком, FDR-колонка', async ({ page }) => {
+  test('режим SMA/EMA: матрица доходности след. дня выше/ниже скользящих средних', async ({ page }) => {
     await setup(page);
-    await page.getByTestId('tab-dipcal').click();
+    await page.getByTestId('tab-ma').click();
     await page.getByTestId('run-study').click();
     const out = page.locator('[data-testid="signals-output"]');
-    // Свод появляется: либо таблица «Покупать просадки …», либо сообщение о нехватке истории.
-    await expect(out.getByText(/Покупать просадки|Недостаточно истории/)).toBeVisible({ timeout: 150000 });
-    if (await out.getByText(/Покупать просадки/).count()) {
-      // Новые колонки v2: Нетто (после издержек), Shrunk (стянуто к среднему), FDR (мультитест).
-      await expect(out.getByRole('columnheader', { name: 'Нетто' })).toBeVisible();
-      await expect(out.getByRole('columnheader', { name: 'Shrunk' })).toBeVisible();
-      await expect(out.getByRole('columnheader', { name: 'FDR' })).toBeVisible();
-    }
-  });
-
-  test('режим Просадки (v2): look-ahead (hold-out) даёт колонку OOS и метку отсечки', async ({ page }) => {
-    await setup(page);
-    await page.getByTestId('tab-dipcal').click();
-    await page.locator('#dho').selectOption('2'); // отложить 2 года на проверку
-    await page.getByTestId('run-study').click();
-    const out = page.locator('[data-testid="signals-output"]');
-    await expect(out.getByText(/Покупать просадки|Недостаточно истории/)).toBeVisible({ timeout: 150000 });
-    // На синтетике (5000 дней/символ) рынки проходят → видна метка OOS и колонка OOS.
-    if (await out.getByText(/Покупать просадки/).count()) {
-      await expect(out.getByText(/OOS после/)).toBeVisible();
-      await expect(out.getByRole('columnheader', { name: 'OOS', exact: true })).toBeVisible();
+    // Появляется свод: либо матрицы SMA/EMA, либо сообщение о нехватке истории.
+    await expect(out.getByText(/SMA — простая|Недостаточно истории/)).toBeVisible({ timeout: 150000 });
+    if (await out.getByText(/SMA — простая/).count()) {
+      // Две таблицы (SMA и EMA), колонки «Выше/Ниже/Разница», строки по окнам 10..200.
+      await expect(out.getByTestId('ma-table')).toHaveCount(2);
+      await expect(out.getByText('EMA — экспоненциальная')).toBeVisible();
+      await expect(out.getByRole('columnheader', { name: 'Разница' }).first()).toBeVisible();
+      // Строки окон присутствуют (10, 20, 50, 100, 200).
+      await expect(out.getByTestId('ma-table').first().getByRole('cell', { name: '200', exact: true })).toBeVisible();
     }
   });
 
