@@ -204,6 +204,10 @@ export default function PolymarketPage() {
         </Button>
       </div>
 
+      <a href="/polymarket/wallets" className="mt-2 inline-block text-sm text-brand-700 hover:underline">
+        🧠 Умные деньги — кошельки со значимым edge →
+      </a>
+
       {data && (
         <p className="mt-2 text-xs text-ink-3">
           Источник: gamma + clob.polymarket.com · отсканировано {data.totalScanned} активных рынков ·
