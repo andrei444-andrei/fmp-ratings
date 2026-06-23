@@ -270,7 +270,8 @@ async def main():
     fetch_syms = list(dict.fromkeys([str(s).upper() for s in syms] + [bench.upper()] + gbenches))
     print('Загружаю цены:', len(fetch_syms), '(вкл. бенчмарки групп)')
     px = await get_prices(fetch_syms)
-    if px is None or px.empty or px.shape[1] < 2:
+    min_cols = 1 if mode == 'ma' else 2   # ma не использует бенчмарк → хватает одного тикера
+    if px is None or px.empty or px.shape[1] < min_cols:
         return {'error': 'Недостаточно данных: не загрузились цены.'}
     px, n_cleaned = clean_prices(px)  # битые бары (невозможные доходности) → NaN
     # Окно анализа: годы от-до (чтобы отдельный год не искажал выборку).
@@ -278,7 +279,7 @@ async def main():
         px = px[px.index >= pd.Timestamp(CFG['start'])]
     if CFG.get('end'):
         px = px[px.index <= pd.Timestamp(CFG['end'])]
-    if px.empty or px.shape[1] < 2:
+    if px.empty or px.shape[1] < min_cols:
         return {'error': 'В выбранном окне дат нет данных — расширьте годы.'}
     HZ = sorted(set([1, 2, 3, 5, 10, 21, H]))
     if mode == 'combine': HZ = [H]
@@ -491,7 +492,9 @@ async def main():
     if mode == 'ma':
         windows = [10, 20, 50, 100, 200]
         pxs = px.sort_index()
-        cols = [col for col in pxs.columns if col != bench]
+        # Анализируем РОВНО запрошенные тикеры (бенчмарк для ma не нужен — допускаем тикер == бенчмарк).
+        req = set(str(s).upper() for s in syms)
+        cols = [c for c in pxs.columns if c in req] or [col for col in pxs.columns if col != bench]
 
         def _agg(x):
             n = int(len(x))

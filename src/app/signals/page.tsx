@@ -355,9 +355,10 @@ function Signals() {
       const s = t.toUpperCase().trim();
       if (/^[A-Z0-9][A-Z0-9.\-]{0,13}$/.test(s)) set.add(s);
     }
-    set.delete(benchmark.toUpperCase().trim());
+    // Для SMA/EMA бенчмарк не используется → не выкидываем его (можно анализировать сам SPY одним тикером).
+    if (tab !== 'ma') set.delete(benchmark.toUpperCase().trim());
     return [...set];
-  }, [presets, custom, benchmark, dynTickers]);
+  }, [presets, custom, benchmark, dynTickers, tab]);
 
   // Группы для раздельных таблиц по классам активов (режим «Фактор»): каждая выбранная
   // группа + «свои тикеры» — отдельная таблица.
@@ -586,8 +587,9 @@ function Signals() {
 
   async function runStudy(payload: Record<string, unknown>) {
     if (running) return;
-    if (universe.length < 4) {
-      toast({ variant: 'error', title: 'Маловата вселенная', description: 'Нужно ≥ 4 инструментов.' });
+    const minU = payload.mode === 'ma' ? 1 : 4; // SMA/EMA пулит по своим тикерам — хватит и одного
+    if (universe.length < minU) {
+      toast({ variant: 'error', title: 'Маловата вселенная', description: `Нужно ≥ ${minU} инструмент${minU === 1 ? '' : 'ов'}.` });
       return;
     }
     setRunning(true);
@@ -750,8 +752,10 @@ function Signals() {
                     );
                   })}
                 </div>
-                {universe.length < 4 && (
-                  <p className="text-[11px] font-medium text-warn-strong">Выберите вселенную: группу выше или впишите тикеры ниже (нужно ≥ 4).</p>
+                {universe.length < (tab === 'ma' ? 1 : 4) && (
+                  <p className="text-[11px] font-medium text-warn-strong">
+                    Выберите вселенную: группу выше или впишите тикеры ниже (нужно ≥ {tab === 'ma' ? 1 : 4}).
+                  </p>
                 )}
               </Field>
               <div className="grid grid-cols-2 gap-3">
@@ -871,7 +875,7 @@ function Signals() {
                   setYearTo={setYearTo}
                   onRun={runMa}
                   running={running}
-                  canRun={universe.length >= 4}
+                  canRun={universe.length >= 1}
                 />
               )}
             </CardContent>

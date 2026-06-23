@@ -330,6 +330,21 @@ test.describe('Signals /signals', () => {
     }
   });
 
+  test('режим SMA/EMA: работает с ОДНИМ тикером, совпадающим с бенчмарком (SPY)', async ({ page }) => {
+    await page.goto('/signals');
+    await page.getByTestId('tab-ma').click();
+    await page.locator('#bm').fill('SPY');
+    // Один свой тикер = SPY (он же бенчмарк) — раньше вселенная обнулялась и кнопка была заблокирована.
+    await page.getByPlaceholder('SMH, GLD, TLT').fill('SPY');
+    await expect(page.getByTestId('run-study')).toBeEnabled();
+    await page.getByTestId('run-study').click();
+    const out = page.locator('[data-testid="signals-output"]');
+    await expect(out.getByText(/SMA — простая|Недостаточно истории/)).toBeVisible({ timeout: 150000 });
+    if (await out.getByText(/SMA — простая/).count()) {
+      await expect(out.getByTestId('ma-table')).toHaveCount(2);
+    }
+  });
+
   test('режим Сигнал: событийный анализ рендерит статистику', async ({ page }) => {
     await setup(page);
     await page.getByTestId('tab-signal').click();
