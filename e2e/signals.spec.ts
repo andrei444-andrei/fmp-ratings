@@ -466,4 +466,15 @@ test.describe('Signals /signals', () => {
     await expect(out.getByTestId('naaim-result')).toBeVisible({ timeout: 150000 });
     await expect(out.getByTestId('naaim-source')).toContainText('реальные');
   });
+
+  test('режим Корреляции: матрица активов строится (полная + по годам), таблица активов', async ({ page }) => {
+    await setup(page); // вселенная AAA..FFF
+    await page.getByTestId('tab-corr').click();
+    await page.getByTestId('run-study').click();
+    const out = page.locator('[data-testid="signals-output"]');
+    await expect(out.getByTestId('corr-result')).toBeVisible({ timeout: 150000 });
+    await expect(out.getByTestId('corr-matrix')).toBeVisible();
+    await expect(out.getByTestId('corr-matrix')).toContainText('AAA'); // тикеры вселенной в матрице
+    await expect(out.getByTestId('corr-year-all')).toBeVisible(); // переключатель «Всё окно» / годы
+  });
 });

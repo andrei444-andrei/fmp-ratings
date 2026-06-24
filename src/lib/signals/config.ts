@@ -89,10 +89,10 @@ function normSignal(raw: any): SignalDef | null {
   return { factor: f.id as FactorId, param, side, threshold, skip };
 }
 
-export type StudyConfig = Record<string, unknown> & { mode: 'factor' | 'signal' | 'combine' | 'setops' | 'cellobs' | 'ma' | 'maops' | 'naaim' };
+export type StudyConfig = Record<string, unknown> & { mode: 'factor' | 'signal' | 'combine' | 'setops' | 'cellobs' | 'ma' | 'maops' | 'naaim' | 'corr' };
 
 export function normalizeStudyConfig(body: any): StudyConfig {
-  const mode = ['factor', 'signal', 'combine', 'setops', 'cellobs', 'ma', 'maops', 'naaim'].includes(body?.mode) ? body.mode : 'factor';
+  const mode = ['factor', 'signal', 'combine', 'setops', 'cellobs', 'ma', 'maops', 'naaim', 'corr'].includes(body?.mode) ? body.mode : 'factor';
   const benchmark = (typeof body?.benchmark === 'string' && body.benchmark.trim() ? body.benchmark : 'SPY')
     .toUpperCase()
     .trim();
@@ -137,6 +137,17 @@ export function normalizeStudyConfig(body: any): StudyConfig {
   if (mode === 'signal') {
     const sig = normSignal(body?.signal) || { factor: 'momentum', param: 5, side: 'low', threshold: -5 };
     return { ...base, signal: sig };
+  }
+
+  if (mode === 'corr') {
+    // Матрица корреляций активов (полная + по годам) + моментум-оверлей. Бенчмарк не выкидываем
+    // (можно включить SPY как актив). Капим 40 — больше нечитаемо в матрице.
+    const uni = normUniverse(body?.universe, '', 40);
+    const freq = body?.freq === 'w' ? 'w' : body?.freq === 'm' ? 'm' : 'd'; // дн/нед/мес доходности
+    const momWindow = Math.round(clampNum(body?.momWindow, 126, 21, 504)); // окно трейлинг-моментума, дн.
+    const basketN = Math.round(clampNum(body?.basketN, 5, 2, 12)); // размер low-corr корзины
+    const lev = clampNum(body?.lev, 2, 1, 5); // плечо для справочного пересчёта
+    return { ...base, universe: uni, freq, momWindow, basketN, lev };
   }
 
   if (mode === 'naaim') {
