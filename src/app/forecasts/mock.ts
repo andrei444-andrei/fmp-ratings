@@ -10,7 +10,9 @@
 // англоязычными запросами на (страна × год) через Perplexity Sonar (aimlapi),
 // возвращающий текст + citations[] — кэш в БД, инкрементальный добор пропусков.
 
-export type Country = { code: string; name: string; flag: string; bench: string };
+// «Country» исторически — теперь это актив/рынок (страна, регион или товар).
+export type AssetClass = 'equity' | 'region' | 'commodity';
+export type Country = { code: string; name: string; flag: string; bench: string; cls: AssetClass };
 
 // Единая ординальная шкала сигнала (как Refinitiv I/B/E/S сводит любые шкалы к
 // числу): −2 strong underweight … +2 strong overweight. На неё маппится всё.
@@ -58,14 +60,18 @@ export type CountrySeries = { country: Country; cells: Cell[] };
 export const YEARS = [2019, 2020, 2021, 2022, 2023, 2024];
 
 export const COUNTRIES: Country[] = [
-  { code: 'US', name: 'США',            flag: '🇺🇸', bench: 'SPY'  },
-  { code: 'DE', name: 'Германия',       flag: '🇩🇪', bench: 'EWG'  },
-  { code: 'GB', name: 'Великобритания', flag: '🇬🇧', bench: 'EWU'  },
-  { code: 'JP', name: 'Япония',         flag: '🇯🇵', bench: 'EWJ'  },
-  { code: 'CN', name: 'Китай',          flag: '🇨🇳', bench: 'MCHI' },
-  { code: 'IN', name: 'Индия',          flag: '🇮🇳', bench: 'INDA' },
-  { code: 'BR', name: 'Бразилия',       flag: '🇧🇷', bench: 'EWZ'  },
-  { code: 'PL', name: 'Польша',         flag: '🇵🇱', bench: 'EPOL' },
+  { code: 'US', name: 'США',            flag: '🇺🇸', bench: 'SPY',  cls: 'equity' },
+  { code: 'DE', name: 'Германия',       flag: '🇩🇪', bench: 'EWG',  cls: 'equity' },
+  { code: 'GB', name: 'Великобритания', flag: '🇬🇧', bench: 'EWU',  cls: 'equity' },
+  { code: 'JP', name: 'Япония',         flag: '🇯🇵', bench: 'EWJ',  cls: 'equity' },
+  { code: 'CN', name: 'Китай',          flag: '🇨🇳', bench: 'MCHI', cls: 'equity' },
+  { code: 'IN', name: 'Индия',          flag: '🇮🇳', bench: 'INDA', cls: 'equity' },
+  { code: 'BR', name: 'Бразилия',       flag: '🇧🇷', bench: 'EWZ',  cls: 'equity' },
+  { code: 'PL', name: 'Польша',         flag: '🇵🇱', bench: 'EPOL', cls: 'equity' },
+  { code: 'KR', name: 'Корея',          flag: '🇰🇷', bench: 'EWY',  cls: 'equity' },
+  { code: 'EU', name: 'Европа (DM)',    flag: '🇪🇺', bench: 'VGK',  cls: 'region' },
+  { code: 'EM', name: 'Развив. рынки',  flag: '🌐', bench: 'EEM',  cls: 'region' },
+  { code: 'GLD', name: 'Золото',        flag: '🥇', bench: 'GLD',  cls: 'commodity' },
 ];
 
 const BANKS = ['Goldman Sachs', 'Morgan Stanley', 'JPMorgan', 'UBS', 'BofA'];
@@ -82,6 +88,10 @@ const RAW: Record<string, Record<number, [number, number | null]>> = {
   IN: { 2019: [0.09, 0.13], 2020: [0.07, 0.15], 2021: [0.10, 0.24], 2022: [0.08, 0.04], 2023: [0.09, 0.19], 2024: [0.11, 0.12] },
   BR: { 2019: [0.06, 0.32], 2020: [0.05, 0.03], 2021: [0.08, -0.12], 2022: [0.04, 0.04], 2023: [0.06, 0.22], 2024: [0.07, -0.10] },
   PL: { 2019: [0.04, null], 2020: [0.03, -0.01], 2021: [0.06, 0.21], 2022: [-0.02, -0.17], 2023: [0.05, 0.36], 2024: [0.05, 0.12] },
+  KR: { 2019: [0.06, 0.09], 2020: [0.05, 0.45], 2021: [0.08, -0.10], 2022: [0.04, -0.29], 2023: [0.07, 0.22], 2024: [0.06, -0.10] },
+  EU: { 2019: [0.05, 0.24], 2020: [0.03, 0.05], 2021: [0.07, 0.16], 2022: [-0.02, -0.15], 2023: [0.04, 0.20], 2024: [0.05, 0.02] },
+  EM: { 2019: [0.07, 0.18], 2020: [0.08, 0.18], 2021: [0.06, -0.03], 2022: [0.05, -0.20], 2023: [0.07, 0.09], 2024: [0.08, 0.08] },
+  GLD: { 2019: [0.02, 0.18], 2020: [0.04, 0.25], 2021: [0.03, -0.04], 2022: [-0.01, -0.01], 2023: [0.02, 0.13], 2024: [0.01, 0.27] },
 };
 
 // Намеренные пропуски ПРОГНОЗА (демонстрация «нет прогноза»): тут forecasts=[].
