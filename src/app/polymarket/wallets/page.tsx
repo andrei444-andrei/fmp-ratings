@@ -101,6 +101,98 @@ function AiSummary({ address, horizon, initial }: { address: string; horizon: nu
   );
 }
 
+type Bet = { conditionId: string; question: string; category: string | null; horizonDays: number; entry: number; win: 0 | 1; pnl: number; cost: number; endDate: string | null };
+type OpenPos = { conditionId: string; title: string; slug: string; outcome: string; category: string | null; avgPrice: number; curPrice: number; size: number; value: number; pnl: number; endDate: string | null };
+
+const cents = (x: number) => `${Math.round(x * 100)}¢`;
+const dmy = (s: string | null) => (s ? new Date(s).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '—');
+
+// Детальная карточка: входы, активные позиции, все сделки (ленивая подгрузка).
+function WalletDetail({ address }: { address: string }) {
+  const [d, setD] = useState<{ bets: Bet[]; open: OpenPos[] } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch(`/api/polymarket/wallets/detail?address=${address}`, { cache: 'no-store' })
+      .then((r) => r.json().then((j) => { if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`); return j; }))
+      .then((j) => { if (alive) setD(j); })
+      .catch((e) => { if (alive) setErr(e?.message || 'Ошибка'); });
+    return () => { alive = false; };
+  }, [address]);
+
+  if (err) return <div className="mt-2 text-xs text-down-strong">Детали: {err}</div>;
+  if (!d) return <div className="mt-2 text-xs text-ink-3">Загружаю сделки…</div>;
+
+  const bets: Bet[] = Array.isArray(d.bets) ? d.bets : [];
+  const open: OpenPos[] = Array.isArray(d.open) ? d.open : [];
+  const wins = bets.filter((b) => b.win);
+  const losses = bets.filter((b) => !b.win);
+  const avg = (a: Bet[]) => (a.length ? a.reduce((s, b) => s + b.entry, 0) / a.length : 0);
+
+  return (
+    <div className="mt-3 space-y-3">
+      {/* входы */}
+      <div className="text-xs text-ink-2">
+        <span className="font-medium text-ink-3">При каких вводных входит: </span>
+        выигрыши — в среднем по <b>{cents(avg(wins))}</b> ({wins.length}); проигрыши — по <b>{cents(avg(losses))}</b> ({losses.length}).
+        Чем ниже цена входа на выигрышах, тем больше «угадывал недооценённое».
+      </div>
+
+      {/* активные позиции */}
+      <div>
+        <div className="text-[11px] font-medium text-ink-3 mb-1">Что сейчас активно — открытые позиции ({open.length})</div>
+        {open.length ? (
+          <div className="max-h-52 overflow-auto rounded-fk border border-line divide-y divide-line">
+            {open.map((p) => (
+              <a key={p.conditionId} href={p.slug ? `https://polymarket.com/event/${p.slug}` : '#'} target="_blank" rel="noreferrer"
+                 className="flex items-center gap-2 px-2 py-1.5 text-xs hover:bg-surface-2">
+                <span className="text-ink-2 w-10 tabular-nums shrink-0">{cents(p.curPrice)}</span>
+                <span className="text-ink-3 shrink-0">{p.outcome}</span>
+                <span className="flex-1 truncate text-ink">{p.title}</span>
+                <span className="tabular-nums text-ink-2 shrink-0">{money(p.value)}</span>
+                <span className={`tabular-nums shrink-0 w-16 text-right ${p.pnl >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{money(p.pnl)}</span>
+              </a>
+            ))}
+          </div>
+        ) : <div className="text-xs text-ink-3">Открытых позиций нет (или недоступны).</div>}
+      </div>
+
+      {/* все сделки */}
+      <div>
+        <div className="text-[11px] font-medium text-ink-3 mb-1">Все разрешённые сделки ({bets.length}) — вход, исход, PnL</div>
+        <div className="max-h-72 overflow-auto rounded-fk border border-line">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-surface-2 text-ink-3">
+              <tr>
+                <th className="text-left font-medium px-2 py-1">исход</th>
+                <th className="text-right font-medium px-2 py-1">вход</th>
+                <th className="text-left font-medium px-2 py-1">рынок</th>
+                <th className="text-left font-medium px-2 py-1 hidden sm:table-cell">тип</th>
+                <th className="text-right font-medium px-2 py-1">PnL</th>
+                <th className="text-right font-medium px-2 py-1 hidden sm:table-cell">гориз.</th>
+                <th className="text-right font-medium px-2 py-1 hidden sm:table-cell">дата</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {bets.map((b) => (
+                <tr key={b.conditionId} className="hover:bg-surface-2">
+                  <td className="px-2 py-1"><span className={b.win ? 'text-up-strong' : 'text-down-strong'}>{b.win ? '✓' : '✗'}</span></td>
+                  <td className="px-2 py-1 text-right tabular-nums text-ink-2">{cents(b.entry)}</td>
+                  <td className="px-2 py-1 max-w-[280px] truncate text-ink" title={b.question}>{b.question}</td>
+                  <td className="px-2 py-1 hidden sm:table-cell text-ink-3">{b.category ? catLabel(b.category) : '—'}</td>
+                  <td className={`px-2 py-1 text-right tabular-nums ${b.pnl >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{money(b.pnl)}</td>
+                  <td className="px-2 py-1 text-right tabular-nums text-ink-3 hidden sm:table-cell">{Math.round(b.horizonDays)}д</td>
+                  <td className="px-2 py-1 text-right tabular-nums text-ink-3 hidden sm:table-cell">{dmy(b.endDate)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function WalletCard({ w, rank, cat, horizon }: { w: Wallet; rank: number; cat: string; horizon: number }) {
   const [open, setOpen] = useState(false);
   const s = cat !== 'all' && w.byCat[cat] ? w.byCat[cat] : null;
@@ -150,20 +242,7 @@ function WalletCard({ w, rank, cat, horizon }: { w: Wallet; rank: number; cat: s
         <div className="px-3 pb-3 sm:pl-[44px]">
           <div className="text-[11px] text-ink-3 mb-1.5">Edge по типам событий (горизонт ≥ {w.minHorizon}д) · ROI {(w.roi * 100).toFixed(0)}%</div>
           <CatChips w={w} />
-          {(w.samples?.length ?? 0) > 0 && (
-            <div className="mt-3">
-              <div className="text-[11px] font-medium text-ink-3 mb-1">Что торгует — крупнейшие ставки</div>
-              <div className="space-y-1">
-                {w.samples.map((sm, i) => (
-                  <div key={i} className="flex items-center gap-2 text-xs">
-                    <span className={sm.win ? 'text-up-strong' : 'text-down-strong'}>{sm.win ? '✓' : '✗'}</span>
-                    <span className="text-ink-3 tabular-nums w-10">@{sm.entry.toFixed(2)}</span>
-                    <span className="text-ink-2 truncate">{sm.question}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          {open && <WalletDetail address={w.address} />}
           <AiSummary address={w.address} horizon={horizon} initial={w.aiSummary} />
         </div>
       )}

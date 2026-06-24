@@ -121,6 +121,39 @@ export async function walletValue(user: string, signal?: AbortSignal): Promise<n
   return Array.isArray(data) && data[0] ? num(data[0].value) : 0;
 }
 
+// Текущие открытые (неразрешённые) позиции кошелька — «что сейчас активно».
+export type OpenPosition = {
+  conditionId: string; title: string; slug: string; outcome: string;
+  category: CatKey | null; avgPrice: number; curPrice: number; size: number;
+  value: number; pnl: number; endDate: string | null;
+};
+
+export async function openPositions(user: string, signal?: AbortSignal): Promise<OpenPosition[]> {
+  const data = await getJson(`${DATA}/positions?user=${user}&limit=500`, signal);
+  if (!Array.isArray(data)) return [];
+  const out: OpenPosition[] = [];
+  for (const p of data) {
+    const cur = num(p.curPrice);
+    // открыта = не погашаема и цена не у краёв (рынок ещё не разрешён)
+    if (p.redeemable || cur <= 0.02 || cur >= 0.98 || num(p.size) <= 0) continue;
+    out.push({
+      conditionId: String(p.conditionId || ''),
+      title: String(p.title || ''),
+      slug: String(p.slug || ''),
+      outcome: String(p.outcome || ''),
+      category: categoriesOf(String(p.title || '')).primary,
+      avgPrice: num(p.avgPrice),
+      curPrice: cur,
+      size: num(p.size),
+      value: num(p.currentValue),
+      pnl: num(p.cashPnl),
+      endDate: p.endDate ?? null,
+    });
+  }
+  out.sort((a, b) => b.value - a.value);
+  return out;
+}
+
 // Полная история сделок кошелька (пагинация). Берём TRADE-события.
 export type Trade = { conditionId: string; outcomeIndex: number; side: 'BUY' | 'SELL'; size: number; usdc: number };
 
