@@ -7,7 +7,7 @@ const TABLES = [
   'sp500_current','sp500_changes','market_cap','grades','consensus_history',
   'top_n_per_year','rating_changes_filtered','runs',
   'prices','research_prompts','research_runs','fundamentals','dividends',
-  'qc_algorithms','qc_backtest_cache',
+  'qc_algorithms','qc_backtest_cache','naaim_exposure',
 ];
 
 export default function AdminPage() {
@@ -22,6 +22,33 @@ export default function AdminPage() {
 
   const [migrating, setMigrating] = useState(false);
   const [migrateMsg, setMigrateMsg] = useState<string | null>(null);
+
+  // NAAIM Exposure Index — ручной ингест истории/еженедельных значений для вкладки «NAAIM» в /signals.
+  const [naaimStatus, setNaaimStatus] = useState<{ count: number; first: string; last: string; source: string } | null>(null);
+  const [naaimText, setNaaimText] = useState('');
+  const [naaimMsg, setNaaimMsg] = useState<string | null>(null);
+  const [naaimBusy, setNaaimBusy] = useState(false);
+
+  async function loadNaaim() {
+    try {
+      const d = await fetch('/api/admin/naaim').then(r => r.json());
+      if (d?.ok) setNaaimStatus({ count: d.count, first: d.first, last: d.last, source: d.source });
+    } catch { /* noop */ }
+  }
+  async function ingestNaaim() {
+    setNaaimBusy(true);
+    setNaaimMsg(null);
+    try {
+      const r = await fetch('/api/admin/naaim', { method: 'POST', headers: { 'content-type': 'text/csv' }, body: naaimText });
+      const d = await r.json();
+      if (!d.ok) setNaaimMsg(`Ошибка: ${d.error || 'не удалось'}`);
+      else { setNaaimMsg(`✓ Загружено: ${d.count} недель (${d.first} … ${d.last})`); setNaaimText(''); loadNaaim(); loadStats(); }
+    } catch (e: any) {
+      setNaaimMsg(`Ошибка: ${e.message}`);
+    } finally {
+      setNaaimBusy(false);
+    }
+  }
 
   async function loadStats() {
     const data = await fetch('/api/read/stats').then(r => r.json());
@@ -77,7 +104,7 @@ export default function AdminPage() {
     setTimeout(() => URL.revokeObjectURL(a.href), 100);
   }
 
-  useEffect(() => { loadStats(); loadTable(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { loadStats(); loadTable(); loadNaaim(); /* eslint-disable-next-line */ }, []);
   useEffect(() => { loadTable(); /* eslint-disable-next-line */ }, [table, limit]);
 
   return (
@@ -105,6 +132,35 @@ export default function AdminPage() {
         <div className="mt-3 flex gap-2 items-center flex-wrap">
           <a className="btn" href="/admin/quantconnect">QuantConnect — креды доступа</a>
           <a className="btn" href="/quant">Аналитика алгоритмов</a>
+        </div>
+      </section>
+
+      <section className="card">
+        <h2 className="font-semibold mb-2">NAAIM Exposure Index — данные для вкладки «NAAIM» в /signals</h2>
+        <p className="text-xs text-neutral-600 mb-2">
+          Источник сейчас: <b>{naaimStatus ? (naaimStatus.source || '—') : '…'}</b>
+          {naaimStatus?.count
+            ? ` · ${naaimStatus.count} недель (${naaimStatus.first} … ${naaimStatus.last})`
+            : ' · реальных данных ещё нет (вкладка считает на синтетике)'}
+        </p>
+        <textarea
+          className="input w-full font-mono text-xs"
+          rows={6}
+          placeholder={'Вставьте историю — по одной строке на неделю:\n2006-01-04,40.00\n2006-01-11,55.50\n2006-01-18,61.30\n…'}
+          value={naaimText}
+          onChange={e => setNaaimText(e.target.value)}
+        />
+        <div className="mt-2 flex gap-2 items-center flex-wrap">
+          <button className="btn-primary" onClick={ingestNaaim} disabled={naaimBusy || !naaimText.trim()}>
+            {naaimBusy ? 'Загружаю…' : 'Загрузить (upsert)'}
+          </button>
+          <button className="btn" onClick={loadNaaim}>Обновить статус</button>
+          {naaimMsg && <span className="text-sm">{naaimMsg}</span>}
+        </div>
+        <div className="text-xs text-neutral-500 mt-2 space-y-1">
+          <p><b>Формат:</b> <code>ГГГГ-ММ-ДД,значение</code> — одна неделя на строку (понимаются и даты вида MM/DD/YYYY, разделители «,» «;» таб). Повторная загрузка обновляет недели по дате (upsert) — каждый четверг можно вставлять одну новую строку, ничего не дублируется.</p>
+          <p><b>Где брать:</b> официальный источник — <a className="underline" href="https://naaim.org/programs/naaim-exposure-index/" target="_blank" rel="noreferrer">naaim.org → NAAIM Exposure Index</a>. Новое значение выходит <b>по четвергам</b> (опрос закрывается в среду); там же исторический график для разовой заливки. Прямого файла для скачивания сайт не отдаёт (график рисуется на клиенте).</p>
+          <p><b>Без ручной работы:</b> задайте переменную окружения <code>NAAIM_CSV_URL</code> на прямой CSV/JSON-фид (<code>date,value</code>) — вкладка подтянет данные сама (best-effort, кэш в БД).</p>
         </div>
       </section>
 
