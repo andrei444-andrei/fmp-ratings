@@ -439,4 +439,31 @@ test.describe('Signals /signals', () => {
     await expect(out.getByTestId('naaim-rule-rule1')).toBeVisible({ timeout: 150000 });
     await expect(out.getByTestId('naaim-rule-rule3')).toHaveCount(0);
   });
+
+  test('NAAIM: ингест через /api/admin/naaim → вкладка считает на реальных (manual) данных', async ({ page, request }) => {
+    // Недельная история (детерминированная, разные форматы дат/разделителей понимаются парсером).
+    const lines: string[] = [];
+    for (let i = 0, ms = Date.UTC(2018, 0, 3); ms <= Date.UTC(2024, 11, 25); ms += 7 * 864e5, i++) {
+      const d = new Date(ms).toISOString().slice(0, 10);
+      const v = Math.round((60 + 45 * Math.sin(i / 6) + (i % 5) * 3) * 10) / 10; // ~15..110, иногда >100
+      lines.push(`${d},${v}`);
+    }
+    const post = await request.post('/api/admin/naaim', { headers: { 'content-type': 'text/csv' }, data: lines.join('\n') });
+    expect(post.ok()).toBeTruthy();
+    const pj = await post.json();
+    expect(pj.ok).toBe(true);
+    expect(pj.count).toBeGreaterThan(100);
+
+    const status = await (await request.get('/api/admin/naaim')).json();
+    expect(status.source).toBe('manual');
+    expect(status.count).toBe(pj.count);
+
+    // Теперь вкладка NAAIM видит реальные (загруженные) данные, а не синтетику.
+    await setup(page);
+    await page.getByTestId('tab-naaim').click();
+    await page.getByTestId('run-study').click();
+    const out = page.locator('[data-testid="signals-output"]');
+    await expect(out.getByTestId('naaim-result')).toBeVisible({ timeout: 150000 });
+    await expect(out.getByTestId('naaim-source')).toContainText('реальные');
+  });
 });
