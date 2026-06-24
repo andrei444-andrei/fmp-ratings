@@ -11,6 +11,9 @@ import type { CatKey } from './classify';
 
 const SIG_MIN_N = 20; // минимум пари для оценки значимости
 
+// libsql отвергает Infinity/NaN — приводим к конечному числу.
+const fin = (x: number, d = 0): number => (Number.isFinite(x) ? x : d);
+
 let ensured = false;
 async function ensureSchema(): Promise<void> {
   if (ensured) return;
@@ -111,7 +114,7 @@ export async function storeWalletBets(address: string, bets: StoredBet[]): Promi
               ON CONFLICT(address, condition_id) DO UPDATE SET
                 question=excluded.question, category=excluded.category, horizon_days=excluded.horizon_days,
                 entry=excluded.entry, win=excluded.win, pnl=excluded.pnl, cost=excluded.cost, end_date=excluded.end_date`,
-        args: [address, b.conditionId, b.question, b.category, b.horizonDays, b.entry, b.win, b.pnl, b.cost, b.endDate],
+        args: [address, b.conditionId, b.question, b.category, fin(b.horizonDays, 3650), fin(b.entry), b.win, fin(b.pnl), fin(b.cost), b.endDate],
       })),
       'write',
     );
@@ -160,8 +163,8 @@ export async function upsertWalletMeta(address: string, valueUsd: number, agg: {
         significant=excluded.significant, win_rate=excluded.win_rate, total_pnl=excluded.total_pnl,
         roi=excluded.roi, value_usd=excluded.value_usd, by_cat=excluded.by_cat,
         min_horizon=excluded.min_horizon, computed_at=excluded.computed_at`,
-    args: [address, agg.n, agg.meanEdge, agg.tStat, agg.pValue, agg.significant ? 1 : 0, agg.winRate,
-      agg.totalPnl, agg.roi, valueUsd, JSON.stringify(agg.byCat), agg.minHorizon, new Date().toISOString()],
+    args: [address, agg.n, fin(agg.meanEdge), fin(agg.tStat), fin(agg.pValue, 1), agg.significant ? 1 : 0, fin(agg.winRate),
+      fin(agg.totalPnl), fin(agg.roi), fin(valueUsd), JSON.stringify(agg.byCat), fin(agg.minHorizon, 30), new Date().toISOString()],
   });
 }
 
