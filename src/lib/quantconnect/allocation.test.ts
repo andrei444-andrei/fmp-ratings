@@ -26,7 +26,37 @@ vi.mock('@/lib/research/prices', () => ({
   }),
 }));
 
-import { getStrategyAllocation } from './allocation';
+import { getStrategyAllocation, anchorYearAttribution } from './allocation';
+
+describe('anchorYearAttribution — якорим к фактической годовой доходности (плечо)', () => {
+  // Реконструкция нормирована на gross → у плечевой стратегии занижает.
+  // contrib тикеров = +22%, excess = -1% (recon spy = 23%). Факт: стратегия +63%, SPY +25%.
+  const contrib = { A: 0.12, B: 0.10 };           // Σ = 0.22
+  const excess = { A: 0.00, B: -0.01 };           // Σ = -0.01 → spyEq Σ = 0.23
+
+  it('Σ contrib масштабируется к факт. доходности стратегии, Σ excess — к факт. опережению SPY', () => {
+    const a = anchorYearAttribution(contrib, excess, 0.63, 0.25);
+    expect(a.totalContrib).toBeCloseTo(0.63, 9);          // = факт. доходность стратегии
+    expect(a.totalExcess).toBeCloseTo(0.63 - 0.25, 9);    // = факт. опережение SPY (а не -1%!)
+    expect(Object.values(a.contrib).reduce((s, x) => s + x, 0)).toBeCloseTo(0.63, 9);
+    expect(Object.values(a.excess).reduce((s, x) => s + x, 0)).toBeCloseTo(0.38, 9);
+    // относительная форма по тикерам сохраняется (A вложил больше B)
+    expect(a.contrib.A).toBeGreaterThan(a.contrib.B);
+  });
+
+  it('нет данных бенчмарка за год (realSpy=undefined) → excess не трогаем (фолбэк на recon)', () => {
+    const a = anchorYearAttribution(contrib, excess, 0.63, undefined);
+    expect(a.totalContrib).toBeCloseTo(0.63, 9);          // contrib всё равно якорим к факт.
+    expect(a.totalExcess).toBeCloseTo(-0.01, 9);          // excess = исходная recon-сумма
+    expect(a.excess.B).toBeCloseTo(-0.01, 9);
+  });
+
+  it('reconC≈0 → не делим на ноль (scale=1, contrib без изменений)', () => {
+    const a = anchorYearAttribution({ A: 0.05, B: -0.05 }, { A: 0, B: 0 }, 0.4, 0.1);
+    expect(a.contrib.A).toBeCloseTo(0.05, 9);             // масштаб не применён
+    expect(a.totalContrib).toBeCloseTo(0.4, 9);           // но «Итог» = факт.
+  });
+});
 
 describe('getStrategyAllocation — таймлайн и атрибуция', () => {
   it('таймлайн доводится до конца бэктеста (endIso), хотя сделка одна в 2020', async () => {
