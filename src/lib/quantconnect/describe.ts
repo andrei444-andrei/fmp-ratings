@@ -3,6 +3,22 @@
 import { qcReadProjectFiles, qcReadProjectFile } from './client';
 import { aimlChat } from '@/lib/aimlapi';
 
+// Из .ipynb (QC research-ноутбук) достаём только исходный код — code-ячейки.
+// `source` бывает массивом строк-линий или одной строкой.
+export function extractNotebookCode(raw: string): string {
+  try {
+    const nb = JSON.parse(raw);
+    const cells = Array.isArray(nb?.cells) ? nb.cells : [];
+    return cells
+      .filter((c: any) => c?.cell_type === 'code')
+      .map((c: any) => (Array.isArray(c.source) ? c.source.join('') : String(c.source ?? '')))
+      .join('\n\n')
+      .trim();
+  } catch {
+    return '';
+  }
+}
+
 export async function generateDescription(projectId: string): Promise<string> {
   const files = await qcReadProjectFiles(projectId);
   const codeFiles = files.filter(f => /\.(py|cs)$/i.test(f.name));
@@ -16,17 +32,33 @@ export async function generateDescription(projectId: string): Promise<string> {
     if (!f.content.trim()) f.content = await qcReadProjectFile(projectId, f.name);
     diag.push(`${f.name}(bulk=${bulkLen},file=${f.content.length})`);
   }));
-  const code = codeFiles
+  let code = codeFiles
     .filter(f => f.content.trim())
     .map(f => `# ${f.name}\n${f.content}`)
-    .join('\n\n')
-    .slice(0, 24000); // лимит контекста
+    .join('\n\n');
+
+  // Фолбэк: в .py/.cs кода нет — бывает, что main.py пустой, а стратегия живёт
+  // в research-ноутбуке. Берём код из .ipynb (только code-ячейки).
+  if (!code.trim()) {
+    const nbFiles = files.filter(f => /\.ipynb$/i.test(f.name));
+    await Promise.all(nbFiles.map(async f => {
+      if (!f.content.trim()) f.content = await qcReadProjectFile(projectId, f.name);
+    }));
+    code = nbFiles
+      .map(f => ({ name: f.name, src: extractNotebookCode(f.content) }))
+      .filter(x => x.src)
+      .map(x => `# ${x.name}\n${x.src}`)
+      .join('\n\n');
+    if (code.trim()) diag.push(`ipynb→${nbFiles.map(f => f.name).join('/')}`);
+  }
+  code = code.slice(0, 24000); // лимит контекста
+
   if (!code.trim()) {
     // Самодиагностирующаяся ошибка: один прогон у пользователя показывает причину —
-    // 0 файлов (креды/проект), файлы без .py/.cs (другие расширения) или пустой content.
+    // 0 файлов (креды/проект), файлы без кода (другие расширения) или пустой content.
     const all = files.map(f => `${f.name}=${f.content.length}`).slice(0, 30).join(', ');
     throw new Error(
-      `В проекте нет кода (.py/.cs) с содержимым. Всего файлов: ${files.length}. ` +
+      `В проекте нет кода (.py/.cs/.ipynb) с содержимым. Всего файлов: ${files.length}. ` +
       `Код-файлы [${diag.join(', ') || '—'}]. Все файлы [${all || 'пусто — /files/read ничего не вернул'}]`,
     );
   }
