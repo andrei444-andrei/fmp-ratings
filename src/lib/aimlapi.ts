@@ -94,6 +94,9 @@ export async function aimlChatWithCitations(opts: {
   model?: string;
   temperature?: number;
   max_tokens?: number;
+  // Доп-поля провайдера (для Perplexity Sonar: search_after_date_filter,
+  // search_before_date_filter "MM/DD/YYYY", search_recency_filter, web_search_options).
+  extra?: Record<string, any>;
 }): Promise<{ content: string; citations: string[] }> {
   const key = getAimlApiKey();
   const res = await fetch(`${BASE}/chat/completions`, {
@@ -104,6 +107,7 @@ export async function aimlChatWithCitations(opts: {
       messages: opts.messages,
       temperature: opts.temperature ?? 0.3,
       max_tokens: opts.max_tokens ?? 700,
+      ...(opts.extra || {}),
     }),
     cache: 'no-store',
   });

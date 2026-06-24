@@ -8,6 +8,7 @@ const LINKS = [
   { href: '/signals', label: 'Модель сигналов' },
   { href: '/backtest', label: 'Тестирование стратегий' },
   { href: '/quant', label: 'Аналитика алгоритмов' },
+  { href: '/forecasts', label: 'Прогнозы vs факт' },
   { href: '/polymarket', label: 'Polymarket' },
   { href: '/admin', label: 'Admin' },
 ];
