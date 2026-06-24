@@ -1,7 +1,7 @@
 'use client';
 
 import { Fragment, useState } from 'react';
-import { DATA, YEARS, consensusOf, quarterize, cumulativePath, cellOf, TIER, FORMAT_RU, type Cell, type Country } from '../mock';
+import { YEARS, consensusOf, quarterize, cumulativePath, TIER, FORMAT_RU, type Cell, type Country, type CountrySeries } from '../mock';
 import { mean } from '../metrics';
 import { pct, signClass } from '../fmt';
 import SignalChip, { tierClass } from './SignalChip';
@@ -10,12 +10,12 @@ type Granularity = 'year' | 'quarter';
 type Sel = { cell: Cell; country: Country } | null;
 const Q = [1, 2, 3, 4];
 
-function universeReal(year: number): number | null {
-  const vals = DATA.map((s) => s.cells.find((c) => c.year === year)?.real).filter((x): x is number => x != null);
+function universeReal(data: CountrySeries[], year: number): number | null {
+  const vals = data.map((s) => s.cells.find((c) => c.year === year)?.real).filter((x): x is number => x != null);
   return vals.length ? mean(vals) : null;
 }
 
-export default function ForecastMatrix({ granularity }: { granularity: Granularity }) {
+export default function ForecastMatrix({ granularity, data }: { granularity: Granularity; data: CountrySeries[] }) {
   const [sel, setSel] = useState<Sel>(null);
   const open = (cell: Cell, country: Country) => setSel((p) => (p?.cell === cell ? null : { cell, country }));
 
@@ -26,7 +26,7 @@ export default function ForecastMatrix({ granularity }: { granularity: Granulari
           <thead>
             <tr className="groups">
               <th className="yr" rowSpan={2}>{granularity === 'year' ? 'Год' : 'Период'}</th>
-              {DATA.map((s) => (
+              {data.map((s) => (
                 <th key={s.country.code} className="grp" colSpan={granularity === 'year' ? 2 : 1} title={s.country.name + ' · ' + s.country.bench}>
                   {s.country.flag} {s.country.code}
                 </th>
@@ -34,7 +34,7 @@ export default function ForecastMatrix({ granularity }: { granularity: Granulari
               <th className="grp uni" colSpan={granularity === 'year' ? 2 : 1}>Вселенная EW</th>
             </tr>
             <tr>
-              {DATA.map((s) =>
+              {data.map((s) =>
                 granularity === 'year'
                   ? <Fragment key={s.country.code}><th className="grp">Сигнал</th><th>Факт</th></Fragment>
                   : <th key={s.country.code} className="grp">Факт</th>,
@@ -43,8 +43,8 @@ export default function ForecastMatrix({ granularity }: { granularity: Granulari
             </tr>
           </thead>
           {granularity === 'year'
-            ? <AnnualBody sel={sel} open={open} />
-            : <QuarterBody sel={sel} open={open} />}
+            ? <AnnualBody data={data} sel={sel} open={open} />
+            : <QuarterBody data={data} sel={sel} open={open} />}
         </table>
       </div>
       {sel && <SourcesPanel sel={sel} onClose={() => setSel(null)} />}
@@ -64,13 +64,13 @@ function FactCell({ real, sig, grp }: { real: number | null; sig: number | null;
   );
 }
 
-function AnnualBody({ sel, open }: { sel: Sel; open: (c: Cell, co: Country) => void }) {
+function AnnualBody({ data, sel, open }: { data: CountrySeries[]; sel: Sel; open: (c: Cell, co: Country) => void }) {
   return (
     <tbody>
       {YEARS.map((year) => (
         <tr key={year}>
           <td className="yr">{year}</td>
-          {DATA.map((s) => {
+          {data.map((s) => {
             const cell = s.cells.find((c) => c.year === year)!;
             return (
               <Fragment key={s.country.code}>
@@ -80,20 +80,20 @@ function AnnualBody({ sel, open }: { sel: Sel; open: (c: Cell, co: Country) => v
             );
           })}
           <td className="grp uni fc-sig"><span className="qc-mut" style={{ fontSize: 11 }}>—</span></td>
-          <FactCell real={universeReal(year)} sig={null} />
+          <FactCell real={universeReal(data, year)} sig={null} />
         </tr>
       ))}
     </tbody>
   );
 }
 
-function QuarterBody({ sel, open }: { sel: Sel; open: (c: Cell, co: Country) => void }) {
+function QuarterBody({ data, sel, open }: { data: CountrySeries[]; sel: Sel; open: (c: Cell, co: Country) => void }) {
   return (
     <tbody>
       {YEARS.map((year) => {
-        const perCountryQ = DATA.map((s) => {
-          const real = s.cells.find((c) => c.year === year)!.real;
-          return { code: s.country.code, q: real != null ? quarterize(s.country.code, year, real) : null };
+        const perCountryQ = data.map((s) => {
+          const cell = s.cells.find((c) => c.year === year)!;
+          return { code: s.country.code, q: cell.real != null ? quarterize(s.country.code, year, cell.real) : null };
         });
         const uniQ = Q.map((_, qi) => {
           const vals = perCountryQ.map((p) => p.q?.[qi]).filter((x): x is number => x != null);
@@ -104,8 +104,8 @@ function QuarterBody({ sel, open }: { sel: Sel; open: (c: Cell, co: Country) => 
           <Fragment key={year}>
             <tr className="yhead">
               <td className="yr">{year}</td>
-              {DATA.map((s) => {
-                const cell = cellOf(s.country.code, year)!;
+              {data.map((s) => {
+                const cell = s.cells.find((c) => c.year === year)!;
                 return <td key={s.country.code} className="grp fc-sig"><SignalChip cell={cell} active={sel?.cell === cell} onOpen={() => open(cell, s.country)} /></td>;
               })}
               <td className="grp uni qlabel">год</td>
@@ -124,10 +124,10 @@ function QuarterBody({ sel, open }: { sel: Sel; open: (c: Cell, co: Country) => 
             <tr>
               <td className="yr qlbl" style={{ fontWeight: 700 }}>Год</td>
               {perCountryQ.map((p) => {
-                const yr = cellOf(p.code, year)!.real;
+                const yr = data.find((s) => s.country.code === p.code)!.cells.find((c) => c.year === year)!.real;
                 return <td key={p.code} className={'grp fc-r ' + (yr != null ? signClass(yr) : 'fc-na')} style={{ fontWeight: 700 }}>{yr != null ? pct(yr) : 'н.д.'}</td>;
               })}
-              <td className={'grp uni fc-r ' + (universeReal(year) != null ? signClass(universeReal(year)) : 'fc-na')} style={{ fontWeight: 700 }}>{pct(universeReal(year))}</td>
+              <td className={'grp uni fc-r ' + (universeReal(data, year) != null ? signClass(universeReal(data, year)) : 'fc-na')} style={{ fontWeight: 700 }}>{pct(universeReal(data, year))}</td>
             </tr>
           </Fragment>
         );
@@ -136,7 +136,6 @@ function QuarterBody({ sel, open }: { sel: Sel; open: (c: Cell, co: Country) => 
   );
 }
 
-// Панель источников выбранной ячейки — под таблицей (не обрезается скроллом).
 function SourcesPanel({ sel, onClose }: { sel: NonNullable<Sel>; onClose: () => void }) {
   const { cell, country } = sel;
   const con = consensusOf(cell);
@@ -157,17 +156,19 @@ function SourcesPanel({ sel, onClose }: { sel: NonNullable<Sel>; onClose: () => 
                 <span className={'fc-chip sm ' + tierClass(f.signal)}>{TIER[f.signal].short}</span>
                 <b>{f.bank}</b>
                 <span className="fc-src-fmt">{FORMAT_RU[f.format]}</span>
+                {f.extractedBy && <span className={'fc-src-by ' + f.extractedBy}>{f.verified ? 'проверено' : f.extractedBy === 'sonar' ? 'AI' : f.extractedBy === 'synthetic' ? 'синтетика' : 'вручную'}{f.confidence != null && !f.verified ? ` ${Math.round(f.confidence * 100)}%` : ''}</span>}
                 <span className="fc-src-date">{f.asOf}</span>
               </div>
               <div className="fc-src-quote">«{f.quote}»</div>
-              <a className="fc-src-link" href={f.sourceUrl} target="_blank" rel="noreferrer">{f.sourceName} ↗</a>
+              {f.sourceUrl
+                ? <a className="fc-src-link" href={f.sourceUrl} target="_blank" rel="noreferrer">{f.sourceName || 'источник'} ↗</a>
+                : <span className="fc-src-link" style={{ opacity: .6 }}>{f.sourceName || 'без ссылки'}</span>}
             </li>
           ))}
         </ul>
       ) : (
-        <div className="qc-state">Нет прогноза на эту ячейку.</div>
+        <div className="qc-state">Нет прогноза на эту ячейку.{' '}<span className="qc-mut">Нажмите «Добрать прогнозы (AI)», чтобы найти.</span></div>
       )}
-      <div className="fc-src-note">Прототип: цитаты и ссылки синтетические. В проде — из веб-поиска (Sonar) с реальными источниками.</div>
     </div>
   );
 }

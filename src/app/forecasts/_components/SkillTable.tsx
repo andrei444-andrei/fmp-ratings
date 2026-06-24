@@ -1,13 +1,14 @@
 'use client';
 
 import { allSkills, VERDICT_RU, type Verdict } from '../metrics';
+import type { CountrySeries } from '../mock';
 import { coef, signClass } from '../fmt';
 
-// 3.5 — навык по странам (drilldown): где консенсус-сигнал предсказывает факт.
+// 3.5 — навык по активу (drilldown): где консенсус-сигнал предсказывает факт.
 const VERDICT_CLASS: Record<Verdict, string> = { trade: 'active', hold: 'research', noise: 'archive' };
 
-export default function SkillTable() {
-  const skills = allSkills();
+export default function SkillTable({ data }: { data: CountrySeries[] }) {
+  const skills = allSkills(data);
   return (
     <div className="qc-tblwrap">
       <table className="qc-matrix">

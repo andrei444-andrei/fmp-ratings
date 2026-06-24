@@ -157,4 +157,8 @@
 .fc-src-quote { font-size: 13px; color: var(--qc-tx2); margin: 5px 0; line-height: 1.45; font-style: italic; }
 .fc-src-link { font-size: 11.5px; color: var(--qc-on-acc); text-decoration: none; }
 .fc-src-link:hover { text-decoration: underline; }
+.fc-src-by { font-size: 9.5px; text-transform: uppercase; letter-spacing: .4px; font-weight: 700; padding: 2px 7px; border-radius: 99px; }
+.fc-src-by.sonar { color: var(--qc-on-acc); background: var(--qc-acc-bg); }
+.fc-src-by.manual { color: #0f9d63; background: rgba(15, 157, 99, .14); }
+.fc-src-by.synthetic { color: var(--qc-tx3); background: var(--qc-line); }
 .fc-src-note { font-size: 11px; color: var(--qc-tx3); margin-top: 12px; padding-top: 8px; border-top: .5px solid var(--qc-line); }

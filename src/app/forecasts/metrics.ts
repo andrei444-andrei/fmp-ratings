@@ -1,12 +1,7 @@
-// Аналитика прототипа v2. Центр тяжести — на РЕЗУЛЬТАТЕ и связи «сигнал →
+// Аналитика прототипа. Центр тяжести — на РЕЗУЛЬТАТЕ и связи «сигнал →
 // результат», устойчиво к разнородному формату прогноза и пропускам.
-//
-// Первичные метрики — ранговые/категориальные (работают на OW/UW и при дырах):
-//   • кросс-секционный Rank IC (Спирмен) сигнал-ранг vs факт-ранг, по годам;
-//   • спред OW−UW (доходность OW-корзины минус UW-корзины);
-//   • матрица тиров (сигнал × результат).
-// Вторичные — числовые (Pearson IC, MAE, смещение) только где есть число.
-// Все функции чистые — переиспользуем на реальных данных.
+// Все функции принимают данные параметром (дефолт — синтетический DATA), чтобы
+// работать и на моке, и на реальных данных из БД (тот же CountrySeries-шейп).
 
 import { DATA, YEARS, consensusOf, type SignalTier, type CountrySeries } from './mock';
 
@@ -46,10 +41,10 @@ export function spearman(xs: number[], ys: number[]): number | null {
   return pearson(ranks(xs), ranks(ys));
 }
 
-// Пары (консенсус-сигнал, факт) по всем странам данного года — только где есть оба.
-function pairsForYear(year: number): { sig: number; real: number; code: string }[] {
+// Пары (консенсус-сигнал, факт) по всем активам данного года — где есть оба.
+function pairsForYear(data: CountrySeries[], year: number): { sig: number; real: number; code: string }[] {
   const out: { sig: number; real: number; code: string }[] = [];
-  for (const s of DATA) {
+  for (const s of data) {
     const cell = s.cells.find((c) => c.year === year);
     if (!cell || cell.real == null) continue;
     const con = consensusOf(cell);
@@ -61,17 +56,11 @@ function pairsForYear(year: number): { sig: number; real: number; code: string }
 
 // ── 1) Кросс-секционный Rank IC по годам ─────────────────────────────────────
 export type YearIC = { year: number; ic: number | null; n: number };
-export type RankIC = {
-  byYear: YearIC[];
-  meanIC: number | null;
-  stdIC: number | null;
-  tStat: number | null; // mean / (std/√k) по годам с валидным IC
-  kYears: number;
-};
+export type RankIC = { byYear: YearIC[]; meanIC: number | null; stdIC: number | null; tStat: number | null; kYears: number };
 
-export function rankIC(years: number[] = YEARS): RankIC {
+export function rankIC(data: CountrySeries[] = DATA, years: number[] = YEARS): RankIC {
   const byYear: YearIC[] = years.map((year) => {
-    const p = pairsForYear(year);
+    const p = pairsForYear(data, year);
     return { year, ic: spearman(p.map((x) => x.sig), p.map((x) => x.real)), n: p.length };
   });
   const ics = byYear.map((y) => y.ic).filter((x): x is number => x != null);
@@ -82,58 +71,31 @@ export function rankIC(years: number[] = YEARS): RankIC {
 }
 
 // ── 2) Спред OW−UW по годам ──────────────────────────────────────────────────
-// Естественный тест навыка для относительных рейтингов: доходность корзины
-// overweight минус корзины underweight. Обобщает «вайт-лист».
-export type YearSpread = {
-  year: number;
-  owReal: number | null; uwReal: number | null; spread: number | null;
-  owN: number; uwN: number;
-};
-export type SpreadResult = {
-  rows: YearSpread[];
-  avgSpread: number | null;
-  hitYears: number;   // лет со spread > 0
-  validYears: number; // лет, где есть и OW, и UW корзины
-};
+export type YearSpread = { year: number; owReal: number | null; uwReal: number | null; spread: number | null; owN: number; uwN: number };
+export type SpreadResult = { rows: YearSpread[]; avgSpread: number | null; hitYears: number; validYears: number };
 
-export function owUwSpread(years: number[] = YEARS): SpreadResult {
+export function owUwSpread(data: CountrySeries[] = DATA, years: number[] = YEARS): SpreadResult {
   const rows: YearSpread[] = years.map((year) => {
-    const p = pairsForYear(year);
+    const p = pairsForYear(data, year);
     const ow = p.filter((x) => x.sig > 0).map((x) => x.real);
     const uw = p.filter((x) => x.sig < 0).map((x) => x.real);
     const owReal = ow.length ? mean(ow) : null;
     const uwReal = uw.length ? mean(uw) : null;
-    return {
-      year,
-      owReal, uwReal,
-      spread: owReal != null && uwReal != null ? owReal - uwReal : null,
-      owN: ow.length, uwN: uw.length,
-    };
+    return { year, owReal, uwReal, spread: owReal != null && uwReal != null ? owReal - uwReal : null, owN: ow.length, uwN: uw.length };
   });
   const spreads = rows.map((r) => r.spread).filter((x): x is number => x != null);
-  return {
-    rows,
-    avgSpread: spreads.length ? mean(spreads) : null,
-    hitYears: spreads.filter((x) => x > 0).length,
-    validYears: spreads.length,
-  };
+  return { rows, avgSpread: spreads.length ? mean(spreads) : null, hitYears: spreads.filter((x) => x > 0).length, validYears: spreads.length };
 }
 
 // ── 3) Матрица тиров (сигнал → результат) ────────────────────────────────────
-// Строки: OW (тир>0) / EW (тир=0) / UW (тир<0); столбцы: факт рост/падение.
 export type TierMatrix = {
   rows: { tier: 'OW' | 'EW' | 'UW'; up: number; down: number }[];
-  total: number;
-  // точность направленных колов: OW→рост и UW→падение верны; EW — «нет кола».
-  directionalCorrect: number;
-  directionalTotal: number;
-  baseRateUp: number;
+  total: number; directionalCorrect: number; directionalTotal: number; baseRateUp: number;
 };
-
-export function tierMatrix(): TierMatrix {
+export function tierMatrix(data: CountrySeries[] = DATA): TierMatrix {
   const acc = { OW: { up: 0, down: 0 }, EW: { up: 0, down: 0 }, UW: { up: 0, down: 0 } };
   let ups = 0, total = 0;
-  for (const s of DATA) {
+  for (const s of data) {
     for (const cell of s.cells) {
       if (cell.real == null) continue;
       const con = consensusOf(cell);
@@ -148,48 +110,32 @@ export function tierMatrix(): TierMatrix {
   const directionalCorrect = acc.OW.up + acc.UW.down;
   const directionalTotal = acc.OW.up + acc.OW.down + acc.UW.up + acc.UW.down;
   return {
-    rows: [
-      { tier: 'OW', ...acc.OW },
-      { tier: 'EW', ...acc.EW },
-      { tier: 'UW', ...acc.UW },
-    ],
-    total,
-    directionalCorrect,
-    directionalTotal,
-    baseRateUp: total ? ups / total : 0,
+    rows: [{ tier: 'OW', ...acc.OW }, { tier: 'EW', ...acc.EW }, { tier: 'UW', ...acc.UW }],
+    total, directionalCorrect, directionalTotal, baseRateUp: total ? ups / total : 0,
   };
 }
 
 // ── 4) Числовые метрики (только где банк дал число) ──────────────────────────
 export type NumericMetrics = { n: number; ic: number | null; mae: number; bias: number };
-export function numericMetrics(): NumericMetrics {
+export function numericMetrics(data: CountrySeries[] = DATA): NumericMetrics {
   const fs: number[] = [], rs: number[] = [];
-  for (const s of DATA) {
-    for (const cell of s.cells) {
-      if (cell.real == null) continue;
-      const er = consensusOf(cell).expectedReturn;
-      if (er == null) continue;
-      fs.push(er); rs.push(cell.real);
-    }
+  for (const s of data) for (const cell of s.cells) {
+    if (cell.real == null) continue;
+    const er = consensusOf(cell).expectedReturn;
+    if (er == null) continue;
+    fs.push(er); rs.push(cell.real);
   }
   const errs = fs.map((f, i) => f - rs[i]);
   return { n: fs.length, ic: pearson(fs, rs), mae: mean(errs.map(Math.abs)), bias: mean(errs) };
 }
 
-// ── 5) Навык по стране (time-series, на консенсус-сигнале) ────────────────────
+// ── 5) Навык по активу (time-series, на консенсус-сигнале) ───────────────────
 export type Verdict = 'trade' | 'hold' | 'noise';
 export const VERDICT_RU: Record<Verdict, string> = { trade: 'есть сигнал', hold: 'нейтрально', noise: 'шум' };
-
 export type CountrySkill = {
   code: string; name: string; flag: string;
-  coverage: number;        // доля лет с прогнозом
-  pairs: number;           // лет с прогнозом И фактом
-  hitRate: number | null;  // направление (исключая EW и пропуски)
-  rankIc: number | null;   // Спирмен(сигнал, факт) по годам
-  numericIc: number | null;
-  verdict: Verdict;
+  coverage: number; pairs: number; hitRate: number | null; rankIc: number | null; numericIc: number | null; verdict: Verdict;
 };
-
 export function countrySkill(series: CountrySeries): CountrySkill {
   const sigs: number[] = [], reals: number[] = [], ers: number[] = [], erReals: number[] = [];
   let withForecast = 0, hits = 0, dirN = 0;
@@ -215,15 +161,15 @@ export function countrySkill(series: CountrySeries): CountrySkill {
     pairs: sigs.length, hitRate, rankIc, numericIc, verdict,
   };
 }
-export function allSkills(): CountrySkill[] {
-  return DATA.map(countrySkill).sort((a, b) => (b.rankIc ?? -2) - (a.rankIc ?? -2));
+export function allSkills(data: CountrySeries[] = DATA): CountrySkill[] {
+  return data.map(countrySkill).sort((a, b) => (b.rankIc ?? -2) - (a.rankIc ?? -2));
 }
 
 // ── 6) Покрытие ──────────────────────────────────────────────────────────────
 export type Coverage = { cells: number; withForecast: number; withReal: number; withBoth: number };
-export function coverage(): Coverage {
+export function coverage(data: CountrySeries[] = DATA): Coverage {
   let cells = 0, wf = 0, wr = 0, wb = 0;
-  for (const s of DATA) for (const cell of s.cells) {
+  for (const s of data) for (const cell of s.cells) {
     cells++;
     const hasF = cell.forecasts.length > 0;
     const hasR = cell.real != null;
@@ -235,18 +181,13 @@ export function coverage(): Coverage {
 }
 
 // ── 7) Вайт-лист по сигналу vs вся вселенная ─────────────────────────────────
-export type SelectionRule =
-  | { kind: 'tier'; min: SignalTier } // держим страны с консенсус-тиром ≥ min
-  | { kind: 'topK'; k: number };      // топ-K по консенсус-сигналу
-
+export type SelectionRule = { kind: 'tier'; min: SignalTier } | { kind: 'topK'; k: number };
 export type YearOutcome = { year: number; universeReal: number | null; whitelistReal: number | null; picked: string[] };
 export type StrategyStats = { cumulative: number; cagr: number; avg: number; std: number; hitYears: number; n: number };
 export type WhitelistResult = {
-  rows: YearOutcome[];
-  universe: StrategyStats; whitelist: StrategyStats;
+  rows: YearOutcome[]; universe: StrategyStats; whitelist: StrategyStats;
   edgeCagr: number; verdict: 'whitelist' | 'universe' | 'tossup'; caveat: string;
 };
-
 function statsOf(rets: (number | null)[]): StrategyStats {
   const xs = rets.filter((x): x is number => x != null);
   const n = xs.length;
@@ -256,30 +197,22 @@ function statsOf(rets: (number | null)[]): StrategyStats {
   const avg = mean(xs);
   return { cumulative, cagr, avg, std: std(xs), hitYears: xs.filter((x) => x > 0).length, n };
 }
-
-export function whitelistVsUniverse(rule: SelectionRule, years: number[] = YEARS): WhitelistResult {
+export function whitelistVsUniverse(rule: SelectionRule, data: CountrySeries[] = DATA, years: number[] = YEARS): WhitelistResult {
   const rows: YearOutcome[] = years.map((year) => {
-    const all: { code: string; sig: number | null; real: number | null }[] = DATA.map((s) => {
+    const all = data.map((s) => {
       const cell = s.cells.find((c) => c.year === year)!;
-      return { code: s.country.code, sig: consensusOf(cell).signal, real: cell.real };
+      return { code: s.country.code, sig: cell ? consensusOf(cell).signal : null, real: cell ? cell.real : null };
     });
     const universeVals = all.filter((x) => x.real != null).map((x) => x.real as number);
     let picked: string[];
     if (rule.kind === 'topK') {
-      picked = all.filter((x) => x.sig != null).sort((a, b) => (b.sig as number) - (a.sig as number))
-        .slice(0, rule.k).map((x) => x.code);
+      picked = all.filter((x) => x.sig != null).sort((a, b) => (b.sig as number) - (a.sig as number)).slice(0, rule.k).map((x) => x.code);
     } else {
       picked = all.filter((x) => x.sig != null && (x.sig as number) >= rule.min).map((x) => x.code);
     }
     const wlVals = all.filter((x) => picked.includes(x.code) && x.real != null).map((x) => x.real as number);
-    return {
-      year,
-      universeReal: universeVals.length ? mean(universeVals) : null,
-      whitelistReal: wlVals.length ? mean(wlVals) : null,
-      picked,
-    };
+    return { year, universeReal: universeVals.length ? mean(universeVals) : null, whitelistReal: wlVals.length ? mean(wlVals) : null, picked };
   });
-
   const universe = statsOf(rows.map((r) => r.universeReal));
   const whitelist = statsOf(rows.map((r) => r.whitelistReal));
   const edgeCagr = whitelist.cagr - universe.cagr;

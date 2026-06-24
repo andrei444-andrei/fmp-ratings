@@ -1,14 +1,14 @@
 'use client';
 
 import { whitelistVsUniverse, type SelectionRule } from '../metrics';
-import { COUNTRIES } from '../mock';
+import { COUNTRIES, type CountrySeries } from '../mock';
 import { pct, pctU, signClass } from '../fmt';
 
 const FLAG: Record<string, string> = Object.fromEntries(COUNTRIES.map((c) => [c.code, c.flag]));
 
 // Секция 4 — вайт-лист по сигналу vs держать всю вселенную. Главный ответ.
-export default function WhitelistVsUniverse({ rule }: { rule: SelectionRule }) {
-  const r = whitelistVsUniverse(rule);
+export default function WhitelistVsUniverse({ rule, data }: { rule: SelectionRule; data: CountrySeries[] }) {
+  const r = whitelistVsUniverse(rule, data);
 
   const ruleText =
     rule.kind === 'topK'

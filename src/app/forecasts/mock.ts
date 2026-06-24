@@ -46,6 +46,11 @@ export type BankForecast = {
   sourceName: string;            // Bloomberg / Reuters / FT / own research …
   sourceUrl: string;             // ссылка (в моке — example.com)
   asOf: string;                  // дата публикации прогноза (ISO)
+  // поля реального ингеста (опц.; в моке отсутствуют)
+  id?: number;
+  confidence?: number;
+  extractedBy?: 'sonar' | 'manual' | 'synthetic';
+  verified?: boolean;
 };
 
 // Ячейка: набор прогнозов (0..n; пусто = «нет прогноза») + факт (может быть null).
@@ -209,6 +214,40 @@ export function consensusOf(cell: Cell): Consensus {
 
 export function cellOf(code: string, year: number): Cell | undefined {
   return DATA.find((s) => s.country.code === code)?.cells.find((c) => c.year === year);
+}
+
+// ── сборка серий из реальных прогнозов (БД) ──────────────────────────────────
+// Тот же CountrySeries-шейп, что и синтетический DATA, но прогнозы — из БД.
+// Факт. доходность пока синтетическая (нет ключей цен). Если БД пуста —
+// фолбэк на синтетические прогнозы, чтобы страница не была пустой до ингеста.
+export type IngestedForecast = {
+  asset: string; year: number; bank: string; format: ForecastFormat; signal: SignalTier;
+  expectedReturn: number | null; quote: string; sourceName: string; sourceUrl: string; asOf: string;
+  id?: number; confidence?: number; extractedBy?: 'sonar' | 'manual' | 'synthetic'; verified?: boolean;
+};
+
+export function buildSeries(rows: IngestedForecast[]): CountrySeries[] {
+  const hasReal = rows.length > 0;
+  const byCell = new Map<string, BankForecast[]>();
+  for (const r of rows) {
+    const k = r.asset + ':' + r.year;
+    const arr = byCell.get(k) ?? [];
+    arr.push({
+      bank: r.bank, format: r.format, signal: r.signal, expectedReturn: r.expectedReturn,
+      quote: r.quote, sourceName: r.sourceName, sourceUrl: r.sourceUrl, asOf: r.asOf,
+      id: r.id, confidence: r.confidence, extractedBy: r.extractedBy, verified: r.verified,
+    });
+    byCell.set(k, arr);
+  }
+  return COUNTRIES.map((country) => ({
+    country,
+    cells: YEARS.map((year) => {
+      const fc = byCell.get(country.code + ':' + year);
+      const forecasts = fc ?? (hasReal ? [] : cellOf(country.code, year)!.forecasts);
+      const real = RAW[country.code]?.[year]?.[1] ?? null;
+      return { year, forecasts, real };
+    }),
+  }));
 }
 
 // ── поквартальная раскадровка факта (как в v1) ───────────────────────────────

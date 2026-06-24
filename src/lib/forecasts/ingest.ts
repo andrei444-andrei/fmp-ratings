@@ -1,4 +1,4 @@
-import { aimlChatWithCitations, getAimlSonarModel, getAimlApiKey } from '@/lib/aimlapi';
+import { aimlChat, aimlChatWithCitations, getAimlSonarModel, getAimlModel, getAimlApiKey } from '@/lib/aimlapi';
 import { logAppError } from '@/lib/app-errors';
 import { COUNTRIES, cellOf, type SignalTier } from '@/app/forecasts/mock';
 import { replaceCellForecasts, fetchedCells, type ForecastFormat, type ForecastRow } from './store';
@@ -30,6 +30,13 @@ function stanceToFormat(stance: string, hasNum: boolean): ForecastFormat {
   return 'qual';
 }
 
+// Мусорные/несерьёзные домены — не считаем источником прогноза.
+const BAD_HOST = /youtube|youtu\.be|facebook|instagram|tiktok|reddit|twitter|x\.com|pinterest|quora/i;
+function pickUrl(viewUrl: any, citations: string[]): string {
+  const cands = [viewUrl, ...citations].filter((u): u is string => typeof u === 'string' && /^https?:\/\//.test(u) && !BAD_HOST.test(u));
+  return cands[0] || '';
+}
+
 function extractJson(content: string): any | null {
   try { return JSON.parse(content); } catch { /* try to find a json blob */ }
   const m = content.match(/\{[\s\S]*\}/);
@@ -37,44 +44,85 @@ function extractJson(content: string): any | null {
   return null;
 }
 
+// Английские наименования активов для веб-запроса (русские display-имена в
+// промпт не пускаем — модель путается на смеси языков).
+const EN_NOUN: Record<string, string> = {
+  US: 'US equities (S&P 500)',
+  DE: 'German equities (DAX)',
+  GB: 'UK equities (FTSE 100)',
+  JP: 'Japanese equities (Nikkei 225 / TOPIX)',
+  CN: 'Chinese equities (MSCI China)',
+  IN: 'Indian equities (Nifty 50 / Sensex)',
+  BR: 'Brazilian equities (Bovespa)',
+  PL: 'Polish equities (WIG)',
+  KR: 'Korean equities (KOSPI)',
+  EU: 'European equities (STOXX Europe 600)',
+  EM: 'emerging-market equities (MSCI Emerging Markets)',
+  GLD: 'gold (spot gold price)',
+};
 function assetNoun(code: string): string {
-  const a = COUNTRIES.find((c) => c.code === code);
-  if (!a) return code;
-  if (a.cls === 'commodity') return `${a.name === 'Золото' ? 'gold' : a.name} (${a.bench})`;
-  if (a.cls === 'region') return `${a.name} equities (${a.bench})`;
-  return `${a.name} equities (${a.bench})`;
+  return EN_NOUN[code] ?? COUNTRIES.find((c) => c.code === code)?.bench ?? code;
 }
 
-// Один запрос на (актив×год) к Sonar → массив строк прогнозов.
+// Двухшаговый ингест на (актив×год):
+//  1) Sonar тянет ПРОЗУ с источниками (его сильная сторона — выше recall);
+//  2) дешёвая модель СТРУКТУРИРУЕТ прозу в строгий JSON (без выдумок).
 async function fetchCellFromSonar(code: string, year: number): Promise<NewRow[]> {
   const noun = assetNoun(code);
-  const sys = {
-    role: 'system' as const,
-    content:
-      'You are a financial research assistant with live web access. Rely on high-quality English sources ' +
-      '(Bloomberg, Reuters, Financial Times, WSJ, bank research notes, exchanges). Do NOT invent. ' +
-      'Return STRICT JSON only, no prose.',
-  };
-  const user = {
-    role: 'user' as const,
-    content:
-      `What were major investment banks' (${BANKS.join(', ')}) published house views / outlooks for ${noun} ` +
-      `FOR CALENDAR YEAR ${year} specifically — i.e. the year-ahead outlook published around the turn of ${year - 1}/${year} ` +
-      `(roughly Nov ${year - 1} – Feb ${year}). Ignore outlooks for any other year. ` +
-      `Return STRICT JSON: {"views":[{"bank":"","stance":"overweight|neutral|underweight|buy|hold|sell|...","signal":<int -2..2>,` +
-      `"expected_return_pct":<number or null>,"quote":"verbatim phrasing","source":"outlet","url":"https://...","as_of":"YYYY-MM"}]}. ` +
-      `signal scale: +2 strong overweight/top pick, +1 overweight/constructive, 0 neutral/equal-weight, -1 underweight/cautious, -2 strong underweight/avoid. ` +
-      `Each quote must be about ${year}. Include only banks for which you find a real ${year} view; if none, return {"views":[]}.`,
-  };
 
-  const { content, citations } = await aimlChatWithCitations({
+  // шаг 1 — ретрив прозой
+  const research = await aimlChatWithCitations({
     model: getAimlSonarModel(),
-    messages: [sys, user],
-    max_tokens: 900,
-    temperature: 0.1,
+    messages: [
+      {
+        role: 'system',
+        content:
+          'You are a sell-side research analyst with live web access. Rely on high-quality English sources ' +
+          '(Bloomberg, Reuters, Financial Times, WSJ, bank research notes, exchanges). Be specific and factual. Do NOT invent.',
+      },
+      {
+        role: 'user',
+        content:
+          `Summarize the YEAR-AHEAD house views that major investment banks (${BANKS.join(', ')}, and others) published for ${noun} ` +
+          `FOR CALENDAR YEAR ${year} (outlooks released around ${year - 1}Q4–${year}Q1). For each bank you can find: their stance ` +
+          `(overweight / neutral / underweight, or buy / hold / sell), any index target or expected return %, a short verbatim quote, ` +
+          `and the publication date. Be concrete with bank names and figures. If you cannot find ${year}-specific views, say so plainly. English prose.`,
+      },
+    ],
+    max_tokens: 800,
+    temperature: 0.2,
   });
+  const prose = research.content?.trim() || '';
+  const citations = research.citations;
+  if (!prose) return [];
 
-  const parsed = extractJson(content);
+  // шаг 2 — структурирование в JSON
+  let structured = '';
+  try {
+    structured = await aimlChat({
+      model: getAimlModel(),
+      response_format: { type: 'json_object' },
+      temperature: 0,
+      max_tokens: 900,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'Extract investment-bank market views from the SOURCE TEXT into STRICT JSON: ' +
+            '{"views":[{"bank":"","stance":"overweight|neutral|underweight|buy|hold|sell","signal":<int -2..2>,' +
+            '"expected_return_pct":<number or null>,"quote":"verbatim if present","source":"outlet/bank","url":"","as_of":"YYYY-MM"}]}. ' +
+            'signal scale: +2 strong overweight/top pick, +1 overweight/constructive/buy, 0 neutral/equal-weight/hold, -1 underweight/cautious, -2 strong underweight/avoid/sell. ' +
+            'Only include views actually supported by the text — never invent. If a view is not tied to a specific bank, set bank to the source/house name. ' +
+            'If the text contains no concrete view, return {"views":[]}.',
+        },
+        { role: 'user', content: `YEAR=${year}\nASSET=${noun}\n\nSOURCE TEXT:\n${prose.slice(0, 4000)}\n\nReturn the JSON now.` },
+      ],
+    });
+  } catch {
+    structured = '';
+  }
+
+  const parsed = extractJson(structured);
   const views: any[] = Array.isArray(parsed?.views) ? parsed.views : Array.isArray(parsed) ? parsed : [];
   const rows: NewRow[] = [];
   for (let i = 0; i < views.length; i++) {
@@ -84,7 +132,7 @@ async function fetchCellFromSonar(code: string, year: number): Promise<NewRow[]>
     const stance = String(v.stance || '');
     const er = typeof v.expected_return_pct === 'number' ? v.expected_return_pct / 100 : null;
     const sig = Number.isInteger(v.signal) ? clampTier(v.signal) : stanceToSignal(stance);
-    const url = typeof v.url === 'string' && /^https?:\/\//.test(v.url) ? v.url : (citations[i] || citations[0] || '');
+    const url = pickUrl(v.url, citations);
     rows.push({
       bank,
       format: stanceToFormat(stance, er != null),

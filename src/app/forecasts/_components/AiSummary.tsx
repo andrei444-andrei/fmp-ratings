@@ -3,19 +3,20 @@
 import { useState } from 'react';
 import Markdown from '../../quant/_components/Markdown';
 import { rankIC, owUwSpread, tierMatrix, numericMetrics, coverage, allSkills, whitelistVsUniverse, type SelectionRule } from '../metrics';
+import type { CountrySeries } from '../mock';
 import { pct, coef } from '../fmt';
 
 // Секция 5 — AI-резюме ПОСЛЕ математической оценки. В прототипе текст собран
 // детерминированно из посчитанных метрик. В проде — aimlapi (§3) с теми же
 // метриками + цитатами источников в промпте.
-function buildSummary(rule: SelectionRule): string {
-  const ic = rankIC();
-  const sp = owUwSpread();
-  const tm = tierMatrix();
-  const num = numericMetrics();
-  const cov = coverage();
-  const wl = whitelistVsUniverse(rule);
-  const skills = allSkills();
+function buildSummary(rule: SelectionRule, data: CountrySeries[]): string {
+  const ic = rankIC(data);
+  const sp = owUwSpread(data);
+  const tm = tierMatrix(data);
+  const num = numericMetrics(data);
+  const cov = coverage(data);
+  const wl = whitelistVsUniverse(rule, data);
+  const skills = allSkills(data);
   const trade = skills.filter((s) => s.verdict === 'trade');
   const noise = skills.filter((s) => s.verdict === 'noise');
   const lift = tm.directionalTotal ? tm.directionalCorrect / tm.directionalTotal - tm.baseRateUp : 0;
@@ -48,13 +49,13 @@ function buildSummary(rule: SelectionRule): string {
   ].join('\n');
 }
 
-export default function AiSummary({ rule }: { rule: SelectionRule }) {
+export default function AiSummary({ rule, data }: { rule: SelectionRule; data: CountrySeries[] }) {
   const [state, setState] = useState<'idle' | 'gen' | 'done'>('idle');
   const [text, setText] = useState('');
 
   function generate() {
     setState('gen');
-    setTimeout(() => { setText(buildSummary(rule)); setState('done'); }, 650);
+    setTimeout(() => { setText(buildSummary(rule, data)); setState('done'); }, 650);
   }
 
   return (

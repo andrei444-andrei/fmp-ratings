@@ -1,17 +1,18 @@
 'use client';
 
 import { rankIC, owUwSpread, tierMatrix, numericMetrics, coverage } from '../metrics';
+import type { CountrySeries } from '../mock';
 import { pct, pctU, coef, signClass } from '../fmt';
 
 // Секция 3 — анализ РЕЗУЛЬТАТА: насколько сигнал прогноза предсказывает факт.
 // Первичные метрики ранговые/категориальные (устойчивы к формату и пропускам),
 // числовые — отдельно, только где банк дал число.
-export default function ResultsAnalysis() {
-  const cov = coverage();
-  const ic = rankIC();
-  const sp = owUwSpread();
-  const tm = tierMatrix();
-  const num = numericMetrics();
+export default function ResultsAnalysis({ data }: { data: CountrySeries[] }) {
+  const cov = coverage(data);
+  const ic = rankIC(data);
+  const sp = owUwSpread(data);
+  const tm = tierMatrix(data);
+  const num = numericMetrics(data);
   const lift = tm.directionalTotal ? tm.directionalCorrect / tm.directionalTotal - tm.baseRateUp : null;
 
   return (
@@ -109,7 +110,7 @@ export default function ResultsAnalysis() {
         <Card k="Pearson IC" v={coef(num.ic)} sub="число прогноза vs факт" cls={signClass(num.ic)} />
         <Card k="MAE" v={pctU(num.mae)} sub="ср. модуль ошибки" cls="qc-mut" />
         <Card k="Смещение" v={pct(num.bias)} sub={num.bias > 0 ? 'оптимизм (над фактом)' : 'консерватизм (под фактом)'} cls="qc-mut" />
-        <Card k="Где есть число" v={`${num.n}`} sub="из 45 прогнозов" cls="qc-mut" />
+        <Card k="Где есть число" v={`${num.n}`} sub={`из ${cov.withBoth} пар`} cls="qc-mut" />
       </div>
     </>
   );
