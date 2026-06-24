@@ -89,6 +89,26 @@ function normSignal(raw: any): SignalDef | null {
   return { factor: f.id as FactorId, param, side, threshold, skip };
 }
 
+// Фильтр выборки (factor): исключить/оставить наблюдения по ВТОРИЧНОМУ фактору (напр. vol(21) ≥ 30).
+// Параметр СВОБОДНЫЙ (не из paramOptions) — движок считает factor_series для любого целого окна.
+function normFilter(raw: any): Record<string, unknown> | null {
+  if (!raw || raw.enabled === false) return null;
+  const f = FACTOR_BY_ID[String(raw?.factor)];
+  if (!f) return null;
+  const param = Math.round(clampNum(raw?.param, f.defaultParams[0], 2, 504));
+  const side: Side = raw?.side === 'low' || raw?.side === 'band' ? raw.side : 'high';
+  const op = raw?.op === 'keep' ? 'keep' : 'exclude';
+  const skip = supportsSkip(f.id) ? Math.round(clampNum(raw?.skip, 0, 0, Math.max(0, param - 1))) : 0;
+  if (side === 'band') {
+    let lo = clampNum(raw?.lo, 0, -1e6, 1e6);
+    let hi = clampNum(raw?.hi, 0, -1e6, 1e6);
+    if (lo > hi) [lo, hi] = [hi, lo];
+    return { factor: f.id, param, side, lo, hi, op, skip };
+  }
+  const threshold = clampNum(raw?.threshold, 0, -1e6, 1e6);
+  return { factor: f.id, param, side, threshold, op, skip };
+}
+
 export type StudyConfig = Record<string, unknown> & { mode: 'factor' | 'signal' | 'combine' | 'setops' | 'cellobs' | 'ma' | 'maops' | 'naaim' | 'corr' };
 
 export function normalizeStudyConfig(body: any): StudyConfig {
@@ -130,6 +150,7 @@ export function normalizeStudyConfig(body: any): StudyConfig {
       fdrAlpha: clampNum(body?.fdrAlpha, 0.1, 0.01, 0.5),
       skip: Math.round(clampNum(body?.skip, 0, 0, 60)),
       outcome: body?.outcome === 'alpha' ? 'alpha' : 'excess', // исход: превышение vs β-альфа
+      filter: normFilter(body?.filter), // фильтр выборки (исключить/оставить по вторичному фактору)
       groups: groups.length ? groups : undefined,
     };
   }

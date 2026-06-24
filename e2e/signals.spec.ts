@@ -477,4 +477,14 @@ test.describe('Signals /signals', () => {
     await expect(out.getByTestId('corr-matrix')).toContainText('AAA'); // тикеры вселенной в матрице
     await expect(out.getByTestId('corr-year-all')).toBeVisible(); // переключатель «Всё окно» / годы
   });
+
+  test('режим Фактор: фильтр выборки исключает наблюдения (бейдж с долей исключённых)', async ({ page }) => {
+    await setup(page);
+    await page.getByTestId('tab-factor').click();
+    await page.getByTestId('factor-filter-toggle').click(); // вкл фильтр (дефолт: vol(21) ≥ 30, исключить)
+    await page.getByTestId('run-study').click();
+    await expect(page.getByTestId('heat-cell').first()).toBeVisible({ timeout: 150000 });
+    // Бейдж фильтра виден → исключение применилось к панели (база и ячейки).
+    await expect(page.locator('[data-testid="signals-output"]').getByText(/фильтр:/)).toBeVisible();
+  });
 });
