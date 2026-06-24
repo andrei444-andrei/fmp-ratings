@@ -319,6 +319,10 @@ function Signals() {
   const [fThresholds, setFThresholds] = useState<string>(factorDef.defaultThresholds.join(', '));
   const [fSkip, setFSkip] = useState(0);
   const [fOutcome, setFOutcome] = useState<'excess' | 'alpha'>('excess'); // исход: превышение бенчмарка vs β-альфа
+  // Фильтр выборки: исключить/оставить наблюдения по вторичному фактору (дефолт под пример vol(21) ≥ 30).
+  const [fFilter, setFFilter] = useState<{ enabled: boolean; factor: FactorId; param: number; side: Side; threshold: number; op: 'exclude' | 'keep' }>(
+    { enabled: false, factor: 'vol', param: 21, side: 'high', threshold: 30, op: 'exclude' },
+  );
 
   // ── Сигнал ──
   const [sFactor, setSFactor] = useState<FactorId>('momentum');
@@ -454,6 +458,16 @@ function Signals() {
         if (typeof c.fThresholds === 'string') setFThresholds(c.fThresholds);
         if (Number.isFinite(c.fSkip)) setFSkip(c.fSkip);
         if (c.fOutcome === 'excess' || c.fOutcome === 'alpha') setFOutcome(c.fOutcome);
+        if (c.fFilter && typeof c.fFilter === 'object' && FACTOR_BY_ID[c.fFilter.factor as FactorId]) {
+          setFFilter({
+            enabled: c.fFilter.enabled === true,
+            factor: c.fFilter.factor,
+            param: Number(c.fFilter.param) || 21,
+            side: c.fFilter.side === 'low' ? 'low' : 'high',
+            threshold: Number(c.fFilter.threshold) || 0,
+            op: c.fFilter.op === 'keep' ? 'keep' : 'exclude',
+          });
+        }
         if (c.nR1 && typeof c.nR1 === 'object') setNR1({ enabled: c.nR1.enabled !== false, lookbackW: Number(c.nR1.lookbackW) || 52, pct: Number(c.nR1.pct) || 10 });
         if (c.nR2 && typeof c.nR2 === 'object') setNR2({ enabled: c.nR2.enabled !== false, level: Number(c.nR2.level) || 80, riseW: Number(c.nR2.riseW) || 4, riseBy: Number(c.nR2.riseBy) || 15 });
         if (c.nR3 && typeof c.nR3 === 'object') setNR3({ enabled: c.nR3.enabled !== false, level: Number(c.nR3.level) || 100 });
@@ -484,12 +498,12 @@ function Signals() {
     try {
       localStorage.setItem(
         'signals:config',
-        JSON.stringify({ presets: [...presets], custom, benchmark, horizon, yearFrom, yearTo, tab, factorId, fSide, fBins, fParams, fThresholds, fSkip, fOutcome, nR1, nR2, nR3, nEntryLag, cFreq, cMomWindow, cBasketN }),
+        JSON.stringify({ presets: [...presets], custom, benchmark, horizon, yearFrom, yearTo, tab, factorId, fSide, fBins, fParams, fThresholds, fSkip, fOutcome, fFilter, nR1, nR2, nR3, nEntryLag, cFreq, cMomWindow, cBasketN }),
       );
     } catch {
       /* ignore */
     }
-  }, [hydrated, presets, custom, benchmark, horizon, yearFrom, yearTo, tab, factorId, fSide, fBins, fParams, fThresholds, fSkip, fOutcome, nR1, nR2, nR3, nEntryLag, cFreq, cMomWindow, cBasketN]);
+  }, [hydrated, presets, custom, benchmark, horizon, yearFrom, yearTo, tab, factorId, fSide, fBins, fParams, fThresholds, fSkip, fOutcome, fFilter, nR1, nR2, nR3, nEntryLag, cFreq, cMomWindow, cBasketN]);
 
   // Пермалинк: отражаем id открытого снимка в адресной строке (?result=<id>) БЕЗ навигации —
   // ссылку можно скопировать и открыть напрямую. id=null убирает параметр (свежий прогон).
@@ -694,7 +708,7 @@ function Signals() {
   function runFactor() {
     runStudy({
       mode: 'factor', factor: factorId, side: fSide, bins: fBins, params: fParams,
-      thresholds: parseList(fThresholds), skip: supportsSkip(factorId) ? fSkip : 0, outcome: fOutcome, groups,
+      thresholds: parseList(fThresholds), skip: supportsSkip(factorId) ? fSkip : 0, outcome: fOutcome, filter: fFilter, groups,
     });
   }
   function runSignal() {
@@ -853,6 +867,8 @@ function Signals() {
                   setSkip={setFSkip}
                   outcome={fOutcome}
                   setOutcome={setFOutcome}
+                  filter={fFilter}
+                  setFilter={setFFilter}
                   onRun={runFactor}
                   running={running}
                   canRun={universe.length >= 4}
@@ -1177,6 +1193,68 @@ function FactorSelect({ value, onChange }: { value: FactorId; onChange: (id: Fac
   );
 }
 
+function FactorFilter({ filter, setFilter }: any) {
+  const set = (patch: any) => setFilter({ ...filter, ...patch });
+  const ff = FACTOR_BY_ID[filter.factor as FactorId] || FACTOR_BY_ID.vol;
+  return (
+    <div className="space-y-2 rounded-fk border border-line bg-surface-2 p-3" data-testid="factor-filter">
+      <button
+        type="button"
+        data-testid="factor-filter-toggle"
+        onClick={() => set({ enabled: !filter.enabled })}
+        className={`flex w-full items-center justify-between text-[13px] font-semibold ${filter.enabled ? 'text-ink' : 'text-ink-3'}`}
+      >
+        <span>Фильтр выборки — исключить случаи</span>
+        <span className={`rounded-fk-sm px-2 py-0.5 text-[11px] ${filter.enabled ? 'bg-brand-50 text-brand-700' : 'bg-surface-elev text-ink-3'}`}>
+          {filter.enabled ? 'вкл' : 'выкл'}
+        </span>
+      </button>
+      {filter.enabled && (
+        <div className="space-y-2">
+          <div className="flex gap-1 rounded-fk bg-surface-elev p-1">
+            {([['exclude', 'Исключить'], ['keep', 'Оставить только']] as const).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => set({ op: id })}
+                className={`flex-1 rounded-fk-sm px-2 py-1 text-[12px] font-semibold transition-colors ${filter.op === id ? 'bg-surface-2 text-ink shadow-fk-sm' : 'text-ink-3'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <Field>
+            <Label>Фактор фильтра</Label>
+            <FactorSelect value={filter.factor} onChange={(id: any) => set({ factor: id })} />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field><Label htmlFor="flp">{ff.paramLabel || 'Период'}</Label><NumberInput id="flp" value={filter.param} onChange={(v: number) => set({ param: v })} /></Field>
+            <Field>
+              <Label>Сторона</Label>
+              <div className="flex gap-1 rounded-fk bg-surface-elev p-1">
+                {([['high', '≥ порог'], ['low', '≤ порог']] as const).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => set({ side: id })}
+                    className={`flex-1 rounded-fk-sm px-2 py-1 text-[12px] font-semibold transition-colors ${filter.side === id ? 'bg-surface-2 text-ink shadow-fk-sm' : 'text-ink-3'}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </Field>
+          </div>
+          <Field><Label htmlFor="flt">Порог ({ff.unit || '—'})</Label><NumberInput id="flt" value={filter.threshold} onChange={(v: number) => set({ threshold: v })} /></Field>
+          <p className="text-[11px] text-ink-3">
+            {filter.op === 'exclude' ? 'Убрать' : 'Оставить только'} наблюдения, где <b>{ff.label}</b> ({filter.param}) {filter.side === 'high' ? '≥' : '≤'} {fnum(filter.threshold, 0)}{ff.unit || ''}. Применяется к базе и всем ячейкам карты.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FactorForm(p: any) {
   const f = FACTOR_BY_ID[p.factorId];
   return (
@@ -1275,6 +1353,7 @@ function FactorForm(p: any) {
           <p className="text-[11px] text-ink-3">Исключить последние N торг. дней из расчёта (напр. 5 — убрать недельную реверсию).</p>
         </Field>
       )}
+      <FactorFilter filter={p.filter} setFilter={p.setFilter} />
       <Button onClick={p.onRun} loading={p.running} disabled={!p.canRun} fullWidth data-testid="run-study">
         Построить карту
       </Button>
@@ -2161,6 +2240,12 @@ function FactorResult({ data, onSave, reqGroups = [], reqUniverse = [], reqBench
       </Badge>
       {data.outcome === 'alpha' && (
         <Badge variant="brand">исход: альфа (β-скоррект.) — «изб. дох.» = r − β·r_бенч</Badge>
+      )}
+      {data.filter && data.filtered && (
+        <Badge variant="warn">
+          фильтр: {data.filter.op === 'exclude' ? 'искл.' : 'только'} {FACTOR_BY_ID[data.filter.factor as FactorId]?.label ?? data.filter.factor} ({data.filter.param}) {data.filter.side === 'high' ? '≥' : '≤'} {fnum(data.filter.threshold, 0)} ·
+          {' '}убрано {data.filtered.before ? Math.round((data.filtered.excluded / data.filtered.before) * 100) : 0}% ({data.filtered.excluded} из {data.filtered.before})
+        </Badge>
       )}
       {hasYears && <YearRange min={minY} max={maxY} from={winFrom} to={winTo} setFrom={setWinFrom} setTo={setWinTo} />}
       <SelectionPanel

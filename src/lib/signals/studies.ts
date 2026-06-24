@@ -362,7 +362,8 @@ async def main():
         col_labels = [c['label'] for c in cols]
         skip = int(CFG.get('skip', 0))
         groups_cfg = CFG.get('groups') or [{'label': None, 'tickers': CFG['universe'], 'benchmark': bench}]
-        out_groups = []; total_obs = 0; all_syms = set()
+        flt = CFG.get('filter')
+        out_groups = []; total_obs = 0; all_syms = set(); flt_before = 0; flt_after = 0
         for grp in groups_cfg:
             gsyms = set(str(s).upper() for s in (grp.get('tickers') or []))
             all_syms |= gsyms
@@ -376,6 +377,19 @@ async def main():
                 out_groups.append({'label': grp.get('label'), 'baseline': None, 'symbols': 0,
                                    'benchmark': gbench, 'has_bench': has_b_g, 'grid': []})
                 continue
+            # Фильтр выборки: исключаем/оставляем наблюдения по ВТОРИЧНОМУ фактору (напр. vol(21) ≥ 30
+            # → exclude «турбулентные» дни). Применяется к панели группы → отражается и в базе, и в ячейках.
+            if flt:
+                ff = build_fval(pxg, gbench, flt['factor'], int(flt['param']), H, int(flt.get('skip', 0)))
+                tgt_g = tgt_g.merge(ff.rename(columns={'fval': 'ffval'}), on=['symbol', 'date'], how='left')
+                cond = region_mask(tgt_g['ffval'], flt).fillna(False)
+                flt_before += len(tgt_g)
+                tgt_g = (tgt_g[cond] if flt.get('op') == 'keep' else tgt_g[~cond]).drop(columns=['ffval'])
+                flt_after += len(tgt_g)
+                if tgt_g.empty:
+                    out_groups.append({'label': grp.get('label'), 'baseline': None, 'symbols': 0,
+                                       'benchmark': gbench, 'has_bench': has_b_g, 'grid': []})
+                    continue
             base_g = pstat(tgt_g, maincol)
             if base_g: total_obs += base_g['n']
             grid = []; pvals = []
@@ -427,6 +441,9 @@ async def main():
                 'benchmark': bench, 'has_bench': True, 'cleaned': int(n_cleaned)}
         return {'mode': 'factor', 'factor': fid, 'side': side, 'bins': bins, 'horizon': H, 'skip': skip,
                 'outcome': outcome,
+                'filter': (flt if flt else None),
+                'filtered': ({'before': int(flt_before), 'after': int(flt_after),
+                              'excluded': int(flt_before - flt_after)} if flt else None),
                 'fdrAlpha': alpha, 'params': params, 'cols': col_labels, 'hz': HZ, 'groups': out_groups, 'meta': meta}
 
     # setops — операции над множествами наблюдений ВЫБРАННЫХ ячеек одной группы (страны):
