@@ -33,8 +33,14 @@ jobs:
       - name: Unit tests (vitest)
         run: npm run test:unit
 
+      # Ретрай: apt/Google-mirror иногда даёт транзиентный "mirror sync in progress".
       - name: Install Playwright (chromium)
-        run: npx playwright install --with-deps chromium
+        run: |
+          for i in 1 2 3; do
+            npx playwright install --with-deps chromium && exit 0
+            echo "playwright install attempt $i failed, retrying…"; sleep 15
+          done
+          exit 1
 
       # Playwright сам соберёт (npm run build) и поднимет next start в CI-режиме.
       # Mobile-проект пока нестабилен (липкий навбар/тач) — гоняем desktop.
