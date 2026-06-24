@@ -26,7 +26,8 @@ vi.mock('@/lib/research/prices', () => ({
   }),
 }));
 
-import { getStrategyAllocation, anchorYearAttribution } from './allocation';
+import { getStrategyAllocation } from './allocation';
+import { anchorYearAttribution } from './attribution';
 
 describe('anchorYearAttribution — якорим к фактической годовой доходности (плечо)', () => {
   // Реконструкция нормирована на gross → у плечевой стратегии занижает.

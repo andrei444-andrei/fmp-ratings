@@ -7,7 +7,7 @@ import { computeSummary } from '@/lib/quantconnect/summary';
 import { computeDrawdowns } from '@/lib/quantconnect/drawdowns';
 import type { SeriesResponse, TradesResponse, QcTrade } from '@/lib/quantconnect/types';
 import type { AllocationResult } from '@/lib/quantconnect/allocation';
-import { anchorYearAttribution } from '@/lib/quantconnect/allocation';
+import { anchorYearAttribution } from '@/lib/quantconnect/attribution';
 
 const ALLOC_TOPN = 12;
 function wpct(w: number): string { return w > 0.0005 ? (w * 100).toFixed(w < 0.1 ? 1 : 0) + '%' : ''; }
