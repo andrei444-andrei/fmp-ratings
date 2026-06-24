@@ -5,7 +5,7 @@ vi.mock('./creds', () => ({
   getCreds: vi.fn(async () => ({ userId: 'u', apiToken: 't', organizationId: null })),
 }));
 
-import { qcReadBacktestTrades, qcReadSeries } from './client';
+import { qcReadBacktestTrades, qcReadSeries, qcReadProjectFiles } from './client';
 
 const mkOrder = (i: number) => ({
   id: i, symbol: { value: 'SPY' }, quantity: 1, price: 100, value: 100,
@@ -88,5 +88,22 @@ describe('qcReadSeries — транзиентная ошибка chart/read', ()
     const pts = await qcReadSeries('111', 'bt', 'Strategy Equity', 'Equity', 10000, 4);
     expect(pts.length).toBe(2); // данные пришли после ретрая
     expect(calls).toBe(2);      // первая попытка транзиентная, вторая успешная
+  });
+});
+
+describe('qcReadProjectFiles — ретрай пустого ответа', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('пустой files ретраится и возвращает код со второй попытки', async () => {
+    let calls = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      calls++;
+      if (calls === 1) return { ok: true, status: 200, text: async () => JSON.stringify({ success: true, files: [] }) } as any;
+      return { ok: true, status: 200, text: async () => JSON.stringify({ success: true, files: [{ name: 'main.py', content: 'class A: pass' }] }) } as any;
+    }));
+    const files = await qcReadProjectFiles('111', 3);
+    expect(files.length).toBe(1);
+    expect(files[0].name).toBe('main.py');
+    expect(calls).toBe(2); // пустой ответ → ретрай → код
   });
 });
