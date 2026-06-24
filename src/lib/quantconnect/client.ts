@@ -194,9 +194,12 @@ export async function qcReadProjectFiles(projectId: number | string, maxAttempts
 export async function qcReadProjectFile(projectId: number | string, name: string): Promise<string> {
   try {
     const data = await qcPost('/files/read', { projectId: Number(projectId), name });
+    // Именованный read может вернуть массив files, одиночный объект file ИЛИ
+    // content на верхнем уровне — поддерживаем все формы.
     const arr = Array.isArray(data?.files) ? data.files : Array.isArray(data?.Files) ? data.Files : [];
-    const f = arr.find((x: any) => String(x?.name ?? x?.Name ?? '') === name) ?? arr[0];
-    return String(f?.content ?? f?.Content ?? '');
+    const single = data?.file ?? data?.File;
+    const f = arr.find((x: any) => String(x?.name ?? x?.Name ?? '') === name) ?? arr[0] ?? single;
+    return String(f?.content ?? f?.Content ?? data?.content ?? data?.Content ?? '');
   } catch {
     return '';
   }

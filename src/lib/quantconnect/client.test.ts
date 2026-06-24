@@ -116,4 +116,18 @@ describe('qcReadProjectFiles — ретрай пустого ответа', () =
     const c = await qcReadProjectFile('111', 'main.py');
     expect(c).toContain('class X');
   });
+
+  it('qcReadProjectFile понимает одиночный объект file (не массив)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, file: { name: 'main.py', content: 'class Single: pass' } }) } as any)));
+    const c = await qcReadProjectFile('111', 'main.py');
+    expect(c).toContain('class Single');
+  });
+
+  it('qcReadProjectFile понимает content на верхнем уровне ответа', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, content: 'class TopLevel: pass' }) } as any)));
+    const c = await qcReadProjectFile('111', 'main.py');
+    expect(c).toContain('class TopLevel');
+  });
 });

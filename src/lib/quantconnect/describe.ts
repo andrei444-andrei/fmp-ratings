@@ -8,8 +8,13 @@ export async function generateDescription(projectId: string): Promise<string> {
   const codeFiles = files.filter(f => /\.(py|cs)$/i.test(f.name));
   // QC иногда отдаёт bulk /files/read со списком файлов, но БЕЗ content —
   // в таком случае добираем содержимое каждого файла кода пофайлово.
+  // Диагностика: фиксируем длину content из bulk и после пофайлового добора,
+  // чтобы при провале точно знать, где обрывается цепочка (а не гадать).
+  const diag: string[] = [];
   await Promise.all(codeFiles.map(async f => {
+    const bulkLen = f.content.length;
     if (!f.content.trim()) f.content = await qcReadProjectFile(projectId, f.name);
+    diag.push(`${f.name}(bulk=${bulkLen},file=${f.content.length})`);
   }));
   const code = codeFiles
     .filter(f => f.content.trim())
@@ -17,8 +22,13 @@ export async function generateDescription(projectId: string): Promise<string> {
     .join('\n\n')
     .slice(0, 24000); // лимит контекста
   if (!code.trim()) {
-    const names = files.map(f => f.name).filter(Boolean).slice(0, 25).join(', ');
-    throw new Error(`В проекте нет кода (.py/.cs) с содержимым. Файлы проекта: ${names || '— /files/read вернул пусто'}`);
+    // Самодиагностирующаяся ошибка: один прогон у пользователя показывает причину —
+    // 0 файлов (креды/проект), файлы без .py/.cs (другие расширения) или пустой content.
+    const all = files.map(f => `${f.name}=${f.content.length}`).slice(0, 30).join(', ');
+    throw new Error(
+      `В проекте нет кода (.py/.cs) с содержимым. Всего файлов: ${files.length}. ` +
+      `Код-файлы [${diag.join(', ') || '—'}]. Все файлы [${all || 'пусто — /files/read ничего не вернул'}]`,
+    );
   }
 
   const content = await aimlChat({
