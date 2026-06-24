@@ -18,12 +18,16 @@ export type ForecastRow = {
   signal: SignalTier;
   expectedReturn: number | null;
   rawQuote: string;
+  reasoning: string;        // нюансы/рассуждение из самого анонса
   sourceName: string;
   sourceUrl: string;
   asOf: string;
+  publishedAt: string;      // дата публикации статьи (YYYY-MM[-DD])
+  dateOk: boolean;          // дата в окне year-ahead для целевого года
+  sourceVerified: boolean;  // URL открыт и дата подтверждена машинно
   confidence: number;
   extractedBy: 'sonar' | 'manual' | 'synthetic';
-  verified: boolean;
+  verified: boolean;        // подтверждено человеком
   createdAt: string;
 };
 
@@ -41,15 +45,23 @@ export async function ensureForecastTables(): Promise<void> {
     signal INTEGER NOT NULL,
     expected_return REAL,
     raw_quote TEXT,
+    reasoning TEXT,
     source_name TEXT,
     source_url TEXT,
     as_of TEXT,
+    published_at TEXT,
+    date_ok INTEGER NOT NULL DEFAULT 1,
+    source_verified INTEGER NOT NULL DEFAULT 0,
     confidence REAL,
     extracted_by TEXT NOT NULL,
     verified INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
   await libsqlClient.execute(`CREATE INDEX IF NOT EXISTS idx_fc_signals_cell ON forecast_signals (asset, year)`);
+  // Идемпотентные миграции для БД, созданных раньше (дубль колонки тихо игнорируем).
+  for (const col of ['reasoning TEXT', 'published_at TEXT', 'date_ok INTEGER NOT NULL DEFAULT 1', 'source_verified INTEGER NOT NULL DEFAULT 0']) {
+    try { await libsqlClient.execute(`ALTER TABLE forecast_signals ADD COLUMN ${col}`); } catch { /* колонка уже есть */ }
+  }
   await libsqlClient.execute(`CREATE TABLE IF NOT EXISTS forecast_fetch_log (
     asset TEXT NOT NULL,
     year INTEGER NOT NULL,
@@ -71,9 +83,13 @@ function rowToForecast(x: any): ForecastRow {
     signal: Number(x.signal) as SignalTier,
     expectedReturn: x.expected_return != null ? Number(x.expected_return) : null,
     rawQuote: x.raw_quote != null ? String(x.raw_quote) : '',
+    reasoning: x.reasoning != null ? String(x.reasoning) : '',
     sourceName: x.source_name != null ? String(x.source_name) : '',
     sourceUrl: x.source_url != null ? String(x.source_url) : '',
     asOf: x.as_of != null ? String(x.as_of) : '',
+    publishedAt: x.published_at != null ? String(x.published_at) : '',
+    dateOk: x.date_ok != null ? !!Number(x.date_ok) : true,
+    sourceVerified: !!Number(x.source_verified),
     confidence: x.confidence != null ? Number(x.confidence) : 0,
     extractedBy: String(x.extracted_by) as ForecastRow['extractedBy'],
     verified: !!Number(x.verified),
@@ -122,9 +138,9 @@ export async function replaceCellForecasts(
   ];
   for (const r of rows) {
     stmts.push({
-      sql: `INSERT INTO forecast_signals (asset, year, bank, format, signal, expected_return, raw_quote, source_name, source_url, as_of, confidence, extracted_by, verified, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-      args: [asset, year, r.bank, r.format, r.signal, r.expectedReturn, r.rawQuote, r.sourceName, r.sourceUrl, r.asOf, r.confidence, r.extractedBy, now],
+      sql: `INSERT INTO forecast_signals (asset, year, bank, format, signal, expected_return, raw_quote, reasoning, source_name, source_url, as_of, published_at, date_ok, source_verified, confidence, extracted_by, verified, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+      args: [asset, year, r.bank, r.format, r.signal, r.expectedReturn, r.rawQuote, r.reasoning, r.sourceName, r.sourceUrl, r.asOf, r.publishedAt, r.dateOk ? 1 : 0, r.sourceVerified ? 1 : 0, r.confidence, r.extractedBy, now],
     });
   }
   stmts.push({

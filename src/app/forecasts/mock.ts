@@ -48,6 +48,10 @@ export type BankForecast = {
   asOf: string;                  // дата публикации прогноза (ISO)
   // поля реального ингеста (опц.; в моке отсутствуют)
   id?: number;
+  reasoning?: string;        // нюансы из самого анонса
+  publishedAt?: string;      // дата публикации статьи
+  dateOk?: boolean;          // дата в окне year-ahead
+  sourceVerified?: boolean;  // URL открыт и дата подтверждена
   confidence?: number;
   extractedBy?: 'sonar' | 'manual' | 'synthetic';
   verified?: boolean;
@@ -222,7 +226,8 @@ export function cellOf(code: string, year: number): Cell | undefined {
 // фолбэк на синтетические прогнозы, чтобы страница не была пустой до ингеста.
 export type IngestedForecast = {
   asset: string; year: number; bank: string; format: ForecastFormat; signal: SignalTier;
-  expectedReturn: number | null; quote: string; sourceName: string; sourceUrl: string; asOf: string;
+  expectedReturn: number | null; quote: string; reasoning?: string; sourceName: string; sourceUrl: string; asOf: string;
+  publishedAt?: string; dateOk?: boolean; sourceVerified?: boolean;
   id?: number; confidence?: number; extractedBy?: 'sonar' | 'manual' | 'synthetic'; verified?: boolean;
 };
 
@@ -234,7 +239,8 @@ export function buildSeries(rows: IngestedForecast[]): CountrySeries[] {
     const arr = byCell.get(k) ?? [];
     arr.push({
       bank: r.bank, format: r.format, signal: r.signal, expectedReturn: r.expectedReturn,
-      quote: r.quote, sourceName: r.sourceName, sourceUrl: r.sourceUrl, asOf: r.asOf,
+      quote: r.quote, reasoning: r.reasoning, sourceName: r.sourceName, sourceUrl: r.sourceUrl, asOf: r.asOf,
+      publishedAt: r.publishedAt, dateOk: r.dateOk, sourceVerified: r.sourceVerified,
       id: r.id, confidence: r.confidence, extractedBy: r.extractedBy, verified: r.verified,
     });
     byCell.set(k, arr);

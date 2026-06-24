@@ -34,8 +34,9 @@ export default function ForecastsPage() {
       const r = await fetch('/api/forecasts/data', { cache: 'no-store' }).then((x) => x.json());
       const rows: IngestedForecast[] = (r.forecasts || []).map((f: any) => ({
         asset: f.asset, year: f.year, bank: f.bank, format: f.format, signal: f.signal,
-        expectedReturn: f.expectedReturn, quote: f.rawQuote, sourceName: f.sourceName,
-        sourceUrl: f.sourceUrl, asOf: f.asOf, id: f.id, confidence: f.confidence,
+        expectedReturn: f.expectedReturn, quote: f.rawQuote, reasoning: f.reasoning, sourceName: f.sourceName,
+        sourceUrl: f.sourceUrl, asOf: f.asOf, publishedAt: f.publishedAt, dateOk: f.dateOk,
+        sourceVerified: f.sourceVerified, id: f.id, confidence: f.confidence,
         extractedBy: f.extractedBy, verified: f.verified,
       }));
       setRealCount(rows.length);

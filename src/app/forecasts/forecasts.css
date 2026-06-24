@@ -161,4 +161,8 @@
 .fc-src-by.sonar { color: var(--qc-on-acc); background: var(--qc-acc-bg); }
 .fc-src-by.manual { color: #0f9d63; background: rgba(15, 157, 99, .14); }
 .fc-src-by.synthetic { color: var(--qc-tx3); background: var(--qc-line); }
+.fc-src-pub { font-size: 10.5px; color: var(--qc-tx3); white-space: nowrap; }
+.fc-src-pub.ok { color: #0f9d63; font-weight: 600; }
+.fc-src-pub.warn { color: #c2410c; font-weight: 600; }
+.fc-src-reason { font-size: 11.5px; color: var(--qc-tx2); line-height: 1.5; margin: 2px 0 4px; padding-left: 8px; border-left: 2px solid var(--qc-line); }
 .fc-src-note { font-size: 11px; color: var(--qc-tx3); margin-top: 12px; padding-top: 8px; border-top: .5px solid var(--qc-line); }

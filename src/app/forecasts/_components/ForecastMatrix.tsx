@@ -157,9 +157,16 @@ function SourcesPanel({ sel, onClose }: { sel: NonNullable<Sel>; onClose: () => 
                 <b>{f.bank}</b>
                 <span className="fc-src-fmt">{FORMAT_RU[f.format]}</span>
                 {f.extractedBy && <span className={'fc-src-by ' + f.extractedBy}>{f.verified ? 'проверено' : f.extractedBy === 'sonar' ? 'AI' : f.extractedBy === 'synthetic' ? 'синтетика' : 'вручную'}{f.confidence != null && !f.verified ? ` ${Math.round(f.confidence * 100)}%` : ''}</span>}
-                <span className="fc-src-date">{f.asOf}</span>
+                <span className="qc-spacer" />
+                {(f.publishedAt || f.asOf) && (
+                  <span className={'fc-src-pub' + (f.sourceVerified ? ' ok' : f.dateOk === false ? ' warn' : '')}
+                    title={f.sourceVerified ? 'дата подтверждена по странице источника' : f.dateOk === false ? 'дата публикации не подтверждена — на ручную проверку' : 'дата по заявлению источника'}>
+                    {f.sourceVerified ? '✓ ' : f.dateOk === false ? '⚠ ' : '📅 '}{(f.publishedAt && f.publishedAt.replace(/-00$/, '')) || f.asOf}
+                  </span>
+                )}
               </div>
               <div className="fc-src-quote">«{f.quote}»</div>
+              {f.reasoning && <div className="fc-src-reason">{f.reasoning}</div>}
               {f.sourceUrl
                 ? <a className="fc-src-link" href={f.sourceUrl} target="_blank" rel="noreferrer">{f.sourceName || 'источник'} ↗</a>
                 : <span className="fc-src-link" style={{ opacity: .6 }}>{f.sourceName || 'без ссылки'}</span>}
