@@ -123,31 +123,36 @@ async function verifySource(url: string): Promise<{ reachable: boolean; ym: YM |
 async function fetchCellFromSonar(code: string, year: number): Promise<{ rows: NewRow[]; dropped: number }> {
   const noun = assetNoun(code);
 
-  // шаг 1 — перечислить статьи. КЛЮЧЕВОЕ: ограничиваем веб-поиск Sonar окном
+  // шаг 1 — собрать взгляды. КЛЮЧЕВОЕ-1: ограничиваем веб-поиск Sonar окном
   // публикации year-ahead (сен. Y−1 … фев. Y) — иначе поиск тащит свежак (обзоры
   // текущего года) и путает год. Формат дат Perplexity — MM/DD/YYYY.
+  // КЛЮЧЕВОЕ-2 (гипотеза по покрытию): РАЗРЕШАЮЩИЙ промпт — выдавать любой
+  // найденный направленный взгляд (банк/брокер/опрос Reuters/институт), даже
+  // единичный и без числового таргета; не подавлять в NONE. Это подняло покрытие
+  // на выборке с ~13–25% до ~88% при сохранении дат и источников.
   const research = await aimlChatWithCitations({
     model: getAimlSonarModel(),
     extra: {
       search_after_date_filter: `09/01/${year - 1}`,
-      search_before_date_filter: `02/01/${year}`,
+      search_before_date_filter: `03/01/${year}`,
     },
     messages: [
       {
         role: 'system',
         content:
           'You are a sell-side research analyst with live web access. Rely on high-quality English sources ' +
-          '(Bloomberg, Reuters, Financial Times, WSJ, bank research notes, exchanges). Be specific and factual. Do NOT invent.',
+          '(Bloomberg, Reuters, Financial Times, WSJ, bank research notes, exchanges, recognized institutions). Be specific and factual. Do NOT invent.',
       },
       {
         role: 'user',
         content:
-          `List the actual ARTICLES / research notes in which major investment banks (${BANKS.join(', ')}, and others) published their ` +
-          `YEAR-AHEAD outlook for ${noun} for CALENDAR YEAR ${year}. Such pieces are normally published between September ${year - 1} and January ${year}. ` +
-          `For EACH article give: bank/author; outlet; URL; PUBLICATION DATE (as precise as possible); the stance (overweight/neutral/underweight or buy/hold/sell); ` +
-          `any ${year} index target or expected return %; a short VERBATIM quote; and 2–3 sentences with the key reasoning/nuances (drivers, risks, caveats). ` +
-          `ONLY include articles whose content is the ${year} outlook AND that were published before or at the very start of ${year}. ` +
-          `Exclude mid-${year} updates and pieces about other years. If you find none, answer exactly NONE.`,
+          `Report ALL year-ahead views/expectations for ${noun} for CALENDAR YEAR ${year} that appear in the search results — from ` +
+          `investment banks, brokers, strategists, analyst polls (Reuters/Bloomberg), or recognized institutions (e.g. World Gold Council for gold). ` +
+          `Include DIRECTIONAL or QUALITATIVE views even without a numeric target (e.g. "modest gains expected", "expected to rebound", "bullish", "overweight", "cautious"). ` +
+          `For EACH item give: source/author (${BANKS.join(', ')}, brokers, or a poll/consensus); outlet; URL; PUBLICATION DATE (best estimate if not explicit); stance; ` +
+          `any ${year} index target or expected return %; a short VERBATIM quote; and 1–2 sentences of key reasoning/nuances (drivers, risks, caveats). ` +
+          `IMPORTANT: list EVERY relevant item you find, even a single partial one — partial information is valuable. Do NOT answer NONE if ANY directional view about ${year} exists. ` +
+          `Answer NONE only if there is genuinely nothing about ${year}.`,
       },
     ],
     max_tokens: 1100,
@@ -169,12 +174,14 @@ async function fetchCellFromSonar(code: string, year: number): Promise<{ rows: N
         {
           role: 'system',
           content:
-            'Extract per-article investment-bank views from the SOURCE TEXT into STRICT JSON: ' +
-            '{"views":[{"bank":"","stance":"overweight|neutral|underweight|buy|hold|sell","signal":<int -2..2>,' +
-            '"expected_return_pct":<number or null>,"quote":"verbatim if present","reasoning":"2-3 sentences of key nuances",' +
+            'Extract per-source market views from the SOURCE TEXT into STRICT JSON: ' +
+            '{"views":[{"bank":"","stance":"overweight|neutral|underweight|bullish|bearish|buy|hold|sell","signal":<int -2..2>,' +
+            '"expected_return_pct":<number or null>,"quote":"verbatim if present","reasoning":"1-2 sentences of key nuances",' +
             '"source":"outlet/bank","url":"","published_at":"YYYY-MM or YYYY-MM-DD or null"}]}. ' +
-            'signal scale: +2 strong overweight/top pick, +1 overweight/constructive/buy, 0 neutral/equal-weight/hold, -1 underweight/cautious, -2 strong underweight/avoid/sell. ' +
-            'published_at MUST be the article publication date as stated in the text; if not stated, null. ' +
+            'A view may be an aggregate analyst/Street CONSENSUS (set bank to "Consensus" or the poll source, e.g. "Reuters poll") or a recognized institution. ' +
+            'Include DIRECTIONAL/QUALITATIVE views even when expected_return_pct is null. ' +
+            'signal scale: +2 strong overweight/very bullish, +1 overweight/constructive/buy, 0 neutral/equal-weight/hold, -1 underweight/cautious, -2 strong underweight/bearish/sell. ' +
+            'published_at MUST be the publication date as stated in the text; if not stated, null. ' +
             'Only include views actually supported by the text — never invent. If a view is not tied to a specific bank, set bank to the source/house name. ' +
             'If the text contains no concrete view, return {"views":[]}.',
         },
