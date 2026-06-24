@@ -1,0 +1,113 @@
+/* Раздел «Прогнозы ИБ vs реальная доходность» — прототип.
+   Дополнение к quant.css: всё общее (панели, матрица, markdown, бейджи)
+   берём оттуда, здесь — только новые блоки. */
+
+/* плашка «это прототип на мок-данных» */
+.fc-proto {
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(245, 181, 61, .14); border: .5px solid rgba(245, 181, 61, .5);
+  border-radius: var(--qc-rad-lg); padding: 10px 14px; margin-bottom: 14px;
+  font-size: 12.5px; color: var(--qc-tx2); line-height: 1.45;
+}
+.fc-proto b { color: #8a6212; }
+.fc-proto .tag { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; font-weight: 700; color: #8a6212; background: rgba(245, 181, 61, .25); padding: 3px 8px; border-radius: 99px; white-space: nowrap; }
+
+/* in-page навигация по секциям (липкая) */
+.fc-toc { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; position: sticky; top: 8px; z-index: 5; }
+.fc-toc a {
+  font-size: 12px; padding: 6px 12px; border-radius: 99px; text-decoration: none;
+  color: var(--qc-tx2); border: .5px solid var(--qc-line2);
+  background: var(--qc-surf); backdrop-filter: blur(6px); white-space: nowrap;
+  transition: color .12s, border-color .12s, background .12s;
+}
+.fc-toc a:hover { color: var(--qc-tx); border-color: var(--qc-acc-bd); }
+.fc-toc a .n { color: var(--qc-tx3); font-family: var(--qc-mono); font-size: 10.5px; margin-right: 5px; }
+
+/* секция */
+.fc-sec { margin-bottom: 26px; scroll-margin-top: 64px; }
+.fc-sec-h { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.fc-sec-n {
+  font-family: var(--qc-mono); font-size: 11px; color: var(--qc-on-acc);
+  background: var(--qc-acc-bg); border: .5px solid var(--qc-acc-bd);
+  border-radius: 7px; padding: 2px 8px; font-weight: 700;
+}
+.fc-sec-t { font-size: 16px; font-weight: 700; color: var(--qc-tx); }
+.fc-sec-d { font-size: 12px; color: var(--qc-tx3); margin: -4px 0 12px; line-height: 1.5; }
+
+/* цель/постановка (agenda) */
+.fc-goal {
+  background: linear-gradient(180deg, var(--qc-acc-bg), var(--qc-surf));
+  border: .5px solid var(--qc-acc-bd); border-radius: var(--qc-rad-lg);
+  padding: 16px 18px; font-size: 13px; line-height: 1.55; color: var(--qc-tx2);
+}
+.fc-goal .q { font-size: 14px; font-weight: 600; color: var(--qc-tx); margin-bottom: 10px; }
+.fc-goal ul { margin: 8px 0 0; padding-left: 18px; }
+.fc-goal li { margin: 4px 0; }
+.fc-goal b { color: var(--qc-tx); }
+.fc-pipe { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.fc-pipe .step {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px;
+  background: var(--qc-surf); border: .5px solid var(--qc-line2); border-radius: 99px;
+  padding: 5px 11px; color: var(--qc-tx2);
+}
+.fc-pipe .step b { color: var(--qc-tx); }
+.fc-pipe .arr { color: var(--qc-tx3); align-self: center; }
+
+/* матрица прогноз/факт: пара под-колонок на страну */
+.fc-matrix td.fc-f { color: var(--qc-tx3); }            /* прогноз — приглушённый */
+.fc-matrix td.fc-r { font-weight: 600; }                 /* факт — акцент */
+.fc-matrix td.fc-hit { background: rgba(15, 157, 99, .15); }  /* факт совпал по знаку с прогнозом */
+.fc-matrix td.fc-miss { background: rgba(219, 59, 68, .13); } /* знак не совпал */
+.fc-matrix tbody tr:hover td.fc-hit { background: rgba(15, 157, 99, .22); }
+.fc-matrix tbody tr:hover td.fc-miss { background: rgba(219, 59, 68, .20); }
+.fc-matrix .uni { border-left: 2px solid var(--qc-acc-bd); }
+.fc-matrix thead tr.groups th.uni { color: var(--qc-acc); }
+
+/* поквартальная раскадровка: строка-заголовок года */
+.fc-matrix tr.yhead td { background: var(--qc-surf2); font-weight: 700; }
+.fc-matrix tr.yhead td.qlabel { color: var(--qc-tx3); font-weight: 400; font-size: 11px; }
+.fc-matrix td.qlbl { color: var(--qc-tx3); font-family: var(--qc-mono); padding-left: 22px; }
+
+/* матрица ошибок (сигнал → результат) */
+.fc-confwrap { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start; }
+.fc-conf { border-collapse: separate; border-spacing: 0; }
+.fc-conf th, .fc-conf td { padding: 0; }
+.fc-conf .axis {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--qc-tx3); font-weight: 700; text-align: center; padding: 6px;
+}
+.fc-conf .axis.v { writing-mode: vertical-rl; transform: rotate(180deg); }
+.fc-conf .hd { font-size: 11.5px; color: var(--qc-tx2); font-weight: 600; text-align: center; padding: 6px 10px; }
+.fc-conf .cell {
+  width: 130px; height: 78px; border: .5px solid var(--qc-line2); border-radius: var(--qc-rad);
+  text-align: center; vertical-align: middle; background: var(--qc-surf);
+}
+.fc-conf .cell .v { font-size: 24px; font-weight: 700; font-family: var(--qc-mono); color: var(--qc-tx); }
+.fc-conf .cell .k { font-size: 10.5px; color: var(--qc-tx3); margin-top: 2px; }
+.fc-conf .cell.good { background: rgba(15, 157, 99, .12); }
+.fc-conf .cell.bad { background: rgba(219, 59, 68, .11); }
+.fc-conf-side { flex: 1; min-width: 230px; font-size: 12.5px; color: var(--qc-tx2); line-height: 1.55; }
+.fc-conf-side .qc-card { margin-bottom: 8px; }
+
+/* вердикт-баннер */
+.fc-verdict {
+  border-radius: var(--qc-rad-lg); padding: 16px 18px; margin-top: 14px;
+  border: .5px solid var(--qc-line2); background: var(--qc-surf2);
+}
+.fc-verdict.win { border-color: rgba(15, 157, 99, .5); background: rgba(15, 157, 99, .09); }
+.fc-verdict.lose { border-color: rgba(219, 59, 68, .5); background: rgba(219, 59, 68, .08); }
+.fc-verdict .lead { font-size: 15px; font-weight: 700; color: var(--qc-tx); display: flex; align-items: center; gap: 9px; }
+.fc-verdict .lead .ic { font-size: 18px; }
+.fc-verdict .body { font-size: 12.5px; color: var(--qc-tx2); line-height: 1.55; margin-top: 7px; }
+.fc-verdict .caveat { font-size: 11.5px; color: var(--qc-tx3); line-height: 1.5; margin-top: 8px; padding-top: 8px; border-top: .5px solid var(--qc-line); }
+
+/* AI-резюме: заглушка-генерация в прототипе */
+.fc-ai { position: relative; }
+.fc-ai-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.fc-ai-note { font-size: 11px; color: var(--qc-tx3); }
+.fc-ai-out { background: var(--qc-surf); border: .5px solid var(--qc-line); border-radius: var(--qc-rad-lg); padding: 14px 16px; }
+
+/* бар управления — наследует .qc-controls-bar; добавим разделители */
+.fc-ctrl-grp { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--qc-tx2); }
+.fc-ctrl-grp > span.lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--qc-tx3); }
+.fc-num { width: 64px; text-align: right; }
