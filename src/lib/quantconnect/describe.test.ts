@@ -20,8 +20,14 @@ describe('generateDescription', () => {
     expect(client.qcReadProjectFile).toHaveBeenCalledWith('111', 'main.py');
   });
 
-  it('кода нет совсем → ошибка со списком файлов проекта (диагностика)', async () => {
+  it('кода нет совсем → самодиагностирующаяся ошибка со списком файлов и длинами', async () => {
     (client.qcReadProjectFiles as any).mockResolvedValueOnce([{ name: 'data.csv', content: '' }]);
-    await expect(generateDescription('111')).rejects.toThrow(/Файлы проекта: data\.csv/);
+    await expect(generateDescription('111')).rejects.toThrow(/Все файлы \[data\.csv=0\]/);
+  });
+
+  it('пустой content даже после добора → диагностика показывает bulk=0,file=0', async () => {
+    (client.qcReadProjectFiles as any).mockResolvedValueOnce([{ name: 'main.py', content: '' }]);
+    (client.qcReadProjectFile as any).mockResolvedValueOnce(''); // и пофайлово пусто
+    await expect(generateDescription('111')).rejects.toThrow(/main\.py\(bulk=0,file=0\)/);
   });
 });
