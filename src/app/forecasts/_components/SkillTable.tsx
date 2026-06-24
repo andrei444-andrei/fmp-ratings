@@ -1,16 +1,10 @@
 'use client';
 
 import { allSkills, VERDICT_RU, type Verdict } from '../metrics';
-import { pct, pctU, coef, signClass } from '../fmt';
+import { coef, signClass } from '../fmt';
 
-// Секция 3a — таблица предсказательной силы прогноза по странам.
-// Где прогноз ИБ реально несёт сигнал, а где это шум / систематический оптимизм.
-
-const VERDICT_CLASS: Record<Verdict, string> = {
-  trade: 'active',     // зелёный бейдж
-  hold: 'research',    // жёлтый
-  noise: 'archive',    // серый
-};
+// 3.5 — навык по странам (drilldown): где консенсус-сигнал предсказывает факт.
+const VERDICT_CLASS: Record<Verdict, string> = { trade: 'active', hold: 'research', noise: 'archive' };
 
 export default function SkillTable() {
   const skills = allSkills();
@@ -20,12 +14,11 @@ export default function SkillTable() {
         <thead>
           <tr>
             <th className="yr" style={{ textAlign: 'left' }}>Страна</th>
-            <th title="Число лет в выборке">N</th>
-            <th title="Доля лет с верным направлением (знак прогноза = знак факта)">Попадание</th>
-            <th title="Информационный коэффициент: corr(прогноз, факт), Пирсон">IC</th>
-            <th title="Ранговая корреляция (Спирмен) — устойчивость порядка">ранг-IC</th>
-            <th title="Ср.(прогноз − факт): &gt;0 — ИБ систематически оптимистичен">Смещение</th>
-            <th title="Ср. модуль ошибки прогноза">MAE</th>
+            <th title="Доля лет, на которые есть прогноз">Покрытие</th>
+            <th title="Лет с прогнозом И фактом">N пар</th>
+            <th title="Доля лет с верным направлением (исключая нейтральные EW)">Попадание</th>
+            <th title="Спирмен(сигнал, факт) по годам — устойчив к формату">rank-IC</th>
+            <th title="Pearson IC по годам, где банк давал число">числ.IC</th>
             <th>Вердикт</th>
           </tr>
         </thead>
@@ -33,15 +26,14 @@ export default function SkillTable() {
           {skills.map((s) => (
             <tr key={s.code}>
               <td className="yr" style={{ textAlign: 'left' }}>{s.flag} {s.name}</td>
-              <td>{s.n}</td>
-              <td className={s.hitRate >= 0.66 ? 'qc-pos' : s.hitRate < 0.5 ? 'qc-neg' : ''}>{(s.hitRate * 100).toFixed(0)}%</td>
-              <td className={signClass(s.ic)}>{coef(s.ic)}</td>
-              <td className={signClass(s.rankIc)}>{coef(s.rankIc)}</td>
-              <td className="qc-mut" title="Смещение = ср.(прогноз − факт). >0 — оптимизм (над фактом); <0 — консерватизм (под фактом)">{pct(s.bias)}</td>
-              <td className="qc-mut">{pctU(s.mae)}</td>
-              <td>
-                <span className={'qc-badge ' + VERDICT_CLASS[s.verdict]}>{VERDICT_RU[s.verdict]}</span>
+              <td className={s.coverage < 1 ? 'qc-mut' : ''}>{Math.round(s.coverage * 100)}%</td>
+              <td>{s.pairs}</td>
+              <td className={s.hitRate == null ? 'qc-mut' : s.hitRate >= 0.66 ? 'qc-pos' : s.hitRate < 0.5 ? 'qc-neg' : ''}>
+                {s.hitRate == null ? '—' : Math.round(s.hitRate * 100) + '%'}
               </td>
+              <td className={signClass(s.rankIc)}>{coef(s.rankIc)}</td>
+              <td className={signClass(s.numericIc)}>{coef(s.numericIc)}</td>
+              <td><span className={'qc-badge ' + VERDICT_CLASS[s.verdict]}>{VERDICT_RU[s.verdict]}</span></td>
             </tr>
           ))}
         </tbody>

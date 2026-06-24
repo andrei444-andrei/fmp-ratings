@@ -2,54 +2,49 @@
 
 import { useState } from 'react';
 import Markdown from '../../quant/_components/Markdown';
-import { allSkills, confusion, whitelistVsUniverse, mean, type SelectionRule } from '../metrics';
-import { pct } from '../fmt';
+import { rankIC, owUwSpread, tierMatrix, numericMetrics, coverage, allSkills, whitelistVsUniverse, type SelectionRule } from '../metrics';
+import { pct, coef } from '../fmt';
 
-// Секция 4 — AI-резюме ПОСЛЕ математической оценки.
-// В прототипе кнопка «Сгенерировать» собирает текст детерминированно из уже
-// посчитанных метрик (чтобы резюме совпадало с тем, что показано выше).
-// В проде здесь будет вызов aimlapi (§3 конституции) с теми же метриками в промпте.
-
+// Секция 5 — AI-резюме ПОСЛЕ математической оценки. В прототипе текст собран
+// детерминированно из посчитанных метрик. В проде — aimlapi (§3) с теми же
+// метриками + цитатами источников в промпте.
 function buildSummary(rule: SelectionRule): string {
-  const skills = allSkills();
-  const conf = confusion();
+  const ic = rankIC();
+  const sp = owUwSpread();
+  const tm = tierMatrix();
+  const num = numericMetrics();
+  const cov = coverage();
   const wl = whitelistVsUniverse(rule);
-
+  const skills = allSkills();
   const trade = skills.filter((s) => s.verdict === 'trade');
   const noise = skills.filter((s) => s.verdict === 'noise');
-  const lift = conf.precisionUp != null ? conf.precisionUp - conf.baseRateUp : 0;
-
-  const avgBias = mean(skills.map((s) => s.bias));
-  const biasLine =
-    avgBias > 0.01
-      ? `Прогнозы в среднем **оптимистичны** (прогноз выше факта на ${pct(avgBias)} в год).`
-      : avgBias < -0.01
-        ? `Прогнозы в среднем **консервативны** — недооценивают движение (прогноз ниже факта на ${pct(-avgBias)} в год); это типично для ралли.`
-        : `Систематического смещения почти нет (${pct(avgBias)} в год).`;
+  const lift = tm.directionalTotal ? tm.directionalCorrect / tm.directionalTotal - tm.baseRateUp : 0;
 
   const verdictLine =
-    wl.verdict === 'whitelist'
-      ? `**Вывод: вайт-лист оправдан** — отбор по прогнозу дал +${pct(wl.edgeCagr)} CAGR над «держать всё».`
-      : wl.verdict === 'universe'
-        ? `**Вывод: вайт-лист не нужен** — отбор по прогнозу проиграл ${pct(wl.edgeCagr)} CAGR; проще держать всю вселенную.`
-        : `**Вывод: ничья** — отбор по прогнозу не дал устойчивого преимущества (${pct(wl.edgeCagr)} CAGR), поэтому «держать всё» предпочтительнее как более простое и дешёвое решение.`;
+    wl.verdict === 'whitelist' ? `**Вывод: вайт-лист оправдан** — отбор по сигналу дал ${pct(wl.edgeCagr)} CAGR над «держать всё».`
+      : wl.verdict === 'universe' ? `**Вывод: вайт-лист не нужен** — он проиграл ${pct(wl.edgeCagr)} CAGR; проще держать всю вселенную.`
+        : `**Вывод: по доходности — ничья** (${pct(wl.edgeCagr)} CAGR). Ценность сигнала — не в «держать OW» (банки и так почти всегда бычьи), а в **относительном ранжировании и избегании UW**.`;
 
   return [
     `### Резюме: прогнозы ИБ как сигнал для отбора стран`,
     ``,
-    `**Предсказательная сила прогнозов в среднем слабая.** По направлению прогноз совпадает с фактом в ${(conf.accuracy * 100).toFixed(0)}% случаев, ` +
-      `но рынок и без прогноза рос в ${(conf.baseRateUp * 100).toFixed(0)}% лет — чистый прирост от прогноза всего ${lift >= 0 ? '+' : '−'}${Math.abs(lift * 100).toFixed(0)} пп. ` +
-      biasLine,
+    `**Сила сигнала — слабая, но не нулевая.** Кросс-секционный Rank IC в среднем ${coef(ic.meanIC)} ` +
+      `(t-стат ${ic.tStat?.toFixed(2) ?? '—'} по ${ic.kYears} годам${ic.tStat != null && Math.abs(ic.tStat) < 2 ? ', статистически незначимо' : ''}). ` +
+      `Направленная точность ${tm.directionalTotal ? Math.round((tm.directionalCorrect / tm.directionalTotal) * 100) : 0}% против базы ${Math.round(tm.baseRateUp * 100)}% — ` +
+      `прирост всего ${lift >= 0 ? '+' : '−'}${Math.abs(lift * 100).toFixed(0)} пп.`,
     ``,
-    `**Сигнал неоднороден по странам.** ` +
-      (trade.length ? `Похоже на сигнал: ${trade.map((s) => s.flag + ' ' + s.name).join(', ')}. ` : `Явного сигнала ни по одной стране не выделено. `) +
-      (noise.length ? `Скорее шум / прогноз против факта: ${noise.map((s) => s.flag + ' ' + s.name).join(', ')}.` : ''),
+    `**Где сигнал в относительных рейтингах.** Спред OW−UW в среднем ${pct(sp.avgSpread)} (${sp.hitYears}/${sp.validYears} лет положительный): ` +
+      `то, что банки ставят в overweight, в среднем обгоняет underweight — это полезнее, чем абсолютное «рост/падение».`,
+    ``,
+    `**По странам.** ` +
+      (trade.length ? `Похоже на сигнал: ${trade.map((s) => s.flag + ' ' + s.name).join(', ')}. ` : `Явного сигнала не выделено. `) +
+      (noise.length ? `Скорее шум / против факта: ${noise.map((s) => s.flag + ' ' + s.name).join(', ')}. ` : '') +
+      `Числовые прогнозы (${num.n} шт.): Pearson IC ${coef(num.ic)}, смещение ${pct(num.bias)} (${num.bias < 0 ? 'консерватизм' : 'оптимизм'}).`,
     ``,
     verdictLine,
     ``,
-    `**Оговорки.** Окно ${wl.universe.n} лет — статистически разница в ±1–2 пп CAGR неотличима от удачи. ` +
-      `Высокий процент «попаданий» во многом объясняется тем, что рынки чаще растут, а не качеством прогноза. ` +
-      `Прежде чем фиксировать вайт-лист, нужны: длиннее история, поправка на риск (σ/просадка), издержки ребаланса и проверка out-of-sample.`,
+    `**Данные и оговорки.** Покрытие: прогноз есть в ${cov.withForecast}/${cov.cells} ячеек, факт — в ${cov.withReal}/${cov.cells}; метрики считались по ${cov.withBoth} парам, пропуски не импутированы. ` +
+      `Окно ${ic.kYears} лет коротко: ±1–2 пп CAGR неотличимы от удачи. Нужны длиннее история, поправка на риск, издержки ребаланса и out-of-sample.`,
   ].join('\n');
 }
 
@@ -59,11 +54,7 @@ export default function AiSummary({ rule }: { rule: SelectionRule }) {
 
   function generate() {
     setState('gen');
-    // имитация «обдумывания» — в проде здесь стрим ответа aimlapi
-    setTimeout(() => {
-      setText(buildSummary(rule));
-      setState('done');
-    }, 650);
+    setTimeout(() => { setText(buildSummary(rule)); setState('done'); }, 650);
   }
 
   return (
@@ -72,15 +63,13 @@ export default function AiSummary({ rule }: { rule: SelectionRule }) {
         <button className="qc-btn primary" onClick={generate} disabled={state === 'gen'}>
           {state === 'gen' ? 'Генерация…' : state === 'done' ? '↻ Перегенерировать' : '✨ Сгенерировать резюме'}
         </button>
-        <span className="fc-ai-note">прототип: текст собран из метрик выше. В проде — модель через aimlapi по тем же данным.</span>
+        <span className="fc-ai-note">прототип: текст собран из метрик выше. В проде — модель через aimlapi по тем же данным + источники.</span>
       </div>
       {state === 'done' ? (
-        <div className="fc-ai-out">
-          <Markdown text={text} />
-        </div>
+        <div className="fc-ai-out"><Markdown text={text} /></div>
       ) : (
         <div className="qc-panel"><div className="qc-state">
-          {state === 'gen' ? 'Анализирую матрицу прогноз/факт…' : 'Нажмите «Сгенерировать», чтобы получить текстовый вывод после математической оценки.'}
+          {state === 'gen' ? 'Анализирую сигналы, спред OW−UW и факт…' : 'Нажмите «Сгенерировать» — резюме появится после математической оценки.'}
         </div></div>
       )}
     </div>
