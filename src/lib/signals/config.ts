@@ -89,10 +89,10 @@ function normSignal(raw: any): SignalDef | null {
   return { factor: f.id as FactorId, param, side, threshold, skip };
 }
 
-export type StudyConfig = Record<string, unknown> & { mode: 'factor' | 'signal' | 'combine' | 'setops' | 'cellobs' | 'ma' | 'maops' };
+export type StudyConfig = Record<string, unknown> & { mode: 'factor' | 'signal' | 'combine' | 'setops' | 'cellobs' | 'ma' | 'maops' | 'naaim' };
 
 export function normalizeStudyConfig(body: any): StudyConfig {
-  const mode = ['factor', 'signal', 'combine', 'setops', 'cellobs', 'ma', 'maops'].includes(body?.mode) ? body.mode : 'factor';
+  const mode = ['factor', 'signal', 'combine', 'setops', 'cellobs', 'ma', 'maops', 'naaim'].includes(body?.mode) ? body.mode : 'factor';
   const benchmark = (typeof body?.benchmark === 'string' && body.benchmark.trim() ? body.benchmark : 'SPY')
     .toUpperCase()
     .trim();
@@ -137,6 +137,29 @@ export function normalizeStudyConfig(body: any): StudyConfig {
   if (mode === 'signal') {
     const sig = normSignal(body?.signal) || { factor: 'momentum', param: 5, side: 'low', threshold: -5 };
     return { ...base, signal: sig };
+  }
+
+  if (mode === 'naaim') {
+    // Оценка форвардной альфы инструмента (по умолч. SPY = benchmark) на трёх правилах NAAIM.
+    // Пороги настраиваемы (дефолты — из постановки задачи). Сам недельный ряд NAAIM движку
+    // подкладывает роут (async-фетч) — здесь его нет. Вход — точка-в-времени, см. движок.
+    const r1 = {
+      enabled: body?.r1?.enabled !== false,
+      lookbackW: Math.round(clampNum(body?.r1?.lookbackW, 52, 8, 260)), // окно перцентиля, недель
+      pct: clampNum(body?.r1?.pct, 10, 1, 50), // «нижние N%»
+    };
+    const r2 = {
+      enabled: body?.r2?.enabled !== false,
+      level: clampNum(body?.r2?.level, 80, -250, 250), // NAAIM выше …
+      riseW: Math.round(clampNum(body?.r2?.riseW, 4, 1, 26)), // за … недель
+      riseBy: clampNum(body?.r2?.riseBy, 15, 0, 250), // вырос минимум на … пунктов
+    };
+    const r3 = {
+      enabled: body?.r3?.enabled !== false,
+      level: clampNum(body?.r3?.level, 100, -250, 250), // NAAIM выше …
+    };
+    const entryLag = Math.round(clampNum(body?.entryLag, 0, 0, 10)); // доп. торговых дней после след. дня
+    return { ...base, instrument: benchmark, r1, r2, r3, entryLag };
   }
 
   if (mode === 'ma') {

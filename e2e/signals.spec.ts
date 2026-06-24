@@ -401,11 +401,11 @@ test.describe('Signals /signals', () => {
     // Создаём два различных сигнала во вкладке «Сигнал».
     await page.getByTestId('tab-signal').click();
     await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
-    await expect(page.getByText('Сигнал сохранён')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('Сигнал сохранён').first()).toBeVisible({ timeout: 15000 });
     // Меняем порог и сохраняем второй (другое определение).
     await page.locator('#sthr').fill('-10');
     await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
-    await expect(page.getByText('Сигнал сохранён')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('Сигнал сохранён').first()).toBeVisible({ timeout: 15000 });
 
     // Переходим в комбинацию, выбираем оба сигнала.
     await page.getByTestId('tab-combine').click();
@@ -417,5 +417,26 @@ test.describe('Signals /signals', () => {
     await expect(
       page.locator('[data-testid="signals-output"]').getByText(/Пересечение|Автоподбор/).first(),
     ).toBeVisible({ timeout: 150000 });
+  });
+
+  test('режим NAAIM: три правила оцениваются point-in-time, рендерится альфа по инструменту', async ({ page }) => {
+    await setup(page); // вселенную NAAIM игнорирует (меряем сам бенчмарк), но страница успевает осесть
+    await page.getByTestId('tab-naaim').click();
+    await page.getByTestId('run-study').click();
+    const out = page.locator('[data-testid="signals-output"]');
+    await expect(out.getByTestId('naaim-result')).toBeVisible({ timeout: 150000 });
+    // Без ключей/кэша NAAIM — детерминированная синтетика (честно помечена как демо).
+    await expect(out.getByTestId('naaim-source')).toContainText(/СИНТЕТИКА|реальные/);
+    // Каждое из трёх правил + «любое» дают карточку; у активного правила — статистика «Альфа (edge)».
+    await expect(out.getByTestId('naaim-rule-rule1')).toBeVisible();
+    await expect(out.getByTestId('naaim-rule-rule2')).toBeVisible();
+    await expect(out.getByTestId('naaim-rule-rule3')).toBeVisible();
+    await expect(out.getByText('Альфа (edge)').first()).toBeVisible();
+
+    // Выключение правила 3 убирает его карточку из результата (форма управляет составом).
+    await page.getByTestId('naaim-rule3-toggle').click();
+    await page.getByTestId('run-study').click();
+    await expect(out.getByTestId('naaim-rule-rule1')).toBeVisible({ timeout: 150000 });
+    await expect(out.getByTestId('naaim-rule-rule3')).toHaveCount(0);
   });
 });

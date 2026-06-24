@@ -273,6 +273,29 @@ def meta_of(tgt, px, bench, cleaned=0):
             'last': str(pd.Timestamp(dates[-1]).date()) if dates else '',
             'benchmark': bench, 'has_bench': bool(bench in px.columns), 'cleaned': int(cleaned)}
 
+def _g(x):
+    try:
+        xf = float(x)
+        return str(int(xf)) if abs(xf - int(xf)) < 1e-9 else str(round(xf, 2))
+    except Exception:
+        return str(x)
+
+# Сводка по одному правилу NAAIM: форвардная статистика инструмента + edge к безусловной базе.
+def _naaim_rule_out(rid, label, df, base_h, H, HZ, fired_weeks):
+    maincol = 't_' + str(H)
+    st = pstat(df, maincol) if (not df.empty and maincol in df.columns) else None
+    decay = []
+    for h in HZ:
+        col = 't_' + str(h)
+        m = _f(df[col].mean()) if (not df.empty and col in df.columns) else None
+        decay.append({'h': h, 'mean': m, 'base': base_h.get(h)})
+    yearly = yearly_of(df, maincol) if (not df.empty and maincol in df.columns) else []
+    edge = _f(st['mean'] - base_h.get(H)) if (st is not None and base_h.get(H) is not None) else None
+    return {'id': rid, 'label': label, 'weeks': int(fired_weeks),
+            'stat': ({'mean': _f(st['mean']), 't': _f(st['t']), 'hit': _f(st['hit']),
+                      'n': st['n'], 'edge': edge} if st else None),
+            'decay': decay, 'yearly': yearly}
+
 async def main():
     mode = CFG['mode']; bench = str(CFG['benchmark']); syms = list(CFG['universe']); H = int(CFG['horizon'])
     # Локальные бенчмарки групп тоже нужно загрузить — иначе forward считается СЫРЫМ (не excess),
@@ -281,7 +304,7 @@ async def main():
     fetch_syms = list(dict.fromkeys([str(s).upper() for s in syms] + [bench.upper()] + gbenches))
     print('Загружаю цены:', len(fetch_syms), '(вкл. бенчмарки групп)')
     px = await get_prices(fetch_syms)
-    min_cols = 1 if mode == 'ma' else 2   # ma не использует бенчмарк → хватает одного тикера
+    min_cols = 1 if mode in ('ma', 'naaim') else 2   # ma/naaim анализируют один инструмент
     if px is None or px.empty or px.shape[1] < min_cols:
         return {'error': 'Недостаточно данных: не загрузились цены.'}
     px, n_cleaned = clean_prices(px)  # битые бары (невозможные доходности) → NaN
@@ -620,6 +643,87 @@ async def main():
                 'operands': [{'type': cd.get('type'), 'window': int(cd.get('window', 0)),
                               'side': cd.get('side'), 'n': op_counts[i]} for i, cd in enumerate(conds)],
                 'n_total': int(len(bas))}
+
+    if mode == 'naaim':
+        # Оценка форвардной альфы инструмента (по умолч. SPY) на правилах внешнего недельного ряда NAAIM.
+        # POINT-IN-TIME: правила используют ТОЛЬКО недельные значения <= текущей недели; вход — следующий
+        # торговый день СТРОГО после даты значения NAAIM (+ entryLag). База — безусловная средняя форвардная
+        # доходность по ВСЕМ недельным точкам; альфа правила = ср. форвард на сигнале − база.
+        inst = str(CFG.get('instrument', bench)).upper()
+        if inst not in px.columns:
+            return {'error': 'Нет цен инструмента ' + inst + '.'}
+        cv = px[inst]
+        if cv.notna().sum() < 200:
+            return {'error': 'Слишком короткая история цен инструмента ' + inst + '.'}
+        nz = CFG.get('naaim') or []
+        if len(nz) < 20:
+            return {'error': 'Нет недельного ряда NAAIM (загрузите данные через /api/admin/naaim).'}
+        nf = pd.DataFrame(nz)
+        nf['d'] = pd.to_datetime(nf['date'], errors='coerce')
+        nf['v'] = pd.to_numeric(nf['value'], errors='coerce')
+        nf = nf.dropna(subset=['d', 'v']).sort_values('d')
+        if CFG.get('start'): nf = nf[nf['d'] >= pd.Timestamp(CFG['start'])]
+        if CFG.get('end'): nf = nf[nf['d'] <= pd.Timestamp(CFG['end'])]
+        nf = nf.reset_index(drop=True)
+        if len(nf) < 20:
+            return {'error': 'Мало недель NAAIM в выбранном окне дат.'}
+        v = nf['v']
+        # --- три правила (трейлинг, без заглядывания вперёд) ---
+        r1c = CFG.get('r1') or {}; r2c = CFG.get('r2') or {}; r3c = CFG.get('r3') or {}
+        lookbackW = int(r1c.get('lookbackW', 52)); pct = float(r1c.get('pct', 10))
+        rollq = v.rolling(lookbackW, min_periods=max(8, lookbackW // 2)).quantile(pct / 100.0)
+        rule1 = (v <= rollq) & (v >= v.shift(1))
+        lvl2 = float(r2c.get('level', 80)); riseW = int(r2c.get('riseW', 4)); riseBy = float(r2c.get('riseBy', 15))
+        rule2 = (v > lvl2) & ((v - v.shift(riseW)) >= riseBy)
+        lvl3 = float(r3c.get('level', 100))
+        rule3 = (v > lvl3)
+        rules = []
+        if r1c.get('enabled', True) is not False:
+            rules.append(('rule1', 'Нижние ' + _g(pct) + '% за ' + str(lookbackW) + 'н, не ниже пред. недели', rule1.fillna(False)))
+        if r2c.get('enabled', True) is not False:
+            rules.append(('rule2', 'NAAIM > ' + _g(lvl2) + ' и +' + _g(riseBy) + ' за ' + str(riseW) + 'н', rule2.fillna(False)))
+        if r3c.get('enabled', True) is not False:
+            rules.append(('rule3', 'NAAIM > ' + _g(lvl3), rule3.fillna(False)))
+        if not rules:
+            return {'error': 'Все правила выключены — включите хотя бы одно.'}
+        # --- вход: первый торговый день СТРОГО после даты недели (+ entryLag) ---
+        entryLag = int(CFG.get('entryLag', 0))
+        idx = px.index
+        pos_arr = idx.searchsorted(nf['d'].values, side='right') + entryLag
+        vals = cv.values.astype('float64'); n = len(idx)
+        def fwd_at(p, h):
+            if p < 0 or p + h >= n: return None
+            a = vals[p]; b = vals[p + h]
+            if not (a == a) or not (b == b) or a <= 0: return None
+            return (b / a - 1.0) * 100.0
+        ent = []
+        for k in range(len(nf)):
+            p = int(pos_arr[k])
+            ent.append({'p': p, 'e': str(pd.Timestamp(idx[p]).date())} if (0 <= p < n) else None)
+        def series_for(mask):
+            rows = []
+            for k in range(len(nf)):
+                if mask is not None and not bool(mask.iloc[k]): continue
+                e = ent[k]
+                if e is None: continue
+                row = {'date': e['e']}
+                for h in HZ: row['t_' + str(h)] = fwd_at(e['p'], h)
+                rows.append(row)
+            return pd.DataFrame(rows)
+        base_df = series_for(None)
+        base_h = {h: (_f(base_df['t_' + str(h)].mean()) if (not base_df.empty and ('t_' + str(h)) in base_df.columns) else None) for h in HZ}
+        out_rules = []; any_mask = None
+        for rid, rlabel, rmask in rules:
+            any_mask = rmask if any_mask is None else (any_mask | rmask)
+            out_rules.append(_naaim_rule_out(rid, rlabel, series_for(rmask), base_h, H, HZ, int(rmask.sum())))
+        if len(rules) >= 2 and any_mask is not None:
+            out_rules.append(_naaim_rule_out('any', 'Любое из правил', series_for(any_mask), base_h, H, HZ, int(any_mask.sum())))
+        meta = {'instrument': inst, 'first': str(pd.Timestamp(idx[0]).date()), 'last': str(pd.Timestamp(idx[-1]).date()),
+                'naaim_first': str(nf['d'].iloc[0].date()), 'naaim_last': str(nf['d'].iloc[-1].date()),
+                'naaim_source': str(CFG.get('naaim_source', 'cache')), 'weeks': int(len(nf)),
+                'base_n': int(len(base_df)), 'entryLag': entryLag}
+        return {'mode': 'naaim', 'horizon': H, 'hz': HZ, 'instrument': inst,
+                'baseline': base_h.get(H), 'rules': out_rules, 'meta': meta}
 
     if mode == 'signal':
         s0 = CFG['signal']

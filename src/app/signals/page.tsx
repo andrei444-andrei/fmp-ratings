@@ -24,7 +24,7 @@ import { FACTORS, FACTOR_BY_ID, signalLabel, supportsSkip, type FactorId, type S
 import { UNIVERSE_PRESETS, type UniversePreset } from '@/lib/signals/presets';
 import { Heatmap, type HeatCell } from './Heatmap';
 
-type Mode = 'factor' | 'signal' | 'combine' | 'ma';
+type Mode = 'factor' | 'signal' | 'combine' | 'ma' | 'naaim';
 type SavedSignal = { id: number; name: string; def: SignalDef };
 
 const CUR_YEAR = new Date().getFullYear();
@@ -232,10 +232,11 @@ export default function SignalsPage() {
 
 function Tabs({ tab, setTab }: { tab: Mode; setTab: (m: Mode) => void }) {
   const items: { id: Mode; label: string }[] = [
-    { id: 'factor', label: '1 · Фактор' },
-    { id: 'signal', label: '2 · Сигнал' },
-    { id: 'combine', label: '3 · Комбинация' },
-    { id: 'ma', label: '4 · SMA/EMA' },
+    { id: 'factor', label: 'Фактор' },
+    { id: 'signal', label: 'Сигнал' },
+    { id: 'combine', label: 'Комбинация' },
+    { id: 'ma', label: 'SMA/EMA' },
+    { id: 'naaim', label: 'NAAIM' },
   ];
   return (
     <div className="flex gap-1 rounded-fk bg-surface-2 p-1">
@@ -245,7 +246,7 @@ function Tabs({ tab, setTab }: { tab: Mode; setTab: (m: Mode) => void }) {
           type="button"
           data-testid={`tab-${it.id}`}
           onClick={() => setTab(it.id)}
-          className={`flex-1 rounded-fk-sm px-3 py-1.5 text-[13px] font-semibold transition-colors ${
+          className={`min-w-0 flex-1 truncate rounded-fk-sm px-2.5 py-1.5 text-[13px] font-semibold transition-colors ${
             tab === it.id ? 'bg-surface-elev text-ink shadow-fk-sm' : 'text-ink-3 hover:text-ink-2'
           }`}
         >
@@ -327,6 +328,13 @@ function Signals() {
   const [sLo, setSLo] = useState<number>(sDef.defaultThresholds[0]);
   const [sHi, setSHi] = useState<number>(sDef.defaultThresholds[sDef.defaultThresholds.length - 1]);
   const [sSkip, setSSkip] = useState(0);
+
+  // ── NAAIM (форвардная альфа инструмента на правилах внешнего недельного ряда) ──
+  // Дефолты порогов — из постановки: нижние 10% за 52н + не ниже пред. недели; >80 и +15 за 4н; >100.
+  const [nR1, setNR1] = useState({ enabled: true, lookbackW: 52, pct: 10 });
+  const [nR2, setNR2] = useState({ enabled: true, level: 80, riseW: 4, riseBy: 15 });
+  const [nR3, setNR3] = useState({ enabled: true, level: 100 });
+  const [nEntryLag, setNEntryLag] = useState(0); // доп. торговых дней после след. дня
 
   // ── Комбинация ──
   const [saved, setSaved] = useState<SavedSignal[] | null>(null);
@@ -432,7 +440,7 @@ function Signals() {
         if (Number.isFinite(c.horizon)) setHorizon(c.horizon);
         if (typeof c.yearFrom === 'string') setYearFrom(c.yearFrom);
         if (typeof c.yearTo === 'string') setYearTo(c.yearTo);
-        if (c.tab === 'factor' || c.tab === 'signal' || c.tab === 'combine' || c.tab === 'ma') setTab(c.tab);
+        if (['factor', 'signal', 'combine', 'ma', 'naaim'].includes(c.tab)) setTab(c.tab);
         if (typeof c.factorId === 'string' && FACTOR_BY_ID[c.factorId as FactorId]) setFactorId(c.factorId);
         if (c.fSide === 'high' || c.fSide === 'low' || c.fSide === 'band') setFSide(c.fSide);
         if (c.fBins === 'cumulative' || c.fBins === 'range' || c.fBins === 'quantile') setFBins(c.fBins);
@@ -440,6 +448,10 @@ function Signals() {
         if (typeof c.fThresholds === 'string') setFThresholds(c.fThresholds);
         if (Number.isFinite(c.fSkip)) setFSkip(c.fSkip);
         if (c.fOutcome === 'excess' || c.fOutcome === 'alpha') setFOutcome(c.fOutcome);
+        if (c.nR1 && typeof c.nR1 === 'object') setNR1({ enabled: c.nR1.enabled !== false, lookbackW: Number(c.nR1.lookbackW) || 52, pct: Number(c.nR1.pct) || 10 });
+        if (c.nR2 && typeof c.nR2 === 'object') setNR2({ enabled: c.nR2.enabled !== false, level: Number(c.nR2.level) || 80, riseW: Number(c.nR2.riseW) || 4, riseBy: Number(c.nR2.riseBy) || 15 });
+        if (c.nR3 && typeof c.nR3 === 'object') setNR3({ enabled: c.nR3.enabled !== false, level: Number(c.nR3.level) || 100 });
+        if (Number.isFinite(c.nEntryLag)) setNEntryLag(c.nEntryLag);
       }
     } catch {
       /* ignore */
@@ -463,12 +475,12 @@ function Signals() {
     try {
       localStorage.setItem(
         'signals:config',
-        JSON.stringify({ presets: [...presets], custom, benchmark, horizon, yearFrom, yearTo, tab, factorId, fSide, fBins, fParams, fThresholds, fSkip, fOutcome }),
+        JSON.stringify({ presets: [...presets], custom, benchmark, horizon, yearFrom, yearTo, tab, factorId, fSide, fBins, fParams, fThresholds, fSkip, fOutcome, nR1, nR2, nR3, nEntryLag }),
       );
     } catch {
       /* ignore */
     }
-  }, [hydrated, presets, custom, benchmark, horizon, yearFrom, yearTo, tab, factorId, fSide, fBins, fParams, fThresholds, fSkip, fOutcome]);
+  }, [hydrated, presets, custom, benchmark, horizon, yearFrom, yearTo, tab, factorId, fSide, fBins, fParams, fThresholds, fSkip, fOutcome, nR1, nR2, nR3, nEntryLag]);
 
   // Пермалинк: отражаем id открытого снимка в адресной строке (?result=<id>) БЕЗ навигации —
   // ссылку можно скопировать и открыть напрямую. id=null убирает параметр (свежий прогон).
@@ -543,7 +555,7 @@ function Signals() {
       setRunning(false);
       setErrMsg('');
       setResult(res.payload);
-      if (['factor', 'signal', 'combine', 'ma'].includes(res.payload.mode)) setTab(res.payload.mode);
+      if (['factor', 'signal', 'combine', 'ma', 'naaim'].includes(res.payload.mode)) setTab(res.payload.mode);
       reflectResultId(id); // адресная строка → пермалинк на этот снимок
       setStatus('Сохранённый результат');
     } catch (e: any) {
@@ -589,7 +601,7 @@ function Signals() {
 
   async function runStudy(payload: Record<string, unknown>) {
     if (running) return;
-    const minU = payload.mode === 'ma' ? 1 : 4; // SMA/EMA пулит по своим тикерам — хватит и одного
+    const minU = payload.mode === 'ma' ? 1 : payload.mode === 'naaim' ? 0 : 4; // naaim меряет один инструмент (бенчмарк) — вселенная не нужна
     if (universe.length < minU) {
       toast({ variant: 'error', title: 'Маловата вселенная', description: `Нужно ≥ ${minU} инструмент${minU === 1 ? '' : 'ов'}.` });
       return;
@@ -698,6 +710,11 @@ function Signals() {
   function runMa() {
     // Матрица SMA/EMA: вселенную/бенчмарк/окно лет (start/end из yearFrom/yearTo) добавляет runStudy.
     runStudy({ mode: 'ma' });
+  }
+
+  function runNaaim() {
+    // Инструмент = бенчмарк (по умолч. SPY). Ряд NAAIM подкладывает роут. Окно лет — общее.
+    runStudy({ mode: 'naaim', r1: nR1, r2: nR2, r3: nR3, entryLag: nEntryLag });
   }
 
   function togglePicked(id: number) {
@@ -882,6 +899,25 @@ function Signals() {
                   canRun={universe.length >= 1}
                 />
               )}
+              {tab === 'naaim' && (
+                <NaaimForm
+                  instrument={benchmark}
+                  r1={nR1}
+                  setR1={setNR1}
+                  r2={nR2}
+                  setR2={setNR2}
+                  r3={nR3}
+                  setR3={setNR3}
+                  entryLag={nEntryLag}
+                  setEntryLag={setNEntryLag}
+                  yearFrom={yearFrom}
+                  setYearFrom={setYearFrom}
+                  yearTo={yearTo}
+                  setYearTo={setYearTo}
+                  onRun={runNaaim}
+                  running={running}
+                />
+              )}
             </CardContent>
           </Card>
 
@@ -1044,6 +1080,7 @@ function Signals() {
             {result?.mode === 'signal' && <SignalResult data={result} onSave={saveSignalDef} />}
             {result?.mode === 'combine' && <CombineResult data={result} />}
             {result?.mode === 'ma' && <MaResult data={result} />}
+            {result?.mode === 'naaim' && <NaaimResult data={result} />}
           </div>
         </Card>
       </main>
@@ -1585,6 +1622,88 @@ function SavedList({ saved, onLoad, onDelete }: { saved: SavedSignal[] | null; o
 
 // Профиль по горизонтам: накопленная изб. доходность к каждому горизонту (дн.).
 // Подписи осей в той же SVG, что и линия → точное выравнивание; нулевая линия; основной горизонт жирнее.
+function RuleCard({ title, enabled, onToggle, testid, children }: any) {
+  return (
+    <div data-testid={testid} className="space-y-2 rounded-fk border border-line bg-surface-2 p-3">
+      <button
+        type="button"
+        onClick={onToggle}
+        data-testid={`${testid}-toggle`}
+        className={`flex w-full items-center justify-between text-[13px] font-semibold ${enabled ? 'text-ink' : 'text-ink-3'}`}
+      >
+        <span>{title}</span>
+        <span className={`rounded-fk-sm px-2 py-0.5 text-[11px] ${enabled ? 'bg-brand-50 text-brand-700' : 'bg-surface-elev text-ink-3'}`}>
+          {enabled ? 'вкл' : 'выкл'}
+        </span>
+      </button>
+      {enabled && <div className="space-y-2">{children}</div>}
+    </div>
+  );
+}
+
+function NaaimForm(p: any) {
+  const setR1 = (patch: any) => p.setR1({ ...p.r1, ...patch });
+  const setR2 = (patch: any) => p.setR2({ ...p.r2, ...patch });
+  const setR3 = (patch: any) => p.setR3({ ...p.r3, ...patch });
+  return (
+    <>
+      <p className="text-[12px] text-ink-3">
+        Форвардная доходность инструмента <b>{p.instrument}</b> на правилах недельного ряда <b>NAAIM Exposure Index</b>.
+        «Альфа» = средний форвард на сигнале − безусловная база (вклад тайминга). Вход — следующий торговый день
+        <b> после</b> даты значения NAAIM (без заглядывания вперёд). Инструмент = бенчмарк (меняется селектором сверху).
+      </p>
+      <div className="grid grid-cols-2 gap-3">
+        <Field>
+          <Label htmlFor="nyf">Год от</Label>
+          <Select id="nyf" value={p.yearFrom} onChange={(e: any) => p.setYearFrom(e.target.value)}>
+            <option value="">самый ранний</option>
+            {YEARS.map((y) => (<option key={y} value={y}>{y}</option>))}
+          </Select>
+        </Field>
+        <Field>
+          <Label htmlFor="nyt">Год до</Label>
+          <Select id="nyt" value={p.yearTo} onChange={(e: any) => p.setYearTo(e.target.value)}>
+            <option value="">текущий</option>
+            {YEARS.map((y) => (<option key={y} value={y}>{y}</option>))}
+          </Select>
+        </Field>
+      </div>
+
+      <RuleCard testid="naaim-rule1" title="Правило 1 — отскок из перепроданности" enabled={p.r1.enabled} onToggle={() => setR1({ enabled: !p.r1.enabled })}>
+        <div className="grid grid-cols-2 gap-3">
+          <Field><Label htmlFor="n1pct">Нижние, %</Label><NumberInput id="n1pct" value={p.r1.pct} onChange={(v: number) => setR1({ pct: v })} /></Field>
+          <Field><Label htmlFor="n1w">Окно, недель</Label><NumberInput id="n1w" value={p.r1.lookbackW} onChange={(v: number) => setR1({ lookbackW: v })} /></Field>
+        </div>
+        <p className="text-[11px] text-ink-3">NAAIM в нижних {fnum(p.r1.pct, 0)}% за {p.r1.lookbackW} недель И не ниже значения прошлой недели.</p>
+      </RuleCard>
+
+      <RuleCard testid="naaim-rule2" title="Правило 2 — нарастающий risk-on" enabled={p.r2.enabled} onToggle={() => setR2({ enabled: !p.r2.enabled })}>
+        <div className="grid grid-cols-3 gap-3">
+          <Field><Label htmlFor="n2lvl">NAAIM &gt;</Label><NumberInput id="n2lvl" value={p.r2.level} onChange={(v: number) => setR2({ level: v })} /></Field>
+          <Field><Label htmlFor="n2by">Рост ≥, пп</Label><NumberInput id="n2by" value={p.r2.riseBy} onChange={(v: number) => setR2({ riseBy: v })} /></Field>
+          <Field><Label htmlFor="n2w">За, недель</Label><NumberInput id="n2w" value={p.r2.riseW} onChange={(v: number) => setR2({ riseW: v })} /></Field>
+        </div>
+        <p className="text-[11px] text-ink-3">NAAIM &gt; {fnum(p.r2.level, 0)} И вырос ≥ {fnum(p.r2.riseBy, 0)} пунктов за {p.r2.riseW} недель.</p>
+      </RuleCard>
+
+      <RuleCard testid="naaim-rule3" title="Правило 3 — bullish" enabled={p.r3.enabled} onToggle={() => setR3({ enabled: !p.r3.enabled })}>
+        <Field><Label htmlFor="n3lvl">NAAIM &gt;</Label><NumberInput id="n3lvl" value={p.r3.level} onChange={(v: number) => setR3({ level: v })} /></Field>
+        <p className="text-[11px] text-ink-3">NAAIM &gt; {fnum(p.r3.level, 0)}.</p>
+      </RuleCard>
+
+      <Field>
+        <Label htmlFor="nlag">Вход: +дней после следующего торгового дня</Label>
+        <NumberInput id="nlag" value={p.entryLag} onChange={(v: number) => p.setEntryLag(v)} />
+        <p className="text-[11px] text-ink-3">0 = вход на следующий торговый день после даты NAAIM (point-in-time). Больше — консервативнее.</p>
+      </Field>
+
+      <Button onClick={p.onRun} loading={p.running} fullWidth data-testid="run-study">
+        Оценить альфу NAAIM-сигналов
+      </Button>
+    </>
+  );
+}
+
 function DecayChart({ points, mainH }: { points: { h: number; mean: number | null }[]; mainH: number }) {
   const valid = points.filter((p) => p.mean != null && Number.isFinite(p.mean));
   if (valid.length < 2) return null;
@@ -2384,6 +2503,61 @@ function PooledCard({ pooled, count, labels, countries, fullWindow, winFrom, win
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function NaaimMeta({ meta }: { meta: any }) {
+  if (!meta) return null;
+  return (
+    <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-ink-3" data-testid="naaim-meta">
+      <span>Инструмент: <b className="text-ink-2">{meta.instrument}</b></span>
+      <span>Цены: {meta.first} … {meta.last}</span>
+      <span>NAAIM: {meta.naaim_first} … {meta.naaim_last} ({meta.weeks} нед.)</span>
+      <span>Вход: след. день +{meta.entryLag}</span>
+      <span>База: {meta.base_n} входов</span>
+    </div>
+  );
+}
+
+function NaaimResult({ data }: { data: any }) {
+  const rules: any[] = data.rules || [];
+  const src = data.meta?.naaim_source;
+  const real = src === 'manual' || src === 'naaim.org' || src === 'csv-url';
+  const srcLabel = src === 'manual' ? 'реальные (загружены вручную)'
+    : src === 'naaim.org' || src === 'csv-url' ? 'реальные (авто-фетч)'
+    : src === 'synthetic' ? 'СИНТЕТИКА (демо) — загрузите реальные через POST /api/admin/naaim'
+    : String(src ?? '—');
+  return (
+    <div className="space-y-4" data-testid="naaim-result">
+      <NaaimMeta meta={data.meta} />
+      <Badge variant={real ? 'brand' : 'warn'} data-testid="naaim-source">Данные NAAIM: {srcLabel}</Badge>
+      <p className="text-[12px] text-ink-3">
+        Инструмент <b>{data.instrument}</b> · горизонт {data.horizon}д · «альфа» = ср. форвард на сигнале − безусловная база ({fpct(data.baseline)}).
+      </p>
+      {rules.map((r) => (
+        <div key={r.id} data-testid={`naaim-rule-${r.id}`} className="space-y-3 rounded-fk border border-line bg-surface-elev p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="neutral">{r.label}</Badge>
+            <span className="text-[11px] text-ink-3">недель сигнала: {r.weeks}</span>
+          </div>
+          {r.stat ? (
+            <>
+              <div className="flex flex-wrap gap-3">
+                <Stat label="Альфа (edge)" value={fpct(r.stat.edge)} tone={(r.stat.edge ?? 0) >= 0 ? 'up' : 'down'} hint={`база ${fpct(data.baseline)}`} />
+                <Stat label="Ср. форвард" value={fpct(r.stat.mean)} tone={(r.stat.mean ?? 0) >= 0 ? 'up' : 'down'} />
+                <Stat label="t-стат (period)" value={fnum(r.stat.t)} />
+                <Stat label="Доля плюс" value={fnum(r.stat.hit, 1) + '%'} />
+                <Stat label="Наблюдений" value={String(r.stat.n)} />
+              </div>
+              {r.decay && <DecayBlock points={r.decay.map((d: any) => ({ h: d.h, mean: d.mean }))} mainH={data.horizon} />}
+              <YearlyBars yearly={r.yearly} />
+            </>
+          ) : (
+            <p className="text-[13px] text-ink-3">Слишком мало недель с сигналом — ослабьте порог или расширьте окно лет.</p>
+          )}
+        </div>
+      ))}
+    </div>
   );
 }
 
