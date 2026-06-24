@@ -129,6 +129,7 @@ const STRUCT_SYS =
   '(3) else give a CONSERVATIVE estimate matching the stance (strong bullish/overweight≈+10, bullish/constructive/buy≈+6, "modest gains"≈+3, neutral/flat≈0, cautious/underweight≈-4, bearish/sell≈-10), er_basis="qualitative". ' +
   'signal: +2 strong overweight/very bullish, +1 overweight/constructive/buy, 0 neutral/equal-weight/hold, -1 underweight/cautious, -2 strong underweight/bearish/sell. ' +
   'A view may be an aggregate analyst/Street CONSENSUS (bank="Consensus" or the poll source) or a recognized institution. published_at = the date stated in the text, else null. ' +
+  'INCLUDE a view ONLY if it is FORWARD-LOOKING about the asset for the year (an expectation / outlook / target). EXCLUDE: retrospective performance ("recorded/fell/rose X% in a past period", year-in-review); commentary about a different asset (currencies, a single stock, a sub-region) rather than the asset itself; and truncated fragments that are not a complete statement of a view. ' +
   'Only include views actually supported by the text — never invent quotes or explicit numbers (the case-3 estimate is allowed but must match the stated stance). If nothing concrete, return {"views":[]}.';
 
 // Перевод цитат+рассуждений батчем (один дешёвый вызов на ячейку) → RU.
@@ -201,13 +202,14 @@ async function fetchCellFromSonar(code: string, year: number): Promise<{ rows: N
       {
         role: 'user',
         content:
-          `Report ALL year-ahead views/expectations for ${noun} for CALENDAR YEAR ${year} that appear in the search results — from ` +
+          `Report FORWARD-LOOKING year-ahead views/expectations for ${noun} for CALENDAR YEAR ${year} that appear in the search results — from ` +
           `investment banks, brokers, strategists, analyst polls (Reuters/Bloomberg), or recognized institutions (e.g. World Gold Council for gold). ` +
           `Include DIRECTIONAL or QUALITATIVE views even without a numeric target (e.g. "modest gains expected", "expected to rebound", "bullish", "overweight", "cautious"). ` +
           `For EACH item give: source/author (${BANKS.join(', ')}, brokers, or a poll/consensus); outlet; URL; PUBLICATION DATE (best estimate if not explicit); stance; ` +
-          `any ${year} index target or expected return %; a short VERBATIM quote; and 1–2 sentences of key reasoning/nuances (drivers, risks, caveats). ` +
-          `IMPORTANT: list EVERY relevant item you find, even a single partial one — partial information is valuable. Do NOT answer NONE if ANY directional view about ${year} exists. ` +
-          `Answer NONE only if there is genuinely nothing about ${year}.`,
+          `any ${year} index target or expected return %; a short VERBATIM quote stating the EXPECTATION; and 1–2 sentences of key reasoning/nuances (drivers, risks, caveats). ` +
+          `STRICT EXCLUSIONS — do NOT report: (a) RETROSPECTIVE performance ("recorded a gain", "fell 15%", "finished the year up X", monthly/past-period reviews); ` +
+          `(b) commentary about a DIFFERENT asset (e.g. currencies, a single stock, a sub-region) rather than ${noun} itself; (c) truncated fragments that are not a complete statement of a view. ` +
+          `List EVERY genuine forward-looking item, even one — partial is fine. Answer NONE only if there is genuinely no forward-looking view about ${noun} for ${year}.`,
       },
     ],
     max_tokens: 900,
@@ -258,14 +260,28 @@ async function fetchCellFromSonar(code: string, year: number): Promise<{ rows: N
     cands.push({ v, bank, stance, er, erBasis, sig, url, ym, dateOk });
   }
 
+  // 1b) дедуп по банку в пределах ячейки (один взгляд на банк) — оставляем
+  // наиболее информативный: явное число > таргет > оценка; затем ссылка; затем длиннее цитата.
+  const candScore = (c: Cand) =>
+    (c.erBasis === 'explicit' ? 3 : c.erBasis === 'target_vs_level' ? 2 : 0) +
+    (c.url ? 1 : 0) + Math.min(1, String(c.v?.quote || '').length / 200);
+  const bankKey = (b: string) => b.toLowerCase().replace(/[^a-zа-я0-9]/gi, '').replace(/(global|research|investment|institute|committee|bank|securities|capital|am|inc)/g, '').slice(0, 18);
+  const byBank = new Map<string, Cand>();
+  for (const c of cands) {
+    const k = bankKey(c.bank) || c.bank.toLowerCase();
+    const cur = byBank.get(k);
+    if (!cur || candScore(c) > candScore(cur)) byBank.set(k, c);
+  }
+  const deduped = [...byBank.values()];
+
   // 2) верификация источников — ПАРАЛЛЕЛЬНО (бюджет 2, под serverless-таймаут)
-  const toVerify = cands.filter((c) => c.url).slice(0, 2);
+  const toVerify = deduped.filter((c) => c.url).slice(0, 2);
   const verMap = new Map<string, { reachable: boolean; ym: YM | null }>();
   await Promise.all(toVerify.map(async (c) => { verMap.set(c.url, await verifySource(c.url)); }));
 
   // 3) финализация строк
   const rows: NewRow[] = [];
-  for (const c of cands) {
+  for (const c of deduped) {
     let { ym, dateOk } = c;
     let sourceVerified = false;
     const ver = c.url ? verMap.get(c.url) : undefined;
@@ -278,16 +294,21 @@ async function fetchCellFromSonar(code: string, year: number): Promise<{ rows: N
       }
     }
     const v = c.v;
-    const hasNum = c.erBasis === 'explicit' || c.erBasis === 'target_vs_level';
-    const erEstimated = c.er != null && c.erBasis !== 'explicit';
+    // % из текста (explicit/таргет) — как есть; иначе детерминированная оценка из
+    // сигнала, чтобы ЗНАК всегда совпадал со стансом (а не с risk-оговоркой).
+    const QUAL_PCT: Record<string, number> = { '2': 0.10, '1': 0.06, '0': 0.01, '-1': -0.04, '-2': -0.10 };
+    const hasNum = (c.erBasis === 'explicit' || c.erBasis === 'target_vs_level') && c.er != null;
+    const expectedReturn = hasNum ? c.er : (QUAL_PCT[String(c.sig)] ?? null);
+    const erBasis = hasNum ? c.erBasis : 'qualitative';
+    const erEstimated = !hasNum;
     const confidence = sourceVerified && dateOk ? 0.9 : c.url && dateOk ? 0.7 : c.url ? 0.45 : 0.3;
     rows.push({
       bank: c.bank,
       format: stanceToFormat(c.stance, hasNum),
       signal: c.sig,
-      expectedReturn: c.er,
+      expectedReturn,
       erEstimated,
-      erBasis: c.erBasis,
+      erBasis,
       rawQuote: String(v.quote || c.stance || '').slice(0, 400),
       quoteRu: '', // заполнит translateRows ниже
       reasoning: String(v.reasoning || '').slice(0, 600),
