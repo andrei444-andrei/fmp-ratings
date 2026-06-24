@@ -34,8 +34,9 @@ export default function ForecastsPage() {
       const r = await fetch('/api/forecasts/data', { cache: 'no-store' }).then((x) => x.json());
       const rows: IngestedForecast[] = (r.forecasts || []).map((f: any) => ({
         asset: f.asset, year: f.year, bank: f.bank, format: f.format, signal: f.signal,
-        expectedReturn: f.expectedReturn, quote: f.rawQuote, reasoning: f.reasoning, sourceName: f.sourceName,
-        sourceUrl: f.sourceUrl, asOf: f.asOf, publishedAt: f.publishedAt, dateOk: f.dateOk,
+        expectedReturn: f.expectedReturn, erEstimated: f.erEstimated, erBasis: f.erBasis,
+        quote: f.rawQuote, quoteRu: f.quoteRu, reasoning: f.reasoning, reasoningRu: f.reasoningRu,
+        sourceName: f.sourceName, sourceUrl: f.sourceUrl, asOf: f.asOf, publishedAt: f.publishedAt, dateOk: f.dateOk,
         sourceVerified: f.sourceVerified, id: f.id, confidence: f.confidence,
         extractedBy: f.extractedBy, verified: f.verified,
       }));
@@ -58,7 +59,7 @@ export default function ForecastsPage() {
       while (guard++ < 40) {
         const res = await fetch('/api/forecasts/ingest', {
           method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ limit: 4, force: force && guard === 1 }),
+          body: JSON.stringify({ limit: 2, force: force && guard === 1 }),
         }).then((x) => x.json());
         if (res.error) { setIngest({ running: false, remaining: 0, mode: '', note: 'ошибка: ' + res.error }); return; }
         await load();
