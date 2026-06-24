@@ -73,6 +73,22 @@ export default function ForecastsPage() {
     await load();
   }
 
+  // Отладка: стереть кэш, чтобы AI пересобрал заново (например, испорченные данные).
+  async function runReset() {
+    if (!window.confirm('Стереть весь кэш прогнозов из БД? После этого AI соберёт данные заново при доборе.')) return;
+    setIngest({ running: true, remaining: 0, mode: '', note: 'сброс…' });
+    try {
+      const res = await fetch('/api/forecasts/reset', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scope: 'all' }),
+      }).then((x) => x.json());
+      if (res.error) { setIngest({ running: false, remaining: 0, mode: '', note: 'ошибка сброса: ' + res.error }); return; }
+      await load();
+      setIngest({ running: false, remaining: 0, mode: '', note: `сброшено строк: ${res.deleted}. Нажмите «Добрать прогнозы (AI)».` });
+    } catch (e: any) {
+      setIngest({ running: false, remaining: 0, mode: '', note: 'сбой сети при сбросе: ' + (e?.message || '') });
+    }
+  }
+
   const sourceLabel = realCount == null ? 'загрузка…' : realCount > 0 ? `реальные (кэш Sonar): ${realCount} прогнозов` : 'синтетика (мок) — нажмите «Добрать прогнозы»';
 
   return (
@@ -95,6 +111,7 @@ export default function ForecastsPage() {
           {ingest.running ? `Добор… (осталось ${ingest.remaining})` : '✨ Добрать прогнозы (AI)'}
         </button>
         <button className="qc-btn" onClick={() => load()} disabled={ingest.running} title="Перечитать кэш из БД">↻ Обновить</button>
+        <button className="qc-btn danger" onClick={runReset} disabled={ingest.running} title="Отладка: стереть кэш прогнозов из БД и пересобрать через AI">🗑 Сброс (отладка)</button>
         {ingest.note && <span className="fc-ai-note">{ingest.note}{ingest.mode ? ` · режим: ${ingest.mode}` : ''}</span>}
       </div>
 

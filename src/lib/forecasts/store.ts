@@ -169,3 +169,24 @@ export async function deleteForecast(id: number): Promise<void> {
   await ensureForecastTables();
   await libsqlClient.execute({ sql: `DELETE FROM forecast_signals WHERE id = ?`, args: [id] });
 }
+
+// Сброс кэша (отладка): стереть прогнозы и лог запросов, чтобы AI пересобрал
+// заново. scope='ai' (по умолч.) — только несверённые AI/синтетика; scope='all'
+// — всё (включая ручные). Можно ограничить asset/year.
+export async function resetForecasts(opts: { scope?: 'ai' | 'all'; asset?: string; year?: number } = {}): Promise<{ deleted: number }> {
+  await ensureForecastTables();
+  const where: string[] = [], args: any[] = [];
+  if (opts.asset) { where.push('asset = ?'); args.push(opts.asset); }
+  if (Number.isInteger(opts.year)) { where.push('year = ?'); args.push(opts.year); }
+  if (opts.scope !== 'all') where.push("verified = 0 AND extracted_by IN ('sonar','synthetic')");
+  const del = await libsqlClient.execute({
+    sql: `DELETE FROM forecast_signals${where.length ? ' WHERE ' + where.join(' AND ') : ''}`,
+    args,
+  });
+  // лог запросов чистим по тем же asset/year (чтобы ячейки снова считались «не искали»)
+  const lw: string[] = [], la: any[] = [];
+  if (opts.asset) { lw.push('asset = ?'); la.push(opts.asset); }
+  if (Number.isInteger(opts.year)) { lw.push('year = ?'); la.push(opts.year); }
+  await libsqlClient.execute({ sql: `DELETE FROM forecast_fetch_log${lw.length ? ' WHERE ' + lw.join(' AND ') : ''}`, args: la });
+  return { deleted: Number(del.rowsAffected ?? 0) };
+}

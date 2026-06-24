@@ -165,4 +165,6 @@
 .fc-src-pub.ok { color: #0f9d63; font-weight: 600; }
 .fc-src-pub.warn { color: #c2410c; font-weight: 600; }
 .fc-src-reason { font-size: 11.5px; color: var(--qc-tx2); line-height: 1.5; margin: 2px 0 4px; padding-left: 8px; border-left: 2px solid var(--qc-line); }
+.qc-btn.danger { color: #c2410c; border-color: rgba(194, 65, 12, .35); }
+.qc-btn.danger:hover:not(:disabled) { background: rgba(194, 65, 12, .1); border-color: rgba(194, 65, 12, .55); }
 .fc-src-note { font-size: 11px; color: var(--qc-tx3); margin-top: 12px; padding-top: 8px; border-top: .5px solid var(--qc-line); }
