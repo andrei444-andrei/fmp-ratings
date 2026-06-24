@@ -6,8 +6,9 @@ import PortfolioMatrix from './_components/PortfolioMatrix';
 import CombinedPortfolio from './_components/CombinedPortfolio';
 import RiskCorrelation from './_components/RiskCorrelation';
 import StrategySummary from './_components/StrategySummary';
+import PreviewCompare from './_components/PreviewCompare';
 import QuantChat from './_components/QuantChat';
-import type { QcAlgorithm, QcCredStatus, PortfolioResponse } from '@/lib/quantconnect/types';
+import type { QcAlgorithm, QcCredStatus, PortfolioResponse, AlgoColumn } from '@/lib/quantconnect/types';
 
 // Реестр use-кейсов (вкладок). «Сводка по стратегии» теперь объединяет сравнение по
 // годам (матрица), глубокую сводку выбранной стратегии, Δ к SPY и анализ просадок.
@@ -26,6 +27,15 @@ export default function QuantPage() {
   const [includeArchived, setIncludeArchived] = useState(false);
   const [startYear, setStartYear] = useState<number | undefined>(undefined);
   const [tab, setTab] = useState('summary');
+  // ad-hoc колонки сравнения (бектесты из QuantConnect без добавления в портфель)
+  const [previewAlgos, setPreviewAlgos] = useState<AlgoColumn[]>([]);
+  function addPreview(col: AlgoColumn) {
+    setPreviewAlgos(prev => {
+      const nid = (prev.length ? Math.min(...prev.map(p => p.id)) : 0) - 1; // уникальный отрицательный id
+      return [...prev, { ...col, id: nid }];
+    });
+  }
+  function removePreview(id: number) { setPreviewAlgos(prev => prev.filter(p => p.id !== id)); }
 
   const loadCreds = useCallback(async () => {
     try {
@@ -69,6 +79,16 @@ export default function QuantPage() {
 
   const configured = creds?.configured;
 
+  // матрица = добавленные стратегии + ad-hoc колонки; годы — объединение по всем.
+  const matrixAlgos: AlgoColumn[] = [...(portfolio?.algos ?? []), ...previewAlgos];
+  const yearSet = new Set<number>();
+  for (const a of matrixAlgos) for (const y of Object.keys(a.years)) yearSet.add(Number(y));
+  const matrixYears = [...yearSet].sort((a, b) => a - b);
+  const matrixData: PortfolioResponse | null = portfolio
+    ? { years: matrixYears, algos: matrixAlgos, benchmark: portfolio.benchmark }
+    : null;
+  const hasColumns = matrixAlgos.length > 0;
+
   return (
     <main>
       <div className="qc-top">
@@ -110,15 +130,17 @@ export default function QuantPage() {
             </ul>
           </div>
 
-          {algos.length > 0 && (
+          <PreviewCompare previews={previewAlgos} onAdd={addPreview} onRemove={removePreview} disabled={!configured} />
+
+          {hasColumns && (
             <div className="qc-controls-bar">
-              {portfolio && portfolio.years.length > 1 && (
+              {matrixYears.length > 1 && (
                 <label className="qc-toggle" title="У бектестов разные периоды — выберите общее окно анализа">
                   С года:&nbsp;
                   <select className="qc-select" style={{ width: 'auto' }} value={startYear ?? ''}
                     onChange={e => setStartYear(e.target.value ? Number(e.target.value) : undefined)}>
-                    <option value="">{portfolio.years[0]} (все)</option>
-                    {portfolio.years.map(y => <option key={y} value={y}>{y}</option>)}
+                    <option value="">{matrixYears[0]} (все)</option>
+                    {matrixYears.map(y => <option key={y} value={y}>{y}</option>)}
                   </select>
                 </label>
               )}
@@ -139,8 +161,8 @@ export default function QuantPage() {
 
           {loading && !portfolio ? (
             <div className="qc-panel"><div className="qc-state">Загрузка метрик бектестов…</div></div>
-          ) : portfolio && algos.length > 0 ? (
-            <PortfolioMatrix data={portfolio} startYear={startYear} />
+          ) : matrixData && hasColumns ? (
+            <PortfolioMatrix data={matrixData} startYear={startYear} />
           ) : null}
 
           {/* глубокая сводка по выбранной стратегии: метрики, кривая, помесячно, Δ к SPY, просадки */}

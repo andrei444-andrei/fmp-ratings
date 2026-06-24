@@ -102,6 +102,11 @@ async function mockConfigured(page: Page) {
     { backtestId: 'aaa111', name: 'run A', status: 'Completed.', completed: true },
     { backtestId: 'bbb222', name: 'run B', status: 'Completed.', completed: true },
   ] } }));
+  await page.route('**/api/quantconnect/preview**', r => r.fulfill({ json: { column: {
+    id: 0, name: 'Preview BT', projectId: '999', backtestId: null, resolvedBacktestId: 'zzz',
+    status: 'active', description: null, error: null, totalReturn: 0.5, pointCount: 100,
+    years: { 2022: { year: 2022, ret: 0.2, maxDD: -0.07, cumulative: 0.2 }, 2023: { year: 2023, ret: 0.15, maxDD: -0.05, cumulative: 0.38 } },
+  } } }));
   await page.route('**/api/quantconnect/describe**', r => r.fulfill({ json: { description: '## Стратегия\n\nГенерированное **описание**.' } }));
   await page.route('**/api/quantconnect/chat**', r => r.fulfill({ json: { reply: 'Лучшая — **leverage with control DD**: выше CAGR и больше лет лучше SPY.' } }));
   await page.route('**/api/quantconnect/settings**', async route => {
@@ -313,6 +318,21 @@ test.describe('Аналитика алгоритмов /quant', () => {
     await page.locator('.qc-controls-bar', { hasText: 'С года' }).locator('select.qc-select').selectOption('2023');
     await expect(matrix.getByText('2022', { exact: true })).toHaveCount(0);
     await expect(matrix.getByText('2023', { exact: true })).toBeVisible();
+  });
+
+  test('ad-hoc сравнение: бектест из QC колонкой в матрице (без добавления)', async ({ page }) => {
+    await mockConfigured(page);
+    await page.goto('/quant');
+    const panel = page.locator('.qc-panel', { hasText: 'Сравнить бектест из QuantConnect' });
+    await panel.getByRole('button', { name: /Бектест в сравнение/ }).click();
+    await panel.getByPlaceholder('32825394').fill('999');
+    await panel.getByRole('button', { name: 'Добавить в сравнение' }).click();
+    // колонка появилась в матрице сравнения + чип в панели
+    await expect(page.locator('.qc-matrix').first().getByText('Preview BT')).toBeVisible();
+    await expect(panel.locator('.qc-chip', { hasText: 'Preview BT' })).toBeVisible();
+    // убрать из сравнения
+    await panel.locator('.qc-chip', { hasText: 'Preview BT' }).getByRole('button').click();
+    await expect(page.locator('.qc-matrix').first().getByText('Preview BT')).toHaveCount(0);
   });
 
   test('удаление стратегии требует подтверждения', async ({ page }) => {
