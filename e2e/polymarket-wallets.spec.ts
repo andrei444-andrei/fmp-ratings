@@ -7,14 +7,16 @@ const WALLETS = [
   {
     address: '0xaaaa000000000000000000000000000000000001',
     n: 40, meanEdge: 0.12, tStat: 3.4, pValue: 0.001, significant: true,
-    winRate: 0.62, totalPnl: 15000, roi: 0.4, valueUsd: 80000, minHorizon: 7,
+    winRate: 0.62, totalPnl: 15000, roi: 0.4, valueUsd: 80000, minHorizon: 30,
+    aiSummary: null, samples: [{ question: 'Fed cut in March?', category: 'macro', win: 1, entry: 0.4, pnl: 600 }],
     byCat: { macro: { n: 25, meanEdge: 0.18, tStat: 3.1, significant: true, winRate: 0.68, totalPnl: 12000 },
              crypto: { n: 15, meanEdge: 0.02, tStat: 0.4, significant: false, winRate: 0.5, totalPnl: 3000 } },
   },
   {
     address: '0xbbbb000000000000000000000000000000000002',
     n: 30, meanEdge: -0.05, tStat: -1.2, pValue: 0.8, significant: false,
-    winRate: 0.45, totalPnl: -5000, roi: -0.2, valueUsd: 12000, minHorizon: 7,
+    winRate: 0.45, totalPnl: -5000, roi: -0.2, valueUsd: 12000, minHorizon: 30,
+    aiSummary: null, samples: [],
     byCat: { equity: { n: 30, meanEdge: -0.05, tStat: -1.2, significant: false, winRate: 0.45, totalPnl: -5000 } },
   },
 ];

@@ -36,6 +36,7 @@ export type MarketMeta = {
   horizonDays: number;       // длительность рынка
   closed: boolean;
   winningIndex: number | null; // индекс победившего исхода (если closed)
+  endDate: string | null;
 };
 
 export type TopMarket = { conditionId: string; question: string };
@@ -78,6 +79,7 @@ function metaFromRaw(m: any): MarketMeta {
     horizonDays,
     closed: !!m.closed,
     winningIndex,
+    endDate: m.endDate ?? null,
   };
 }
 
@@ -182,6 +184,8 @@ export function reconstructBets(trades: Trade[], meta: Map<string, MarketMeta>):
       entry,
       pnl: moneyOut + redemption - moneyIn,
       cost: moneyIn,
+      question: m.question,
+      endDate: m.endDate,
     });
   }
   return bets;

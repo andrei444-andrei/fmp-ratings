@@ -13,6 +13,8 @@ export type ResolvedBet = {
   entry: number;       // средняя цена входа (avgPrice), 0..1
   pnl: number;         // реализованный PnL по рынку, $
   cost: number;        // вложено в рынок, $ (для ROI)
+  question?: string;   // текст рынка (для хранения/AI)
+  endDate?: string | null;
 };
 
 export type EdgeStats = {
