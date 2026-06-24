@@ -189,6 +189,19 @@ export async function qcReadProjectFiles(projectId: number | string, maxAttempts
   return [];
 }
 
+// Содержимое одного файла проекта (QC иногда отдаёт bulk /files/read без content —
+// тогда добираем пофайлово по name). Возвращает '' при ошибке/пустоте.
+export async function qcReadProjectFile(projectId: number | string, name: string): Promise<string> {
+  try {
+    const data = await qcPost('/files/read', { projectId: Number(projectId), name });
+    const arr = Array.isArray(data?.files) ? data.files : Array.isArray(data?.Files) ? data.Files : [];
+    const f = arr.find((x: any) => String(x?.name ?? x?.Name ?? '') === name) ?? arr[0];
+    return String(f?.content ?? f?.Content ?? '');
+  } catch {
+    return '';
+  }
+}
+
 // Статистика бектеста (Sharpe, Sortino, трейды, win-rate и т.д.).
 export async function qcReadBacktest(
   projectId: number | string,

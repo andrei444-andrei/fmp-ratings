@@ -1,16 +1,25 @@
 // Генерация описания стратегии по её коду QuantConnect (AI через aimlapi).
 
-import { qcReadProjectFiles } from './client';
+import { qcReadProjectFiles, qcReadProjectFile } from './client';
 import { aimlChat } from '@/lib/aimlapi';
 
 export async function generateDescription(projectId: string): Promise<string> {
   const files = await qcReadProjectFiles(projectId);
-  const code = files
-    .filter(f => /\.(py|cs)$/i.test(f.name) && f.content.trim())
+  const codeFiles = files.filter(f => /\.(py|cs)$/i.test(f.name));
+  // QC иногда отдаёт bulk /files/read со списком файлов, но БЕЗ content —
+  // в таком случае добираем содержимое каждого файла кода пофайлово.
+  await Promise.all(codeFiles.map(async f => {
+    if (!f.content.trim()) f.content = await qcReadProjectFile(projectId, f.name);
+  }));
+  const code = codeFiles
+    .filter(f => f.content.trim())
     .map(f => `# ${f.name}\n${f.content}`)
     .join('\n\n')
     .slice(0, 24000); // лимит контекста
-  if (!code.trim()) throw new Error('В проекте нет кода (.py/.cs) для анализа');
+  if (!code.trim()) {
+    const names = files.map(f => f.name).filter(Boolean).slice(0, 25).join(', ');
+    throw new Error(`В проекте нет кода (.py/.cs) с содержимым. Файлы проекта: ${names || '— /files/read вернул пусто'}`);
+  }
 
   const content = await aimlChat({
     messages: [

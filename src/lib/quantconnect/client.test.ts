@@ -5,7 +5,7 @@ vi.mock('./creds', () => ({
   getCreds: vi.fn(async () => ({ userId: 'u', apiToken: 't', organizationId: null })),
 }));
 
-import { qcReadBacktestTrades, qcReadSeries, qcReadProjectFiles } from './client';
+import { qcReadBacktestTrades, qcReadSeries, qcReadProjectFiles, qcReadProjectFile } from './client';
 
 const mkOrder = (i: number) => ({
   id: i, symbol: { value: 'SPY' }, quantity: 1, price: 100, value: 100,
@@ -105,5 +105,15 @@ describe('qcReadProjectFiles — ретрай пустого ответа', () =
     expect(files.length).toBe(1);
     expect(files[0].name).toBe('main.py');
     expect(calls).toBe(2); // пустой ответ → ретрай → код
+  });
+
+  it('qcReadProjectFile добирает content конкретного файла по name', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_url: any, opts: any) => {
+      const body = JSON.parse(opts.body);
+      expect(body.name).toBe('main.py');
+      return { ok: true, status: 200, text: async () => JSON.stringify({ success: true, files: [{ name: 'main.py', content: 'class X(QCAlgorithm): pass' }] }) } as any;
+    }));
+    const c = await qcReadProjectFile('111', 'main.py');
+    expect(c).toContain('class X');
   });
 });
