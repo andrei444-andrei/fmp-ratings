@@ -335,6 +335,21 @@ test.describe('Аналитика алгоритмов /quant', () => {
     await expect(page.locator('.qc-matrix').first().getByText('Preview BT')).toHaveCount(0);
   });
 
+  test('ad-hoc сравнение: пустой бектест показывает причину и не добавляет колонку', async ({ page }) => {
+    await mockConfigured(page);
+    await page.route('**/api/quantconnect/preview**', r => r.fulfill({ json: { column: {
+      id: 0, name: 'Empty BT', projectId: '999', backtestId: null, resolvedBacktestId: 'zzz',
+      status: 'active', description: null, error: 'пустая кривая капитала (Strategy Equity)', totalReturn: null, pointCount: 0, years: {},
+    } } }));
+    await page.goto('/quant');
+    const panel = page.locator('.qc-panel', { hasText: 'Сравнить бектест из QuantConnect' });
+    await panel.getByRole('button', { name: /Бектест в сравнение/ }).click();
+    await panel.getByPlaceholder('32825394').fill('999');
+    await panel.getByRole('button', { name: 'Добавить в сравнение' }).click();
+    await expect(panel.locator('.qc-errbox')).toContainText('пустая кривая капитала');
+    await expect(page.locator('.qc-matrix').first().getByText('Empty BT')).toHaveCount(0);
+  });
+
   test('удаление стратегии требует подтверждения', async ({ page }) => {
     await mockConfigured(page);
     await page.goto('/quant');

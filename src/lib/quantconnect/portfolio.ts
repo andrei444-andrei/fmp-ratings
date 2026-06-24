@@ -193,7 +193,14 @@ export async function buildPreviewColumn(projectId: string, backtestId: string |
   }
   if (!resolved) return base({ name, error: 'в проекте нет бектестов' });
   try {
-    const m = await metricsForBacktest(projectId, resolved, force);
+    let m = await metricsForBacktest(projectId, resolved, force);
+    // пустая кривая капитала бывает транзиентной (chart/read ещё строится / лимит) —
+    // ретраим минуя кэш, и только потом честно говорим, что данных нет.
+    if (!m.strategy.length && !force) m = await metricsForBacktest(projectId, resolved, true);
+    if (!m.strategy.length) {
+      return base({ name, resolvedBacktestId: resolved,
+        error: 'пустая кривая капитала (Strategy Equity): бектест ещё строится, без графика или лимит API. Выберите конкретный завершённый бектест и попробуйте ещё раз.' });
+    }
     const years: Record<number, YearMetric> = {};
     for (const y of m.strategy) years[y.year] = y;
     return base({ name, resolvedBacktestId: resolved, years, totalReturn: lastCumulative(m.strategy), pointCount: m.points });
