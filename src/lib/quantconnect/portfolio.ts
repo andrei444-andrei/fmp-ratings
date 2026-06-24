@@ -170,3 +170,34 @@ export async function buildSeries(force = false, includeArchived = false): Promi
 
   return { algos: outAlgos, benchmark };
 }
+
+// Ad-hoc колонка для «Сравнения по годам»: годовые метрики произвольного
+// projectId+backtestId БЕЗ добавления в портфель/БД. Переиспользует тот же кэш
+// бектестов. id ставит клиент (синтетический), здесь — 0.
+export async function buildPreviewColumn(projectId: string, backtestId: string | null, force = false): Promise<AlgoColumn> {
+  const base = (extra: Partial<AlgoColumn>): AlgoColumn => ({
+    id: 0, name: `Проект ${projectId}`, projectId, backtestId, resolvedBacktestId: null,
+    status: 'active', description: null, error: null, years: {}, totalReturn: null, pointCount: 0, ...extra,
+  });
+  let resolved: string | null = null;
+  let name = `Проект ${projectId}`;
+  try {
+    resolved = await resolveBacktestId(projectId, backtestId);
+    if (resolved) {
+      const list = await qcListBacktests(projectId).catch(() => []);
+      const bt = list.find(b => b.backtestId === resolved);
+      if (bt?.name) name = bt.name;
+    }
+  } catch (e: any) {
+    return base({ name, error: e?.message || String(e) });
+  }
+  if (!resolved) return base({ name, error: 'в проекте нет бектестов' });
+  try {
+    const m = await metricsForBacktest(projectId, resolved, force);
+    const years: Record<number, YearMetric> = {};
+    for (const y of m.strategy) years[y.year] = y;
+    return base({ name, resolvedBacktestId: resolved, years, totalReturn: lastCumulative(m.strategy), pointCount: m.points });
+  } catch (e: any) {
+    return base({ name, resolvedBacktestId: resolved, error: e?.message || String(e) });
+  }
+}
