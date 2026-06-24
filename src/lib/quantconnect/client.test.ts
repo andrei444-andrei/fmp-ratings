@@ -5,7 +5,7 @@ vi.mock('./creds', () => ({
   getCreds: vi.fn(async () => ({ userId: 'u', apiToken: 't', organizationId: null })),
 }));
 
-import { qcReadBacktestTrades } from './client';
+import { qcReadBacktestTrades, qcReadSeries } from './client';
 
 const mkOrder = (i: number) => ({
   id: i, symbol: { value: 'SPY' }, quantity: 1, price: 100, value: 100,
@@ -72,5 +72,21 @@ describe('qcReadBacktestTrades — пагинация (тянем ВСЕ орд�
     }));
     const { trades } = await qcReadBacktestTrades('111', 'bt');
     expect(trades.length).toBe(50); // ретрай вытащил данные, а не «нет сделок»
+  });
+});
+
+describe('qcReadSeries — транзиентная ошибка chart/read', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('ретраит «Error retrieving backtest chart, please try again later» и затем отдаёт данные', async () => {
+    let calls = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      calls++;
+      if (calls === 1) return { ok: true, status: 200, text: async () => JSON.stringify({ success: false, errors: ['Error retrieving backtest chart, please try again later'] }) } as any;
+      return { ok: true, status: 200, text: async () => JSON.stringify({ success: true, chart: { series: { Equity: { values: [[1577836800, 100], [1580515200, 110]] } } } }) } as any;
+    }));
+    const pts = await qcReadSeries('111', 'bt', 'Strategy Equity', 'Equity', 10000, 4);
+    expect(pts.length).toBe(2); // данные пришли после ретрая
+    expect(calls).toBe(2);      // первая попытка транзиентная, вторая успешная
   });
 });
