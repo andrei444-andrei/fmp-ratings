@@ -126,13 +126,17 @@ function extractSeries(chart: any, preferred: string): QcSeriesPoint[] {
 }
 
 // Читает временной ряд графика бектеста (напр. «Strategy Equity» / «Benchmark»).
-// Эндпоинт может вернуть status=loading, пока график строится — ретраим.
+// Эндпоинт может вернуть status=loading (график строится) ИЛИ ошибку «Error retrieving
+// backtest chart, please try again later» (success=false) — оба случая транзиентные,
+// ретраим. На последней попытке транзиентную ошибку пробрасываем (видна причина).
+const CHART_TRANSIENT = /try again later|retrieving.*chart|чарт|too many|rate.?limit|timeout|temporarily/i;
 export async function qcReadSeries(
   projectId: number | string,
   backtestId: string,
   chartName: string,
   preferredSeries: string,
   count = 10000,
+  maxAttempts = 10,
 ): Promise<QcSeriesPoint[]> {
   const body = {
     projectId: Number(projectId),
@@ -142,8 +146,15 @@ export async function qcReadSeries(
     start: 0,
     end: Math.floor(Date.now() / 1000),
   };
-  for (let attempt = 0; attempt < 8; attempt++) {
-    const data = await qcPost('/backtests/chart/read', body);
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    let data: any;
+    try {
+      data = await qcPost('/backtests/chart/read', body);
+    } catch (e: any) {
+      const msg = String(e?.message || e);
+      if (CHART_TRANSIENT.test(msg) && attempt < maxAttempts - 1) { await sleep(2000); continue; }
+      throw e; // не транзиентная или попытки кончились — пусть причина будет видна
+    }
     const chart = data?.chart ?? data?.Chart;
     if (chart && (chart.series || chart.Series)) {
       return extractSeries(chart, preferredSeries);
