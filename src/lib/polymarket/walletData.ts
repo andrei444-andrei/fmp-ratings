@@ -60,7 +60,8 @@ export async function topMarkets(pages = 4, includeClosed = true, signal?: Abort
 function metaFromRaw(m: any): MarketMeta {
   const start = m.startDate ? new Date(m.startDate).getTime() : NaN;
   const end = m.endDate ? new Date(m.endDate).getTime() : NaN;
-  const horizonDays = Number.isFinite(start) && Number.isFinite(end) ? (end - start) / 86400000 : Infinity;
+  // конечное значение вместо Infinity (иначе libsql отвергает вставку); ~10 лет = «горизонт неизвестен»
+  const horizonDays = Number.isFinite(start) && Number.isFinite(end) ? (end - start) / 86400000 : 3650;
   let winningIndex: number | null = null;
   if (m.closed) {
     try {
