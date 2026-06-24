@@ -24,7 +24,7 @@ import { FACTORS, FACTOR_BY_ID, signalLabel, supportsSkip, type FactorId, type S
 import { UNIVERSE_PRESETS, type UniversePreset } from '@/lib/signals/presets';
 import { Heatmap, type HeatCell } from './Heatmap';
 
-type Mode = 'factor' | 'signal' | 'combine' | 'ma' | 'naaim';
+type Mode = 'factor' | 'signal' | 'combine' | 'ma' | 'naaim' | 'corr';
 type SavedSignal = { id: number; name: string; def: SignalDef };
 
 const CUR_YEAR = new Date().getFullYear();
@@ -237,16 +237,17 @@ function Tabs({ tab, setTab }: { tab: Mode; setTab: (m: Mode) => void }) {
     { id: 'combine', label: 'Комбинация' },
     { id: 'ma', label: 'SMA/EMA' },
     { id: 'naaim', label: 'NAAIM' },
+    { id: 'corr', label: 'Корреляции' },
   ];
   return (
-    <div className="flex gap-1 rounded-fk bg-surface-2 p-1">
+    <div className="grid grid-cols-3 gap-1 rounded-fk bg-surface-2 p-1">
       {items.map((it) => (
         <button
           key={it.id}
           type="button"
           data-testid={`tab-${it.id}`}
           onClick={() => setTab(it.id)}
-          className={`min-w-0 flex-1 truncate rounded-fk-sm px-2.5 py-1.5 text-[13px] font-semibold transition-colors ${
+          className={`min-w-0 truncate rounded-fk-sm px-2.5 py-1.5 text-[13px] font-semibold transition-colors ${
             tab === it.id ? 'bg-surface-elev text-ink shadow-fk-sm' : 'text-ink-3 hover:text-ink-2'
           }`}
         >
@@ -335,6 +336,11 @@ function Signals() {
   const [nR2, setNR2] = useState({ enabled: true, level: 80, riseW: 4, riseBy: 15 });
   const [nR3, setNR3] = useState({ enabled: true, level: 100 });
   const [nEntryLag, setNEntryLag] = useState(0); // доп. торговых дней после след. дня
+
+  // ── Корреляции активов ──
+  const [cFreq, setCFreq] = useState<'d' | 'w' | 'm'>('w'); // частота доходностей: дн/нед/мес
+  const [cMomWindow, setCMomWindow] = useState(126); // окно трейлинг-моментума, дн.
+  const [cBasketN, setCBasketN] = useState(5); // размер low-corr корзины
 
   // ── Комбинация ──
   const [saved, setSaved] = useState<SavedSignal[] | null>(null);
@@ -440,7 +446,7 @@ function Signals() {
         if (Number.isFinite(c.horizon)) setHorizon(c.horizon);
         if (typeof c.yearFrom === 'string') setYearFrom(c.yearFrom);
         if (typeof c.yearTo === 'string') setYearTo(c.yearTo);
-        if (['factor', 'signal', 'combine', 'ma', 'naaim'].includes(c.tab)) setTab(c.tab);
+        if (['factor', 'signal', 'combine', 'ma', 'naaim', 'corr'].includes(c.tab)) setTab(c.tab);
         if (typeof c.factorId === 'string' && FACTOR_BY_ID[c.factorId as FactorId]) setFactorId(c.factorId);
         if (c.fSide === 'high' || c.fSide === 'low' || c.fSide === 'band') setFSide(c.fSide);
         if (c.fBins === 'cumulative' || c.fBins === 'range' || c.fBins === 'quantile') setFBins(c.fBins);
@@ -452,6 +458,9 @@ function Signals() {
         if (c.nR2 && typeof c.nR2 === 'object') setNR2({ enabled: c.nR2.enabled !== false, level: Number(c.nR2.level) || 80, riseW: Number(c.nR2.riseW) || 4, riseBy: Number(c.nR2.riseBy) || 15 });
         if (c.nR3 && typeof c.nR3 === 'object') setNR3({ enabled: c.nR3.enabled !== false, level: Number(c.nR3.level) || 100 });
         if (Number.isFinite(c.nEntryLag)) setNEntryLag(c.nEntryLag);
+        if (c.cFreq === 'd' || c.cFreq === 'w' || c.cFreq === 'm') setCFreq(c.cFreq);
+        if (Number.isFinite(c.cMomWindow)) setCMomWindow(c.cMomWindow);
+        if (Number.isFinite(c.cBasketN)) setCBasketN(c.cBasketN);
       }
     } catch {
       /* ignore */
@@ -475,12 +484,12 @@ function Signals() {
     try {
       localStorage.setItem(
         'signals:config',
-        JSON.stringify({ presets: [...presets], custom, benchmark, horizon, yearFrom, yearTo, tab, factorId, fSide, fBins, fParams, fThresholds, fSkip, fOutcome, nR1, nR2, nR3, nEntryLag }),
+        JSON.stringify({ presets: [...presets], custom, benchmark, horizon, yearFrom, yearTo, tab, factorId, fSide, fBins, fParams, fThresholds, fSkip, fOutcome, nR1, nR2, nR3, nEntryLag, cFreq, cMomWindow, cBasketN }),
       );
     } catch {
       /* ignore */
     }
-  }, [hydrated, presets, custom, benchmark, horizon, yearFrom, yearTo, tab, factorId, fSide, fBins, fParams, fThresholds, fSkip, fOutcome, nR1, nR2, nR3, nEntryLag]);
+  }, [hydrated, presets, custom, benchmark, horizon, yearFrom, yearTo, tab, factorId, fSide, fBins, fParams, fThresholds, fSkip, fOutcome, nR1, nR2, nR3, nEntryLag, cFreq, cMomWindow, cBasketN]);
 
   // Пермалинк: отражаем id открытого снимка в адресной строке (?result=<id>) БЕЗ навигации —
   // ссылку можно скопировать и открыть напрямую. id=null убирает параметр (свежий прогон).
@@ -555,7 +564,7 @@ function Signals() {
       setRunning(false);
       setErrMsg('');
       setResult(res.payload);
-      if (['factor', 'signal', 'combine', 'ma', 'naaim'].includes(res.payload.mode)) setTab(res.payload.mode);
+      if (['factor', 'signal', 'combine', 'ma', 'naaim', 'corr'].includes(res.payload.mode)) setTab(res.payload.mode);
       reflectResultId(id); // адресная строка → пермалинк на этот снимок
       setStatus('Сохранённый результат');
     } catch (e: any) {
@@ -601,7 +610,7 @@ function Signals() {
 
   async function runStudy(payload: Record<string, unknown>) {
     if (running) return;
-    const minU = payload.mode === 'ma' ? 1 : payload.mode === 'naaim' ? 0 : 4; // naaim меряет один инструмент (бенчмарк) — вселенная не нужна
+    const minU = payload.mode === 'ma' ? 1 : payload.mode === 'naaim' ? 0 : payload.mode === 'corr' ? 2 : 4; // corr — матрица по ≥2 активам; naaim — один инструмент
     if (universe.length < minU) {
       toast({ variant: 'error', title: 'Маловата вселенная', description: `Нужно ≥ ${minU} инструмент${minU === 1 ? '' : 'ов'}.` });
       return;
@@ -715,6 +724,11 @@ function Signals() {
   function runNaaim() {
     // Инструмент = бенчмарк (по умолч. SPY). Ряд NAAIM подкладывает роут. Окно лет — общее.
     runStudy({ mode: 'naaim', r1: nR1, r2: nR2, r3: nR3, entryLag: nEntryLag });
+  }
+
+  function runCorr() {
+    // Матрица корреляций по выбранной вселенной (2–40 активов). Окно лет — общее.
+    runStudy({ mode: 'corr', freq: cFreq, momWindow: cMomWindow, basketN: cBasketN });
   }
 
   function togglePicked(id: number) {
@@ -918,6 +932,23 @@ function Signals() {
                   running={running}
                 />
               )}
+              {tab === 'corr' && (
+                <CorrForm
+                  freq={cFreq}
+                  setFreq={setCFreq}
+                  momWindow={cMomWindow}
+                  setMomWindow={setCMomWindow}
+                  basketN={cBasketN}
+                  setBasketN={setCBasketN}
+                  yearFrom={yearFrom}
+                  setYearFrom={setYearFrom}
+                  yearTo={yearTo}
+                  setYearTo={setYearTo}
+                  onRun={runCorr}
+                  running={running}
+                  canRun={universe.length >= 2}
+                />
+              )}
             </CardContent>
           </Card>
 
@@ -1081,6 +1112,7 @@ function Signals() {
             {result?.mode === 'combine' && <CombineResult data={result} />}
             {result?.mode === 'ma' && <MaResult data={result} />}
             {result?.mode === 'naaim' && <NaaimResult data={result} />}
+            {result?.mode === 'corr' && <CorrResult data={result} />}
           </div>
         </Card>
       </main>
@@ -1700,6 +1732,60 @@ function NaaimForm(p: any) {
       <Button onClick={p.onRun} loading={p.running} fullWidth data-testid="run-study">
         Оценить альфу NAAIM-сигналов
       </Button>
+    </>
+  );
+}
+
+function CorrForm(p: any) {
+  return (
+    <>
+      <p className="text-[12px] text-ink-3">
+        Матрица корреляций доходностей выбранной вселенной (<b>2–40 активов</b>) — полная за окно и <b>по годам</b>.
+        Плюс трейлинг-моментум и средняя корреляция: ищем <b>низкокоррелированные растущие</b> активы и собираем
+        low-corr корзину (идея — диверсификация под плечо). Вселенную выбери выше (пресеты «Сырьё», «Секторные/Страновые ETF», «Металлы»…).
+      </p>
+      <Field>
+        <Label>Частота доходностей</Label>
+        <div className="flex gap-1 rounded-fk bg-surface-2 p-1">
+          {([['d', 'Дневные'], ['w', 'Недельные'], ['m', 'Месячные']] as const).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => p.setFreq(id)}
+              className={`flex-1 rounded-fk-sm px-2 py-1 text-[12px] font-semibold transition-colors ${
+                p.freq === id ? 'bg-surface-elev text-ink shadow-fk-sm' : 'text-ink-3'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] text-ink-3">Недельные/месячные — меньше шума для кросс-активных корреляций; дневные — больше наблюдений по годам.</p>
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field><Label htmlFor="cmw">Окно моментума, дн.</Label><NumberInput id="cmw" value={p.momWindow} onChange={p.setMomWindow} /></Field>
+        <Field><Label htmlFor="cbn">Размер корзины</Label><NumberInput id="cbn" value={p.basketN} onChange={p.setBasketN} /></Field>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field>
+          <Label htmlFor="cyf">Год от</Label>
+          <Select id="cyf" value={p.yearFrom} onChange={(e: any) => p.setYearFrom(e.target.value)}>
+            <option value="">самый ранний</option>
+            {YEARS.map((y) => (<option key={y} value={y}>{y}</option>))}
+          </Select>
+        </Field>
+        <Field>
+          <Label htmlFor="cyt">Год до</Label>
+          <Select id="cyt" value={p.yearTo} onChange={(e: any) => p.setYearTo(e.target.value)}>
+            <option value="">текущий</option>
+            {YEARS.map((y) => (<option key={y} value={y}>{y}</option>))}
+          </Select>
+        </Field>
+      </div>
+      <Button onClick={p.onRun} loading={p.running} fullWidth data-testid="run-study" disabled={!p.canRun}>
+        Построить матрицу корреляций
+      </Button>
+      {!p.canRun && <p className="text-[11px] font-medium text-warn-strong">Кнопка неактивна: выберите вселенную (≥ 2 актива) выше.</p>}
     </>
   );
 }
@@ -2557,6 +2643,149 @@ function NaaimResult({ data }: { data: any }) {
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+function corrBg(v: number | null): string {
+  if (v == null || !Number.isFinite(v)) return 'transparent';
+  const t = Math.max(-1, Math.min(1, v));
+  const a = Math.round(Math.pow(Math.abs(t), 0.85) * 0.85 * 1000) / 1000;
+  // высокая ПРЯМАЯ корреляция = красный (плохо для диверсификации); ОБРАТНАЯ = зелёный (хорошо).
+  return t >= 0 ? `rgba(239,68,68,${a})` : `rgba(16,185,129,${a})`;
+}
+
+function CorrMatrix({ assets, matrix }: { assets: string[]; matrix: (number | null)[][] }) {
+  return (
+    <div className="overflow-auto" data-testid="corr-matrix">
+      <table className="border-separate" style={{ borderSpacing: 2 }}>
+        <thead>
+          <tr>
+            <th className="sticky left-0 z-10 bg-surface-elev px-1" />
+            {assets.map((a) => (
+              <th key={a} className="px-0.5 py-0.5 text-[9px] font-semibold text-ink-2 tabular-nums" style={{ writingMode: 'vertical-rl' }}>{a}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {assets.map((a, i) => (
+            <tr key={a}>
+              <td className="sticky left-0 z-10 bg-surface-elev px-1 py-0.5 text-right text-[10px] font-semibold text-ink tabular-nums whitespace-nowrap">{a}</td>
+              {assets.map((b, j) => {
+                const v = matrix[i]?.[j] ?? null;
+                const diag = i === j;
+                return (
+                  <td key={b} className="p-0">
+                    <div
+                      className="flex h-6 w-9 items-center justify-center rounded-[3px] border border-line text-[9px] tabular-nums text-ink"
+                      title={`${a} × ${b}: ${v == null ? '—' : v.toFixed(2)}`}
+                      style={{ background: diag ? 'rgba(120,120,120,0.12)' : corrBg(v) }}
+                    >
+                      {diag ? '' : v == null ? '' : v.toFixed(2)}
+                    </div>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function CorrResult({ data }: { data: any }) {
+  const [year, setYear] = useState<number | 'all'>('all');
+  const years = (data.years || []) as { year: number; matrix: (number | null)[][] }[];
+  const m = data.meta || {};
+  const active = year === 'all' ? data.matrix : years.find((y) => y.year === year)?.matrix ?? data.matrix;
+  const freqLabel = m.freq === 'd' ? 'дневные' : m.freq === 'w' ? 'недельные' : 'месячные';
+  const pa = (data.perAsset || []).slice().sort((x: any, y: any) => (y.mom ?? -1e9) - (x.mom ?? -1e9));
+  const b = data.basket;
+  const lev = m.lev || 2;
+  return (
+    <div className="space-y-4" data-testid="corr-result">
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-ink-3">
+        <span>Активов: <b className="text-ink-2">{m.nAssets}</b></span>
+        <span>Доходности: {freqLabel} ({m.nObs} набл.)</span>
+        <span>Период: {m.first} … {m.last}</span>
+        <span>Моментум: трейлинг {m.momWindow}д</span>
+      </div>
+      <div className="flex flex-wrap items-center gap-1">
+        <span className="mr-1 text-[11px] text-ink-3">Матрица:</span>
+        <button
+          type="button"
+          data-testid="corr-year-all"
+          onClick={() => setYear('all')}
+          className={`rounded-fk-sm px-2 py-0.5 text-[11px] font-semibold ${year === 'all' ? 'bg-brand-50 text-brand-700' : 'bg-surface-2 text-ink-3'}`}
+        >
+          Всё окно
+        </button>
+        {years.map((y) => (
+          <button
+            key={y.year}
+            type="button"
+            onClick={() => setYear(y.year)}
+            className={`rounded-fk-sm px-2 py-0.5 text-[11px] font-semibold tabular-nums ${year === y.year ? 'bg-brand-50 text-brand-700' : 'bg-surface-2 text-ink-3'}`}
+          >
+            {y.year}
+          </button>
+        ))}
+      </div>
+      <p className="text-[11px] text-ink-3">
+        <span className="font-semibold" style={{ color: 'rgb(239,68,68)' }}>Красный</span> = высокая прямая корреляция (плохо для диверсификации),{' '}
+        <span className="font-semibold" style={{ color: 'rgb(16,185,129)' }}>зелёный</span> = обратная (хорошо). Активы упорядочены кластерами.
+      </p>
+      <CorrMatrix assets={data.assets} matrix={active} />
+      <div className="overflow-auto">
+        <table className="w-full text-[12px]">
+          <thead>
+            <tr className="text-[10px] uppercase text-ink-3">
+              <th className="p-1 text-left">Актив</th>
+              <th className="p-1 text-right">Моментум</th>
+              <th className="p-1 text-right">Год. вол.</th>
+              <th className="p-1 text-right">Ср. корр.</th>
+              <th className="p-1 text-left" />
+            </tr>
+          </thead>
+          <tbody>
+            {pa.map((r: any) => {
+              const good = (r.mom ?? -1) > 0 && (r.avgCorr ?? 1) < 0.5;
+              return (
+                <tr key={r.sym} className="border-t border-line">
+                  <td className="p-1 font-semibold text-ink">{r.sym}</td>
+                  <td className="p-1 text-right tabular-nums" style={{ color: (r.mom ?? 0) >= 0 ? 'rgb(5,150,105)' : 'rgb(220,38,38)' }}>{fpct(r.mom)}</td>
+                  <td className="p-1 text-right tabular-nums text-ink-2">{fpct(r.vol)}</td>
+                  <td className="p-1 text-right tabular-nums text-ink-2">{fnum(r.avgCorr)}</td>
+                  <td className="p-1">{good && <Badge variant="up">диверсификатор · ↑моментум</Badge>}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {b ? (
+        <div className="space-y-2 rounded-fk border border-line bg-surface-elev p-3" data-testid="corr-basket">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="brand">Low-corr корзина · {b.picked.length} активов</Badge>
+            <span className="text-[12px] font-semibold text-ink-2">{b.picked.join(' · ')}</span>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <Stat label="Ср. попарн. корр." value={fnum(b.avgPairCorr)} />
+            {b.annRet != null && <Stat label="Доходность (год, equal-wt)" value={fpct(b.annRet)} tone={(b.annRet ?? 0) >= 0 ? 'up' : 'down'} />}
+            {b.annVol != null && <Stat label="Волатильность (год)" value={fpct(b.annVol)} />}
+            {b.sharpe != null && <Stat label="Sharpe" value={fnum(b.sharpe)} />}
+            {b.maxDD != null && <Stat label="Макс. просадка" value={fpct(b.maxDD)} tone="down" />}
+          </div>
+          {b.annRet != null && b.annVol != null && (
+            <p className="text-[11px] text-ink-3">
+              При плече ×{lev}: доходность ≈ {fpct((b.annRet || 0) * lev)}, волатильность ≈ {fpct((b.annVol || 0) * lev)} (Sharpe не меняется; <b>без</b> учёта стоимости плеча и издержек). In-sample, равные веса, дневной ребаланс — ориентир, не бэктест.
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="text-[13px] text-ink-3">Корзину не собрать: нет ≥2 активов с положительным моментумом в окне.</p>
+      )}
     </div>
   );
 }

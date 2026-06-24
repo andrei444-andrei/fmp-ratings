@@ -644,6 +644,100 @@ async def main():
                               'side': cd.get('side'), 'n': op_counts[i]} for i, cd in enumerate(conds)],
                 'n_total': int(len(bas))}
 
+    if mode == 'corr':
+        # Матрица корреляций доходностей активов: полная за окно + по календарным годам.
+        # Плюс трейлинг-моментум, год. волатильность, средняя корреляция к остальным и жадная
+        # low-corr корзина среди активов с положительным моментумом (идея: диверсификация под плечо).
+        assets0 = [str(s).upper() for s in syms]
+        cols = [a for a in dict.fromkeys(assets0) if a in px.columns and px[a].notna().sum() >= 60]
+        if len(cols) < 2:
+            return {'error': 'Нужно ≥2 актива с достаточной историей. Выберите вселенную выше.'}
+        sub = px[cols]
+        freq = CFG.get('freq', 'd')
+        if freq == 'w':
+            rp = sub.resample('W-FRI').last()
+        elif freq == 'm':
+            rp = sub.resample('M').last()
+        else:
+            rp = sub
+        rets = rp.pct_change()
+        if rets.shape[0] < 30:
+            return {'error': 'Слишком короткая история для корреляций в выбранном окне.'}
+        mp = 20 if freq == 'd' else 8
+        cmf = rets.corr(min_periods=mp)
+        # Упорядочиваем активы по первому собственному вектору корреляции — близкие встают рядом (блоки).
+        try:
+            M = cmf.reindex(index=cols, columns=cols).values.astype('float64')
+            M = np.where(np.isnan(M), 0.0, M)
+            np.fill_diagonal(M, 1.0)
+            w, V = np.linalg.eigh(M)
+            order = list(np.argsort(V[:, -1]))
+            cols = [cols[i] for i in order]
+        except Exception:
+            pass
+        def corr_matrix(r):
+            cm = r.corr(min_periods=mp)
+            out = []
+            for a in cols:
+                row = []
+                for b in cols:
+                    v = cm.loc[a, b] if (a in cm.index and b in cm.columns) else None
+                    row.append(_f(v) if (v is not None and v == v) else None)
+                out.append(row)
+            return out
+        full = corr_matrix(rets)
+        years = sorted(set(int(y) for y in rets.index.year))
+        per_year = []
+        for y in years:
+            ry = rets[rets.index.year == y]
+            if ry.shape[0] < (20 if freq == 'd' else 6):
+                continue
+            per_year.append({'year': int(y), 'matrix': corr_matrix(ry)})
+        # моментум (трейлинг momWindow торг. дн.) и год. волатильность — по ДНЕВНЫМ ценам.
+        momW = int(CFG.get('momWindow', 126))
+        dret = sub.pct_change()
+        cmf2 = cmf.reindex(index=cols, columns=cols)
+        per_asset = []
+        mom = {}
+        for a in cols:
+            c = sub[a].dropna()
+            m = ((c.iloc[-1] / c.iloc[-1 - momW] - 1.0) * 100.0) if len(c) > momW else None
+            mom[a] = m
+            others = [cmf2.loc[a, b] for b in cols if b != a and cmf2.loc[a, b] == cmf2.loc[a, b]]
+            per_asset.append({'sym': a, 'mom': _f(m), 'vol': _f(dret[a].std() * math.sqrt(252) * 100.0),
+                              'avgCorr': _f(sum(others) / len(others)) if others else None})
+        # Корзина: среди активов с mom>0 жадно набираем минимально коррелированные.
+        basketN = int(CFG.get('basketN', 5))
+        pos = sorted([a for a in cols if mom.get(a) is not None and mom[a] > 0], key=lambda a: -mom[a])
+        picked = []
+        if pos:
+            picked = [pos[0]]
+            while len(picked) < basketN and len(picked) < len(pos):
+                best = None; best_score = 1e18
+                for a in pos:
+                    if a in picked: continue
+                    mx = max([abs(cmf2.loc[a, p]) for p in picked if cmf2.loc[a, p] == cmf2.loc[a, p]] + [0.0])
+                    if mx < best_score: best_score = mx; best = a
+                if best is None: break
+                picked.append(best)
+        basket = None
+        if len(picked) >= 2:
+            bret = dret[picked].mean(axis=1).dropna()
+            pc = [cmf2.loc[x, y] for i, x in enumerate(picked) for y in picked[i + 1:] if cmf2.loc[x, y] == cmf2.loc[x, y]]
+            stat = {'picked': picked, 'mom': {a: _f(mom[a]) for a in picked},
+                    'avgPairCorr': _f(sum(pc) / len(pc)) if pc else None}
+            if len(bret) > 60:
+                ann = float((1.0 + bret).prod() ** (252.0 / len(bret)) - 1.0) * 100.0
+                vol = float(bret.std() * math.sqrt(252)) * 100.0
+                eq = (1.0 + bret).cumprod(); dd = float(((eq / eq.cummax()) - 1.0).min()) * 100.0
+                stat.update({'annRet': _f(ann), 'annVol': _f(vol), 'sharpe': _f(ann / vol) if vol > 0 else None, 'maxDD': _f(dd)})
+            basket = stat
+        meta = {'first': str(pd.Timestamp(rets.index[0]).date()), 'last': str(pd.Timestamp(rets.index[-1]).date()),
+                'nAssets': len(cols), 'freq': freq, 'nObs': int(rets.shape[0]), 'momWindow': momW,
+                'lev': float(CFG.get('lev', 2))}
+        return {'mode': 'corr', 'assets': cols, 'matrix': full, 'years': per_year,
+                'perAsset': per_asset, 'basket': basket, 'meta': meta}
+
     if mode == 'naaim':
         # Оценка форвардной альфы инструмента (по умолч. SPY) на правилах внешнего недельного ряда NAAIM.
         # POINT-IN-TIME: правила используют ТОЛЬКО недельные значения <= текущей недели; вход — следующий
