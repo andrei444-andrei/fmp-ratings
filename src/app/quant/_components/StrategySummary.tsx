@@ -7,6 +7,7 @@ import { computeSummary } from '@/lib/quantconnect/summary';
 import { computeDrawdowns } from '@/lib/quantconnect/drawdowns';
 import type { SeriesResponse, TradesResponse, QcTrade } from '@/lib/quantconnect/types';
 import type { AllocationResult } from '@/lib/quantconnect/allocation';
+import { anchorYearAttribution } from '@/lib/quantconnect/attribution';
 
 const ALLOC_TOPN = 12;
 function wpct(w: number): string { return w > 0.0005 ? (w * 100).toFixed(w < 0.1 ? 1 : 0) + '%' : ''; }
@@ -498,6 +499,17 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
                       {/* доходность по тикерам в разрезе каждого года */}
                       {alloc.attributionByYear.length > 0 && (() => {
                         const cols = alloc.symbols.slice(0, ALLOC_TOPN);
+                        // «Итог» якорим к РЕАЛЬНОЙ годовой доходности из equity-кривой. Реконструкция
+                        // из сделок нормируется на gross-экспозицию → для плечевых стратегий ЗАНИЖАЕТ
+                        // Δ к SPY (делит на плечо), а в кризисы — завышает. Масштабируем долю каждого
+                        // тикера так, чтобы «Итог» Вклада = факт. доходность стратегии за год, а «Итог»
+                        // Δ = факт. опережение SPY (доходность стратегии − SPY), как в equity-кривой.
+                        const yT = sum?.yearlyTotals || {};
+                        const yB = sum?.yearlyBenchTotals || null;
+                        const rows = alloc.attributionByYear.map(y => {
+                          const a = anchorYearAttribution(y.contrib, y.excess, yT[y.year], yB ? yB[y.year] : undefined);
+                          return { year: y.year, contrib: a.contrib, excess: a.excess, totC: a.totalContrib, totE: a.totalExcess };
+                        });
                         return (
                           <div style={{ marginTop: 20 }}>
                             <div className="qc-panel-h">
@@ -512,9 +524,9 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
                               <table className="qc-heat">
                                 <thead><tr><th className="lbl">Год</th>{cols.map(s => <th key={s}>{s}</th>)}<th className="tot">Итог</th></tr></thead>
                                 <tbody>
-                                  {alloc.attributionByYear.map(y => {
+                                  {rows.map(y => {
                                     const src = attrMode === 'contrib' ? y.contrib : y.excess;
-                                    const total = Object.values(src).reduce((s, x) => s + x, 0);
+                                    const total = attrMode === 'contrib' ? y.totC : y.totE;
                                     return (
                                       <tr key={y.year}>
                                         <td className="lbl">{y.year}</td>
@@ -531,9 +543,9 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
                             </div>
                             <div className="qc-alloc-note">
                               {attrMode === 'contrib'
-                                ? `Вклад тикера в доходность стратегии за конкретный год (доля экспозиции × доходность тикера, помесячно). «Итог» по строке ≈ доходность портфеля за год.`
-                                : `Насколько тикер обыграл ${benchName} за год на своей экспозиции. «Итог» ≈ опережение портфелем ${benchName} за год.`}
-                              {' '}Показаны топ-{ALLOC_TOPN} тикеров; «Итог» учитывает все.
+                                ? `Вклад тикера в доходность стратегии за год (доля экспозиции × доходность тикера, помесячно). «Итог» = фактическая доходность стратегии за год (по equity-кривой).`
+                                : `Насколько тикер обыграл ${benchName} за год. «Итог» = фактическое опережение ${benchName} за год (доходность стратегии − ${benchName}).`}
+                              {' '}Доли тикеров масштабированы к фактической годовой доходности; показаны топ-{ALLOC_TOPN}, «Итог» учитывает все.
                             </div>
                           </div>
                         );
