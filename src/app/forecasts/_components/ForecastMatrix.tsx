@@ -156,6 +156,12 @@ function SourcesPanel({ sel, onClose }: { sel: NonNullable<Sel>; onClose: () => 
                 <span className={'fc-chip sm ' + tierClass(f.signal)}>{TIER[f.signal].short}</span>
                 <b>{f.bank}</b>
                 <span className="fc-src-fmt">{FORMAT_RU[f.format]}</span>
+                {f.expectedReturn != null && (
+                  <span className={'fc-src-er' + (f.erEstimated ? ' est' : '')}
+                    title={f.erEstimated ? `ожидаемый рост — оценка${f.erBasis ? ` (${f.erBasis})` : ''}` : 'ожидаемый рост — из текста источника'}>
+                    {f.erEstimated ? '≈' : ''}{pct(f.expectedReturn)}{f.erEstimated ? ' оц.' : ''}
+                  </span>
+                )}
                 {f.extractedBy && <span className={'fc-src-by ' + f.extractedBy}>{f.verified ? 'проверено' : f.extractedBy === 'sonar' ? 'AI' : f.extractedBy === 'synthetic' ? 'синтетика' : 'вручную'}{f.confidence != null && !f.verified ? ` ${Math.round(f.confidence * 100)}%` : ''}</span>}
                 <span className="qc-spacer" />
                 {(f.publishedAt || f.asOf) && (
@@ -165,8 +171,8 @@ function SourcesPanel({ sel, onClose }: { sel: NonNullable<Sel>; onClose: () => 
                   </span>
                 )}
               </div>
-              <div className="fc-src-quote">«{f.quote}»</div>
-              {f.reasoning && <div className="fc-src-reason">{f.reasoning}</div>}
+              <div className="fc-src-quote" title={f.quoteRu && f.quote && f.quoteRu !== f.quote ? f.quote : undefined}>«{f.quoteRu || f.quote}»</div>
+              {(f.reasoningRu || f.reasoning) && <div className="fc-src-reason" title={f.reasoningRu && f.reasoning ? f.reasoning : undefined}>{f.reasoningRu || f.reasoning}</div>}
               {f.sourceUrl
                 ? <a className="fc-src-link" href={f.sourceUrl} target="_blank" rel="noreferrer">{f.sourceName || 'источник'} ↗</a>
                 : <span className="fc-src-link" style={{ opacity: .6 }}>{f.sourceName || 'без ссылки'}</span>}

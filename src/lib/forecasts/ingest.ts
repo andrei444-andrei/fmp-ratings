@@ -94,7 +94,7 @@ function dateOkFor(ym: YM | null, year: number): boolean {
 async function verifySource(url: string): Promise<{ reachable: boolean; ym: YM | null }> {
   try {
     const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 5000);
+    const t = setTimeout(() => ctrl.abort(), 3000);
     const res = await fetch(url, { signal: ctrl.signal, redirect: 'follow', headers: { 'user-agent': 'Mozilla/5.0 (compatible; fmp-ratings/1.0)' } });
     clearTimeout(t);
     if (!res.ok) return { reachable: false, ym: null };
@@ -110,6 +110,61 @@ async function verifySource(url: string): Promise<{ reachable: boolean; ym: YM |
     return { reachable: true, ym: null };
   } catch {
     return { reachable: false, ym: null };
+  }
+}
+
+// Структуризатор: извлечение взглядов + вывод/оценка ожидаемого % (без перевода —
+// перевод отдельным быстрым батч-вызовом translateRows, чтобы каждый запрос
+// укладывался в serverless-лимит). % считаем где можно, качественное — оценка с флагом.
+const STRUCT_SYS =
+  'You convert sell-side research notes into STRICT JSON. ' +
+  'Output: {"views":[{"bank":"","stance":"overweight|neutral|underweight|bullish|bearish|buy|hold|sell","signal":<int -2..2>,' +
+  '"expected_return_pct":<number or null>,"er_basis":"explicit|target_vs_level|qualitative",' +
+  '"index_target":<number or null>,"index_level_at_pub":<number or null>,' +
+  '"quote":"verbatim quote in the original language","reasoning":"1-2 sentences of key nuances (original language)",' +
+  '"source":"outlet/bank","url":"","published_at":"YYYY-MM or YYYY-MM-DD or null"}]}. ' +
+  'EXPECTED RETURN (expected_return_pct): ' +
+  '(1) if the text states an explicit expected return / % gain for the year, use it with er_basis="explicit". ' +
+  '(2) else if it gives an index TARGET for the year AND an index LEVEL around publication, set index_target and index_level_at_pub and compute expected_return_pct = round((target/level - 1)*100, 1), er_basis="target_vs_level". ' +
+  '(3) else give a CONSERVATIVE estimate matching the stance (strong bullish/overweight≈+10, bullish/constructive/buy≈+6, "modest gains"≈+3, neutral/flat≈0, cautious/underweight≈-4, bearish/sell≈-10), er_basis="qualitative". ' +
+  'signal: +2 strong overweight/very bullish, +1 overweight/constructive/buy, 0 neutral/equal-weight/hold, -1 underweight/cautious, -2 strong underweight/bearish/sell. ' +
+  'A view may be an aggregate analyst/Street CONSENSUS (bank="Consensus" or the poll source) or a recognized institution. published_at = the date stated in the text, else null. ' +
+  'Only include views actually supported by the text — never invent quotes or explicit numbers (the case-3 estimate is allowed but must match the stated stance). If nothing concrete, return {"views":[]}.';
+
+// Перевод цитат+рассуждений батчем (один дешёвый вызов на ячейку) → RU.
+async function translateRows(rows: NewRow[]): Promise<void> {
+  const items = rows
+    .map((r, i) => ({ i, quote: r.rawQuote || '', reasoning: r.reasoning || '' }))
+    .filter((x) => x.quote || x.reasoning);
+  if (!items.length) return;
+  try {
+    const out = await aimlChat({
+      model: getAimlModel(),
+      response_format: { type: 'json_object' },
+      temperature: 0,
+      max_tokens: 1500,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'Translate financial texts to natural Russian. Input: {"items":[{"i":<int>,"quote":"","reasoning":""}]}. ' +
+            'Return STRICT JSON {"items":[{"i":<int>,"quote_ru":"","reasoning_ru":""}]} with the SAME i values. ' +
+            'Keep numbers, %, tickers and index names intact. Translate faithfully, do not add or omit content.',
+        },
+        { role: 'user', content: JSON.stringify({ items }) },
+      ],
+    });
+    const parsed = extractJson(out);
+    const arr: any[] = Array.isArray(parsed?.items) ? parsed.items : [];
+    for (const t of arr) {
+      const idx = Number(t?.i);
+      if (Number.isInteger(idx) && rows[idx]) {
+        if (t.quote_ru) rows[idx].quoteRu = String(t.quote_ru).slice(0, 400);
+        if (t.reasoning_ru) rows[idx].reasoningRu = String(t.reasoning_ru).slice(0, 600);
+      }
+    }
+  } catch {
+    /* перевод не критичен — оставляем EN, RU доберём позже */
   }
 }
 
@@ -155,36 +210,23 @@ async function fetchCellFromSonar(code: string, year: number): Promise<{ rows: N
           `Answer NONE only if there is genuinely nothing about ${year}.`,
       },
     ],
-    max_tokens: 1100,
+    max_tokens: 900,
     temperature: 0.2,
   });
   const prose = research.content?.trim() || '';
   const citations = research.citations;
   if (!prose || /^none\b/i.test(prose)) return { rows: [], dropped: 0 };
 
-  // шаг 2 — структурирование (с датой публикации и рассуждением)
+  // шаг 2 — структурирование + вывод % + перевод на RU (один вызов)
   let structured = '';
   try {
     structured = await aimlChat({
       model: getAimlModel(),
       response_format: { type: 'json_object' },
       temperature: 0,
-      max_tokens: 1200,
+      max_tokens: 1600,
       messages: [
-        {
-          role: 'system',
-          content:
-            'Extract per-source market views from the SOURCE TEXT into STRICT JSON: ' +
-            '{"views":[{"bank":"","stance":"overweight|neutral|underweight|bullish|bearish|buy|hold|sell","signal":<int -2..2>,' +
-            '"expected_return_pct":<number or null>,"quote":"verbatim if present","reasoning":"1-2 sentences of key nuances",' +
-            '"source":"outlet/bank","url":"","published_at":"YYYY-MM or YYYY-MM-DD or null"}]}. ' +
-            'A view may be an aggregate analyst/Street CONSENSUS (set bank to "Consensus" or the poll source, e.g. "Reuters poll") or a recognized institution. ' +
-            'Include DIRECTIONAL/QUALITATIVE views even when expected_return_pct is null. ' +
-            'signal scale: +2 strong overweight/very bullish, +1 overweight/constructive/buy, 0 neutral/equal-weight/hold, -1 underweight/cautious, -2 strong underweight/bearish/sell. ' +
-            'published_at MUST be the publication date as stated in the text; if not stated, null. ' +
-            'Only include views actually supported by the text — never invent. If a view is not tied to a specific bank, set bank to the source/house name. ' +
-            'If the text contains no concrete view, return {"views":[]}.',
-        },
+        { role: 'system', content: STRUCT_SYS },
         { role: 'user', content: `YEAR=${year}\nASSET=${noun}\n\nSOURCE TEXT:\n${prose.slice(0, 6000)}\n\nReturn the JSON now.` },
       ],
     });
@@ -194,52 +236,64 @@ async function fetchCellFromSonar(code: string, year: number): Promise<{ rows: N
 
   const parsed = extractJson(structured);
   const views: any[] = Array.isArray(parsed?.views) ? parsed.views : Array.isArray(parsed) ? parsed : [];
-  const rows: NewRow[] = [];
-  let dropped = 0, verifyBudget = 4; // ограничиваем число живых fetch на ячейку
+  let dropped = 0;
 
+  // 1) кандидаты + дата-гейт по заявленной дате
+  type Cand = { v: any; bank: string; stance: string; er: number | null; erBasis: string; sig: SignalTier; url: string; ym: YM | null; dateOk: boolean };
+  const cands: Cand[] = [];
   for (const raw of views.slice(0, 8)) {
     const v = raw || {};
     const bank = String(v.bank || '').trim();
     if (!bank) continue;
     const stance = String(v.stance || '');
+    const basisRaw = String(v.er_basis || '').toLowerCase();
+    const erBasis = ['explicit', 'target_vs_level', 'qualitative'].includes(basisRaw)
+      ? basisRaw : (typeof v.expected_return_pct === 'number' ? 'explicit' : '');
     const er = typeof v.expected_return_pct === 'number' ? v.expected_return_pct / 100 : null;
     const sig = Number.isInteger(v.signal) ? clampTier(v.signal) : stanceToSignal(stance);
     const url = pickUrl(v.url, citations);
-
-    // дата-гейт по заявленной дате
-    let ym = parseYM(v.published_at);
-    let dateOk = dateOkFor(ym, year);
+    const ym = parseYM(v.published_at);
+    const dateOk = dateOkFor(ym, year);
     if (ym && !dateOk) { dropped++; continue; } // явно не тот год → выбрасываем
+    cands.push({ v, bank, stance, er, erBasis, sig, url, ym, dateOk });
+  }
 
-    // best-effort верификация источника + сверка даты
+  // 2) верификация источников — ПАРАЛЛЕЛЬНО (бюджет 2, под serverless-таймаут)
+  const toVerify = cands.filter((c) => c.url).slice(0, 2);
+  const verMap = new Map<string, { reachable: boolean; ym: YM | null }>();
+  await Promise.all(toVerify.map(async (c) => { verMap.set(c.url, await verifySource(c.url)); }));
+
+  // 3) финализация строк
+  const rows: NewRow[] = [];
+  for (const c of cands) {
+    let { ym, dateOk } = c;
     let sourceVerified = false;
-    if (url && verifyBudget > 0) {
-      verifyBudget--;
-      const ver = await verifySource(url);
-      if (ver.reachable) {
-        if (ver.ym) {
-          if (dateOkFor(ver.ym, year)) { sourceVerified = true; if (!ym) { ym = ver.ym; dateOk = true; } }
-          else { dropped++; continue; } // дата страницы противоречит году → выбрасываем
-        } else {
-          sourceVerified = true; // открылось, но дату не вытащили
-        }
+    const ver = c.url ? verMap.get(c.url) : undefined;
+    if (ver?.reachable) {
+      if (ver.ym) {
+        if (dateOkFor(ver.ym, year)) { sourceVerified = true; if (!ym) { ym = ver.ym; dateOk = true; } }
+        else { dropped++; continue; } // дата страницы противоречит году → выбрасываем
+      } else {
+        sourceVerified = true; // открылось, но дату не вытащили
       }
     }
-
-    const confidence =
-      sourceVerified && dateOk ? 0.9 :
-      url && dateOk ? 0.7 :
-      url ? 0.45 : 0.3;
-
+    const v = c.v;
+    const hasNum = c.erBasis === 'explicit' || c.erBasis === 'target_vs_level';
+    const erEstimated = c.er != null && c.erBasis !== 'explicit';
+    const confidence = sourceVerified && dateOk ? 0.9 : c.url && dateOk ? 0.7 : c.url ? 0.45 : 0.3;
     rows.push({
-      bank,
-      format: stanceToFormat(stance, er != null),
-      signal: sig,
-      expectedReturn: er,
-      rawQuote: String(v.quote || stance || '').slice(0, 400),
+      bank: c.bank,
+      format: stanceToFormat(c.stance, hasNum),
+      signal: c.sig,
+      expectedReturn: c.er,
+      erEstimated,
+      erBasis: c.erBasis,
+      rawQuote: String(v.quote || c.stance || '').slice(0, 400),
+      quoteRu: '', // заполнит translateRows ниже
       reasoning: String(v.reasoning || '').slice(0, 600),
-      sourceName: String(v.source || '').slice(0, 80) || (url ? new URL(url).hostname.replace(/^www\./, '') : 'web'),
-      sourceUrl: url,
+      reasoningRu: '',
+      sourceName: String(v.source || '').slice(0, 80) || (c.url ? new URL(c.url).hostname.replace(/^www\./, '') : 'web'),
+      sourceUrl: c.url,
       asOf: ym ? `${ym.y}-${String(ym.m || 12).padStart(2, '0')}` : `${year - 1}-12`,
       publishedAt: ym ? `${ym.y}-${String(ym.m || 0).padStart(2, '0')}` : '',
       dateOk,
@@ -248,6 +302,7 @@ async function fetchCellFromSonar(code: string, year: number): Promise<{ rows: N
       extractedBy: 'sonar',
     });
   }
+  await translateRows(rows); // перевод цитат/рассуждений на RU (один батч-вызов)
   return { rows, dropped };
 }
 
@@ -257,7 +312,9 @@ function syntheticCell(code: string, year: number): NewRow[] {
   if (!cell) return [];
   return cell.forecasts.map((f) => ({
     bank: f.bank, format: f.format, signal: f.signal, expectedReturn: f.expectedReturn,
-    rawQuote: f.quote, reasoning: '', sourceName: f.sourceName, sourceUrl: f.sourceUrl, asOf: f.asOf,
+    erEstimated: false, erBasis: f.expectedReturn != null ? 'explicit' : '',
+    rawQuote: f.quote, quoteRu: f.quote, reasoning: '', reasoningRu: '',
+    sourceName: f.sourceName, sourceUrl: f.sourceUrl, asOf: f.asOf,
     publishedAt: f.asOf, dateOk: true, sourceVerified: false,
     confidence: 0.3, extractedBy: 'synthetic' as const,
   }));

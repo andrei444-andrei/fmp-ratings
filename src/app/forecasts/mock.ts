@@ -48,7 +48,11 @@ export type BankForecast = {
   asOf: string;                  // дата публикации прогноза (ISO)
   // поля реального ингеста (опц.; в моке отсутствуют)
   id?: number;
-  reasoning?: string;        // нюансы из самого анонса
+  erEstimated?: boolean;     // % — оценка, не явное число
+  erBasis?: string;          // explicit | target_vs_level | qualitative
+  quoteRu?: string;          // перевод цитаты на русский
+  reasoning?: string;        // нюансы из самого анонса (оригинал)
+  reasoningRu?: string;      // перевод нюансов на русский
   publishedAt?: string;      // дата публикации статьи
   dateOk?: boolean;          // дата в окне year-ahead
   sourceVerified?: boolean;  // URL открыт и дата подтверждена
@@ -205,7 +209,9 @@ function median(xs: number[]): number {
 export function consensusOf(cell: Cell): Consensus {
   if (!cell.forecasts.length) return { signal: null, tier: null, n: 0, spread: 0, expectedReturn: null };
   const sigs = cell.forecasts.map((f) => f.signal);
-  const ers = cell.forecasts.map((f) => f.expectedReturn).filter((x): x is number => x != null);
+  // в числовой консенсус берём только НЕ оценочные % (явные/из таргета) — оценки
+  // по качественным формулировкам не загрязняют numeric IC.
+  const ers = cell.forecasts.filter((f) => !f.erEstimated).map((f) => f.expectedReturn).filter((x): x is number => x != null);
   const sig = median(sigs);
   return {
     signal: sig,
@@ -226,7 +232,8 @@ export function cellOf(code: string, year: number): Cell | undefined {
 // фолбэк на синтетические прогнозы, чтобы страница не была пустой до ингеста.
 export type IngestedForecast = {
   asset: string; year: number; bank: string; format: ForecastFormat; signal: SignalTier;
-  expectedReturn: number | null; quote: string; reasoning?: string; sourceName: string; sourceUrl: string; asOf: string;
+  expectedReturn: number | null; erEstimated?: boolean; erBasis?: string;
+  quote: string; quoteRu?: string; reasoning?: string; reasoningRu?: string; sourceName: string; sourceUrl: string; asOf: string;
   publishedAt?: string; dateOk?: boolean; sourceVerified?: boolean;
   id?: number; confidence?: number; extractedBy?: 'sonar' | 'manual' | 'synthetic'; verified?: boolean;
 };
@@ -239,7 +246,9 @@ export function buildSeries(rows: IngestedForecast[]): CountrySeries[] {
     const arr = byCell.get(k) ?? [];
     arr.push({
       bank: r.bank, format: r.format, signal: r.signal, expectedReturn: r.expectedReturn,
-      quote: r.quote, reasoning: r.reasoning, sourceName: r.sourceName, sourceUrl: r.sourceUrl, asOf: r.asOf,
+      erEstimated: r.erEstimated, erBasis: r.erBasis,
+      quote: r.quote, quoteRu: r.quoteRu, reasoning: r.reasoning, reasoningRu: r.reasoningRu,
+      sourceName: r.sourceName, sourceUrl: r.sourceUrl, asOf: r.asOf,
       publishedAt: r.publishedAt, dateOk: r.dateOk, sourceVerified: r.sourceVerified,
       id: r.id, confidence: r.confidence, extractedBy: r.extractedBy, verified: r.verified,
     });
