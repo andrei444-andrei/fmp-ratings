@@ -198,7 +198,7 @@ function EditModal({ algo, onClose, onSaved }: { algo: QcAlgorithm; onClose: () 
                 rows={6} placeholder="Markdown: **жирный**, ## заголовок, - список…" />
             </div>
           </div>
-          {err && <div className="qc-errbox">⚠ Не сохранено: {err}</div>}
+          {err && <div className="qc-errbox">⚠ {err}</div>}
         </div>
         <div className="qc-modal-foot">
           <button className="qc-btn" onClick={onClose}>Отмена</button>
