@@ -383,6 +383,19 @@ test.describe('Signals /signals', () => {
     ).toBeVisible({ timeout: 150000 });
   });
 
+  test('режим Сигнал: отрицательный порог вводится посимвольно (−15 не теряет ведущий «−»)', async ({ page }) => {
+    await setup(page);
+    await page.getByTestId('tab-signal').click();
+    const thr = page.locator('#sthr');
+    await thr.fill('');
+    await thr.pressSequentially('-15'); // посимвольно: раньше ведущий «−» стирался (Number('')→0 → ремоунт в 0)
+    await expect(thr).toHaveValue('-15');
+    await page.getByTestId('run-study').click();
+    await expect(
+      page.locator('[data-testid="signals-output"]').getByText(/Ср\. изб\. дох\.|Слишком мало событий/),
+    ).toBeVisible({ timeout: 150000 });
+  });
+
   test('режим Комбинация: автоподбор по двум сигналам (IS vs OOS)', async ({ page }) => {
     await setup(page);
     // Создаём два различных сигнала во вкладке «Сигнал».

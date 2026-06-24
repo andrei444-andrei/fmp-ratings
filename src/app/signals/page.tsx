@@ -1216,6 +1216,42 @@ function FactorForm(p: any) {
   );
 }
 
+// Числовой ввод со знаком: держит локальный текстовый черновик, чтобы можно было набрать
+// ведущий «−» (и «-1», «-15»…) и временно пустое поле. Контролируемый <input type=number value={число}>
+// + Number(value) на каждый keystroke стирал «−» (Number('')===0 → ремоунт в 0), из-за чего
+// отрицательный порог нельзя было ввести вообще. Наружу отдаём число только когда оно валидно.
+function NumberInput({ value, onChange, id, step }: { value: number; onChange: (n: number) => void; id?: string; step?: number }) {
+  const [draft, setDraft] = useState<string>(String(value));
+  // Подхватываем внешнюю смену value (напр. при смене фактора подставляется новый дефолт),
+  // но не дёргаем черновик, когда внешнее значение пришло из нашего же onChange.
+  useEffect(() => {
+    if (Number(draft) !== value) setDraft(String(value));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+  return (
+    <Input
+      id={id}
+      type="number"
+      inputMode="decimal"
+      step={step}
+      value={draft}
+      onChange={(e: any) => {
+        const v = e.target.value;
+        setDraft(v);
+        if (v === '' || v === '-' || v === '.' || v === '-.') return; // незавершённый ввод — наружу не пушим
+        const n = Number(v);
+        if (Number.isFinite(n)) onChange(n);
+      }}
+      onBlur={() => {
+        const n = Number(draft);
+        const fin = Number.isFinite(n) ? n : 0;
+        setDraft(String(fin));
+        onChange(fin);
+      }}
+    />
+  );
+}
+
 function SignalForm(p: any) {
   const f = FACTOR_BY_ID[p.factor];
   return (
@@ -1240,17 +1276,17 @@ function SignalForm(p: any) {
         <div className="grid grid-cols-2 gap-3">
           <Field>
             <Label htmlFor="slo">От ({f.unit || '—'})</Label>
-            <Input id="slo" type="number" value={p.lo} onChange={(e: any) => p.setLo(Number(e.target.value))} />
+            <NumberInput id="slo" value={p.lo} onChange={p.setLo} />
           </Field>
           <Field>
             <Label htmlFor="shi">До ({f.unit || '—'})</Label>
-            <Input id="shi" type="number" value={p.hi} onChange={(e: any) => p.setHi(Number(e.target.value))} />
+            <NumberInput id="shi" value={p.hi} onChange={p.setHi} />
           </Field>
         </div>
       ) : (
         <Field>
           <Label htmlFor="sthr">Порог ({f.unit || '—'})</Label>
-          <Input id="sthr" type="number" value={p.threshold} onChange={(e: any) => p.setThreshold(Number(e.target.value))} />
+          <NumberInput id="sthr" value={p.threshold} onChange={p.setThreshold} />
         </Field>
       )}
       {supportsSkip(p.factor) && (
