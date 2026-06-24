@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { reconstructBets, type Trade, type MarketMeta } from './walletData';
 
 function meta(over: Partial<MarketMeta> = {}): MarketMeta {
-  return { conditionId: 'c', question: 'q', category: 'macro', horizonDays: 30, closed: true, winningIndex: 0, ...over };
+  return { conditionId: 'c', question: 'q', category: 'macro', horizonDays: 30, closed: true, winningIndex: 0, endDate: null, ...over };
 }
 
 describe('reconstructBets', () => {

@@ -6,10 +6,11 @@ import {
 } from '@/components/ui';
 
 type CatStat = { n: number; meanEdge: number; tStat: number; significant: boolean; winRate: number; totalPnl: number };
+type Sample = { question: string; category: string | null; win: 0 | 1; entry: number; pnl: number };
 type Wallet = {
   address: string; n: number; meanEdge: number; tStat: number; pValue: number;
   significant: boolean; winRate: number; totalPnl: number; roi: number; valueUsd: number;
-  byCat: Record<string, CatStat>; minHorizon: number;
+  byCat: Record<string, CatStat>; minHorizon: number; aiSummary: string | null; samples: Sample[];
 };
 type Data = { wallets: Wallet[]; progress: { candidates: number; scored: number; smart: number } };
 
@@ -69,7 +70,38 @@ function CatChips({ w }: { w: Wallet }) {
   );
 }
 
-function WalletCard({ w, rank, cat }: { w: Wallet; rank: number; cat: string }) {
+function AiSummary({ address, horizon, initial }: { address: string; horizon: number; initial: string | null }) {
+  const [text, setText] = useState<string | null>(initial);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const gen = async () => {
+    setBusy(true); setErr(null);
+    try {
+      const r = await fetch('/api/polymarket/wallets/summary', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ address, minHorizon: horizon }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      setText(j.summary);
+    } catch (e: any) { setErr(e?.message || 'Ошибка'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="mt-2 rounded-fk border border-line bg-surface px-3 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] font-medium text-ink-3">AI: что торгует и почему может давать альфу</span>
+        <button type="button" onClick={gen} disabled={busy} className="text-xs text-brand-700 hover:underline disabled:opacity-50">
+          {busy ? 'Генерирую…' : text ? 'обновить' : 'сгенерировать'}
+        </button>
+      </div>
+      {err && <div className="mt-1 text-xs text-down-strong">{err}</div>}
+      {text && <p className="mt-1 text-sm text-ink-2 whitespace-pre-wrap">{text}</p>}
+    </div>
+  );
+}
+
+function WalletCard({ w, rank, cat, horizon }: { w: Wallet; rank: number; cat: string; horizon: number }) {
   const [open, setOpen] = useState(false);
   const s = cat !== 'all' && w.byCat[cat] ? w.byCat[cat] : null;
   const edge = s ? s.meanEdge : w.meanEdge;
@@ -118,6 +150,21 @@ function WalletCard({ w, rank, cat }: { w: Wallet; rank: number; cat: string }) 
         <div className="px-3 pb-3 sm:pl-[44px]">
           <div className="text-[11px] text-ink-3 mb-1.5">Edge по типам событий (горизонт ≥ {w.minHorizon}д) · ROI {(w.roi * 100).toFixed(0)}%</div>
           <CatChips w={w} />
+          {(w.samples?.length ?? 0) > 0 && (
+            <div className="mt-3">
+              <div className="text-[11px] font-medium text-ink-3 mb-1">Что торгует — крупнейшие ставки</div>
+              <div className="space-y-1">
+                {w.samples.map((sm, i) => (
+                  <div key={i} className="flex items-center gap-2 text-xs">
+                    <span className={sm.win ? 'text-up-strong' : 'text-down-strong'}>{sm.win ? '✓' : '✗'}</span>
+                    <span className="text-ink-3 tabular-nums w-10">@{sm.entry.toFixed(2)}</span>
+                    <span className="text-ink-2 truncate">{sm.question}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <AiSummary address={w.address} horizon={horizon} initial={w.aiSummary} />
         </div>
       )}
     </div>
@@ -146,19 +193,20 @@ export default function SmartWalletsPage() {
   const [crawling, setCrawling] = useState(false);
   const [cat, setCat] = useState('all');
   const [sigOnly, setSigOnly] = useState(false);
+  const [horizon, setHorizon] = useState(30);
   const [sort, setSort] = useState<SortKey>('edge');
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const qs = new URLSearchParams({ category: cat, sigOnly: sigOnly ? '1' : '0', limit: '200' });
+      const qs = new URLSearchParams({ category: cat, sigOnly: sigOnly ? '1' : '0', minHorizon: String(horizon), limit: '200' });
       const r = await fetch(`/api/polymarket/wallets?${qs}`, { cache: 'no-store' });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
       setData(j);
     } catch (e: any) { setError(e?.message || 'Не удалось загрузить'); }
     finally { setLoading(false); }
-  }, [cat, sigOnly]);
+  }, [cat, sigOnly, horizon]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -167,7 +215,7 @@ export default function SmartWalletsPage() {
     try {
       const r = await fetch('/api/polymarket/wallets', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ discover, scoreWallets: 60, minHorizonDays: 7, minN: 20 }),
+        body: JSON.stringify({ discover, scoreWallets: 60, minHorizonDays: horizon, minN: 20 }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
@@ -184,7 +232,7 @@ export default function SmartWalletsPage() {
     try {
       let r = await fetch('/api/polymarket/wallets?discover=1', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ discover: true, scoreWallets: 60, minHorizonDays: 7, minN: 20 }),
+        body: JSON.stringify({ discover: true, scoreWallets: 60, minHorizonDays: horizon, minN: 20 }),
       });
       let j = await r.json();
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
@@ -193,7 +241,7 @@ export default function SmartWalletsPage() {
         if (j.progress && j.progress.scored >= j.progress.candidates) break;
         r = await fetch('/api/polymarket/wallets', {
           method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ scoreWallets: 60, minHorizonDays: 7, minN: 20 }),
+          body: JSON.stringify({ scoreWallets: 60, minHorizonDays: horizon, minN: 20 }),
         });
         j = await r.json();
         if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
@@ -261,11 +309,15 @@ export default function SmartWalletsPage() {
       )}
 
       {/* тулбар */}
-      <div className="mt-4 flex items-center gap-2 flex-wrap">
+      <div className="mt-4 flex items-center gap-3 flex-wrap">
         <SegmentedControl value={cat} onChange={setCat} size="sm" options={CATS.map((c) => ({ value: c.value, label: c.label }))} />
-        <label className="text-sm text-ink-2 flex items-center gap-1.5 cursor-pointer select-none">
-          <input type="checkbox" checked={sigOnly} onChange={(e) => setSigOnly(e.target.checked)} /> только значимые
+        <label className="text-xs text-ink-2 flex items-center gap-1.5">
+          горизонт ≥
+          <SegmentedControl value={String(horizon)} onChange={(v) => setHorizon(Number(v))} size="sm"
+            options={[{ value: '7', label: '7д' }, { value: '30', label: '30д' }, { value: '90', label: '90д' }, { value: '365', label: '1г' }]} />
         </label>
+        <SegmentedControl value={sigOnly ? 'sig' : 'all'} onChange={(v) => setSigOnly(v === 'sig')} size="sm"
+          options={[{ value: 'all', label: 'Все' }, { value: 'sig', label: 'Только значимые' }]} />
         <span className="flex-1" />
         <button type="button" onClick={reset} disabled={crawling || autoRun}
                 className="text-xs text-ink-3 hover:text-down-strong disabled:opacity-50">сбросить</button>
@@ -315,7 +367,7 @@ export default function SmartWalletsPage() {
             {wallets.length ? (
               <>
                 <HeaderRow />
-                {wallets.map((w, i) => <WalletCard key={w.address} w={w} rank={i + 1} cat={cat} />)}
+                {wallets.map((w, i) => <WalletCard key={w.address} w={w} rank={i + 1} cat={cat} horizon={horizon} />)}
               </>
             ) : (
               <div className="px-4 py-10 text-center">

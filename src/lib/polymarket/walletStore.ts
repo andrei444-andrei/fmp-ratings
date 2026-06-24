@@ -1,7 +1,15 @@
-// Хранилище «умных денег» в Turso: кандидаты (для резюмируемого краула) и
-// посчитанные кошельки с edge-статистикой. Самопровижининг (§1 конституции).
+// Хранилище «умных денег» в Turso:
+//  - pm_wallet_candidates — пул кандидатов (резюмируемый краул);
+//  - pm_wallet_bets — сами события (разрешённые пари) по каждому кошельку;
+//  - pm_smart_wallets — мета (стоимость портфеля, AI-summary) + кэш агрегата.
+// Лидерборд пересчитывается из событий на лету под выбранный горизонт.
+// Самопровижининг (§1 конституции).
 
 import { libsqlClient } from '@/db/client';
+import { edgeStats, statsByCategory, type ResolvedBet } from './walletStats';
+import type { CatKey } from './classify';
+
+const SIG_MIN_N = 20; // минимум пари для оценки значимости
 
 let ensured = false;
 async function ensureSchema(): Promise<void> {
@@ -28,7 +36,23 @@ async function ensureSchema(): Promise<void> {
       min_horizon REAL NOT NULL,
       computed_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`,
+    `CREATE TABLE IF NOT EXISTS pm_wallet_bets (
+      address TEXT NOT NULL,
+      condition_id TEXT NOT NULL,
+      question TEXT,
+      category TEXT,
+      horizon_days REAL NOT NULL,
+      entry REAL NOT NULL,
+      win INTEGER NOT NULL,
+      pnl REAL NOT NULL,
+      cost REAL NOT NULL,
+      end_date TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (address, condition_id)
+    )`,
   ], 'write');
+  // ai_summary добавляем мягко (ALTER без IF NOT EXISTS в SQLite)
+  try { await libsqlClient.execute(`ALTER TABLE pm_smart_wallets ADD COLUMN ai_summary TEXT`); } catch { /* уже есть */ }
   ensured = true;
 }
 
@@ -49,7 +73,6 @@ export async function addCandidates(addresses: string[]): Promise<void> {
   }
 }
 
-// Следующие неотсканированные кандидаты — приоритет по частоте появления (seen).
 export async function nextUnscored(limit: number): Promise<string[]> {
   await ensureSchema();
   const r = await libsqlClient.execute({
@@ -68,22 +91,65 @@ export async function markScored(addresses: string[]): Promise<void> {
   );
 }
 
-export type WalletRow = {
-  address: string;
-  n: number;
-  meanEdge: number;
-  tStat: number;
-  pValue: number;
-  significant: boolean;
-  winRate: number;
-  totalPnl: number;
-  roi: number;
-  valueUsd: number;
-  byCat: Record<string, { n: number; meanEdge: number; tStat: number; significant: boolean; winRate: number; totalPnl: number }>;
-  minHorizon: number;
+// --- события (разрешённые пари) ---
+
+export type StoredBet = {
+  conditionId: string; question: string; category: string | null;
+  horizonDays: number; entry: number; win: 0 | 1; pnl: number; cost: number; endDate: string | null;
 };
 
-export async function upsertWallet(w: WalletRow): Promise<void> {
+export async function storeWalletBets(address: string, bets: StoredBet[]): Promise<void> {
+  await ensureSchema();
+  await libsqlClient.execute({ sql: 'DELETE FROM pm_wallet_bets WHERE address = ?', args: [address] });
+  if (!bets.length) return;
+  for (let i = 0; i < bets.length; i += 100) {
+    const chunk = bets.slice(i, i + 100);
+    await libsqlClient.batch(
+      chunk.map((b) => ({
+        sql: `INSERT INTO pm_wallet_bets (address, condition_id, question, category, horizon_days, entry, win, pnl, cost, end_date)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(address, condition_id) DO UPDATE SET
+                question=excluded.question, category=excluded.category, horizon_days=excluded.horizon_days,
+                entry=excluded.entry, win=excluded.win, pnl=excluded.pnl, cost=excluded.cost, end_date=excluded.end_date`,
+        args: [address, b.conditionId, b.question, b.category, b.horizonDays, b.entry, b.win, b.pnl, b.cost, b.endDate],
+      })),
+      'write',
+    );
+  }
+}
+
+function rowToStoredBet(x: any): StoredBet {
+  return {
+    conditionId: String(x.condition_id), question: String(x.question ?? ''),
+    category: x.category ?? null, horizonDays: Number(x.horizon_days),
+    entry: Number(x.entry), win: (Number(x.win) ? 1 : 0) as 0 | 1,
+    pnl: Number(x.pnl), cost: Number(x.cost), endDate: x.end_date ?? null,
+  };
+}
+
+export async function loadBets(address: string): Promise<StoredBet[]> {
+  await ensureSchema();
+  const r = await libsqlClient.execute({ sql: 'SELECT * FROM pm_wallet_bets WHERE address = ?', args: [address] });
+  return (r.rows as any[]).map(rowToStoredBet);
+}
+
+async function loadAllBetsGrouped(): Promise<Map<string, StoredBet[]>> {
+  await ensureSchema();
+  const r = await libsqlClient.execute('SELECT * FROM pm_wallet_bets');
+  const map = new Map<string, StoredBet[]>();
+  for (const x of r.rows as any[]) {
+    const addr = String(x.address);
+    (map.get(addr) ?? map.set(addr, []).get(addr)!).push(rowToStoredBet(x));
+  }
+  return map;
+}
+
+// --- мета кошелька (стоимость портфеля, AI-summary) ---
+
+export async function upsertWalletMeta(address: string, valueUsd: number, agg: {
+  n: number; meanEdge: number; tStat: number; pValue: number; significant: boolean;
+  winRate: number; totalPnl: number; roi: number; byCat: any; minHorizon: number;
+}): Promise<void> {
   await ensureSchema();
   await libsqlClient.execute({
     sql: `INSERT INTO pm_smart_wallets
@@ -94,32 +160,75 @@ export async function upsertWallet(w: WalletRow): Promise<void> {
         significant=excluded.significant, win_rate=excluded.win_rate, total_pnl=excluded.total_pnl,
         roi=excluded.roi, value_usd=excluded.value_usd, by_cat=excluded.by_cat,
         min_horizon=excluded.min_horizon, computed_at=excluded.computed_at`,
-    args: [
-      w.address, w.n, w.meanEdge, w.tStat, w.pValue, w.significant ? 1 : 0, w.winRate,
-      w.totalPnl, w.roi, w.valueUsd, JSON.stringify(w.byCat), w.minHorizon, new Date().toISOString(),
-    ],
+    args: [address, agg.n, agg.meanEdge, agg.tStat, agg.pValue, agg.significant ? 1 : 0, agg.winRate,
+      agg.totalPnl, agg.roi, valueUsd, JSON.stringify(agg.byCat), agg.minHorizon, new Date().toISOString()],
   });
 }
 
-export type ListOpts = { category?: string; minN?: number; sigOnly?: boolean; limit?: number };
+export async function setAiSummary(address: string, summary: string): Promise<void> {
+  await ensureSchema();
+  await libsqlClient.execute({ sql: 'UPDATE pm_smart_wallets SET ai_summary = ? WHERE address = ?', args: [summary, address] });
+}
+
+async function loadMeta(): Promise<Map<string, { valueUsd: number; aiSummary: string | null }>> {
+  const r = await libsqlClient.execute('SELECT address, value_usd, ai_summary FROM pm_smart_wallets');
+  const map = new Map<string, { valueUsd: number; aiSummary: string | null }>();
+  for (const x of r.rows as any[]) map.set(String(x.address), { valueUsd: Number(x.value_usd), aiSummary: x.ai_summary ?? null });
+  return map;
+}
+
+// --- лидерборд (пересчёт из событий под выбранный горизонт) ---
+
+export type CatStat = { n: number; meanEdge: number; tStat: number; significant: boolean; winRate: number; totalPnl: number };
+export type WalletRow = {
+  address: string; n: number; meanEdge: number; tStat: number; pValue: number;
+  significant: boolean; winRate: number; totalPnl: number; roi: number; valueUsd: number;
+  byCat: Record<string, CatStat>; minHorizon: number; aiSummary: string | null;
+  samples: { question: string; category: string | null; win: 0 | 1; entry: number; pnl: number }[];
+};
+
+export type ListOpts = { category?: string; minN?: number; sigOnly?: boolean; limit?: number; minHorizon?: number };
+
+function toResolved(b: StoredBet): ResolvedBet {
+  return { conditionId: b.conditionId, category: (b.category as CatKey | null), horizonDays: b.horizonDays, win: b.win, entry: b.entry, pnl: b.pnl, cost: b.cost };
+}
 
 export async function listWallets(opts: ListOpts = {}): Promise<WalletRow[]> {
   await ensureSchema();
   const limit = Math.min(opts.limit ?? 100, 300);
-  const r = await libsqlClient.execute({
-    sql: `SELECT * FROM pm_smart_wallets ORDER BY (significant) DESC, mean_edge DESC LIMIT 500`,
-    args: [],
-  });
-  let rows = (r.rows as any[]).map(rowToWallet).filter((w) => w.n > 0);
+  const minHorizon = opts.minHorizon ?? 30;
   const minN = opts.minN ?? 1;
+
+  const grouped = await loadAllBetsGrouped();
+  const meta = await loadMeta();
+
+  let rows: WalletRow[] = [];
+  for (const [address, allBets] of grouped) {
+    const bets = allBets.filter((b) => b.horizonDays >= minHorizon);
+    if (!bets.length) continue;
+    const resolved = bets.map(toResolved);
+    const o = edgeStats(resolved, SIG_MIN_N);
+    const byCatStats = statsByCategory(resolved, SIG_MIN_N);
+    const byCat: Record<string, CatStat> = {};
+    for (const [k, s] of Object.entries(byCatStats)) {
+      byCat[k] = { n: s.n, meanEdge: s.meanEdge, tStat: s.tStat, significant: s.significant, winRate: s.winRate, totalPnl: s.totalPnl };
+    }
+    const samples = [...bets].sort((a, b) => b.cost - a.cost).slice(0, 6)
+      .map((b) => ({ question: b.question, category: b.category, win: b.win, entry: b.entry, pnl: b.pnl }));
+    const m = meta.get(address);
+    rows.push({
+      address, n: o.n, meanEdge: o.meanEdge, tStat: o.tStat, pValue: o.pValue, significant: o.significant,
+      winRate: o.winRate, totalPnl: o.totalPnl, roi: o.roi, valueUsd: m?.valueUsd ?? 0,
+      byCat, minHorizon, aiSummary: m?.aiSummary ?? null, samples,
+    });
+  }
+
   if (opts.category && opts.category !== 'all') {
+    const cat = opts.category;
     rows = rows
-      .filter((w) => w.byCat[opts.category!] && w.byCat[opts.category!].n >= minN)
-      .filter((w) => !opts.sigOnly || w.byCat[opts.category!].significant)
-      .sort((a, b) => {
-        const A = a.byCat[opts.category!], B = b.byCat[opts.category!];
-        return (B.significant ? 1 : 0) - (A.significant ? 1 : 0) || B.meanEdge - A.meanEdge;
-      });
+      .filter((w) => w.byCat[cat] && w.byCat[cat].n >= minN)
+      .filter((w) => !opts.sigOnly || w.byCat[cat].significant)
+      .sort((a, b) => (b.byCat[cat].significant ? 1 : 0) - (a.byCat[cat].significant ? 1 : 0) || b.byCat[cat].meanEdge - a.byCat[cat].meanEdge);
   } else {
     if (minN > 1) rows = rows.filter((w) => w.n >= minN);
     if (opts.sigOnly) rows = rows.filter((w) => w.significant);
@@ -128,29 +237,12 @@ export async function listWallets(opts: ListOpts = {}): Promise<WalletRow[]> {
   return rows.slice(0, limit);
 }
 
-function rowToWallet(x: any): WalletRow {
-  let byCat: WalletRow['byCat'] = {};
-  try { byCat = JSON.parse(x.by_cat || '{}'); } catch { /* ignore */ }
-  return {
-    address: String(x.address),
-    n: Number(x.n),
-    meanEdge: Number(x.mean_edge),
-    tStat: Number(x.t_stat),
-    pValue: Number(x.p_value),
-    significant: !!x.significant,
-    winRate: Number(x.win_rate),
-    totalPnl: Number(x.total_pnl),
-    roi: Number(x.roi),
-    valueUsd: Number(x.value_usd),
-    byCat,
-    minHorizon: Number(x.min_horizon),
-  };
-}
-
-// Сброс посчитанных кошельков и флагов scored (для пересчёта новым методом).
 export async function resetScored(): Promise<void> {
   await ensureSchema();
-  await libsqlClient.batch(['DELETE FROM pm_smart_wallets', 'UPDATE pm_wallet_candidates SET scored = 0'], 'write');
+  await libsqlClient.batch(
+    ['DELETE FROM pm_smart_wallets', 'DELETE FROM pm_wallet_bets', 'UPDATE pm_wallet_candidates SET scored = 0'],
+    'write',
+  );
 }
 
 export async function progress(): Promise<{ candidates: number; scored: number; smart: number }> {

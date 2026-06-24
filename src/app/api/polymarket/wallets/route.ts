@@ -17,6 +17,7 @@ export async function GET(req: Request) {
       category: sp.get('category') || 'all',
       minN: sp.get('minN') ? Number(sp.get('minN')) : undefined,
       sigOnly: sp.get('sigOnly') === '1',
+      minHorizon: sp.get('minHorizon') ? Number(sp.get('minHorizon')) : 30,
       limit: sp.get('limit') ? Number(sp.get('limit')) : 100,
     });
     return NextResponse.json({ wallets, progress: await progress() });
@@ -39,7 +40,7 @@ export async function POST(req: Request) {
       discoverMarkets: body.discoverMarkets ?? 40,
       holdersPer: body.holdersPer ?? 60,
       scoreWallets: body.scoreWallets ?? 60,
-      minHorizonDays: body.minHorizonDays ?? 7,
+      minHorizonDays: body.minHorizonDays ?? 30,
       minN: body.minN ?? 20,
       budgetMs: body.budgetMs ?? 45000,
     });

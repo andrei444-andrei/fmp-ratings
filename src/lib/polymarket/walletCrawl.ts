@@ -5,8 +5,8 @@
 // Каждый вызов ограничен по объёму и дописывает прогресс в Turso.
 
 import { topMarkets, marketHolders, resolvedBets, walletValue } from './walletData';
-import { edgeStats, statsByCategory, type ResolvedBet } from './walletStats';
-import { addCandidates, nextUnscored, markScored, upsertWallet, progress, type WalletRow } from './walletStore';
+import { edgeStats, statsByCategory } from './walletStats';
+import { addCandidates, nextUnscored, markScored, storeWalletBets, upsertWalletMeta, progress, type StoredBet } from './walletStore';
 
 async function mapLimit<T, R>(items: T[], limit: number, fn: (x: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
@@ -31,17 +31,10 @@ export type CrawlOpts = {
   budgetMs?: number;        // бюджет на скоринг (цикл пачками)
 };
 
-async function scoreOne(addr: string, minHorizon: number, minN: number, signal: AbortSignal) {
-  const allBets = await resolvedBets(addr, signal);
-  const bets: ResolvedBet[] = allBets.filter((b) => b.horizonDays >= minHorizon);
-  const overall = edgeStats(bets, minN);
-  const byCatStats = statsByCategory(bets, minN);
+async function scoreOne(addr: string, signal: AbortSignal) {
+  const allBets = await resolvedBets(addr, signal); // все разрешённые пари (любой горизонт)
   const value = await walletValue(addr, signal);
-  const byCat: WalletRow['byCat'] = {};
-  for (const [k, s] of Object.entries(byCatStats)) {
-    byCat[k] = { n: s.n, meanEdge: s.meanEdge, tStat: s.tStat, significant: s.significant, winRate: s.winRate, totalPnl: s.totalPnl };
-  }
-  return { addr, overall, byCat, value };
+  return { addr, allBets, value };
 }
 
 export async function crawlBatch(opts: CrawlOpts = {}): Promise<{
@@ -50,7 +43,7 @@ export async function crawlBatch(opts: CrawlOpts = {}): Promise<{
   smartFound: number;
   progress: { candidates: number; scored: number; smart: number };
 }> {
-  const minHorizon = opts.minHorizonDays ?? 7;
+  const minHorizon = opts.minHorizonDays ?? 30;
   const minN = opts.minN ?? 20;
   const maxScore = opts.scoreWallets ?? 60;
   const budgetMs = opts.budgetMs ?? 45000;
@@ -77,15 +70,28 @@ export async function crawlBatch(opts: CrawlOpts = {}): Promise<{
       const want = Math.min(15, maxScore - scored);
       const batch = await nextUnscored(want);
       if (!batch.length) break;
-      const results = await mapLimit(batch, 6, (a) => scoreOne(a, minHorizon, minN, ctrl.signal));
+      const results = await mapLimit(batch, 6, (a) => scoreOne(a, ctrl.signal));
       for (const r of results) {
         if (!r) continue;
-        if (r.overall.n === 0) continue; // нет разрешённых пари — не засоряем базу
-        if (r.overall.significant) smartFound++;
-        await upsertWallet({
-          address: r.addr, n: r.overall.n, meanEdge: r.overall.meanEdge, tStat: r.overall.tStat,
-          pValue: r.overall.pValue, significant: r.overall.significant, winRate: r.overall.winRate,
-          totalPnl: r.overall.totalPnl, roi: r.overall.roi, valueUsd: r.value, byCat: r.byCat, minHorizon,
+        if (!r.allBets.length) continue; // нет разрешённых пари вообще — пропускаем
+        // храним сами события (для пересчёта под любой горизонт и AI-summary)
+        const stored: StoredBet[] = r.allBets.map((b) => ({
+          conditionId: b.conditionId, question: b.question ?? '', category: b.category,
+          horizonDays: b.horizonDays, entry: b.entry, win: b.win, pnl: b.pnl, cost: b.cost, endDate: b.endDate ?? null,
+        }));
+        await storeWalletBets(r.addr, stored);
+        // агрегат на дефолтном горизонте — в мету (значение + быстрый кэш)
+        const bets = r.allBets.filter((b) => b.horizonDays >= minHorizon);
+        const o = edgeStats(bets, minN);
+        const byCatStats = statsByCategory(bets, minN);
+        const byCat: Record<string, any> = {};
+        for (const [k, s] of Object.entries(byCatStats)) {
+          byCat[k] = { n: s.n, meanEdge: s.meanEdge, tStat: s.tStat, significant: s.significant, winRate: s.winRate, totalPnl: s.totalPnl };
+        }
+        if (o.significant) smartFound++;
+        await upsertWalletMeta(r.addr, r.value, {
+          n: o.n, meanEdge: o.meanEdge, tStat: o.tStat, pValue: o.pValue, significant: o.significant,
+          winRate: o.winRate, totalPnl: o.totalPnl, roi: o.roi, byCat, minHorizon,
         });
       }
       await markScored(batch);
