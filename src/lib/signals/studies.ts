@@ -273,6 +273,43 @@ def meta_of(tgt, px, bench, cleaned=0):
             'last': str(pd.Timestamp(dates[-1]).date()) if dates else '',
             'benchmark': bench, 'has_bench': bool(bench in px.columns), 'cleaned': int(cleaned)}
 
+# ─── Парные хелперы (switch / switch_auto): «когда держать A вместо B» ───
+# Цель = форвардная доходность A минус B (выигрыш от переключения). Условие — область фактора,
+# посчитанного на состоянии СУБЪЕКТА: 'a' (кандидат), 'b' (инкумбент) или 'mkt' (рынок=бенчмарк).
+def _subj_sym(subject, A, B, MKT):
+    return A if subject == 'a' else (B if subject == 'b' else MKT)
+
+def subj_fval(px, sym, MKT, fid, param, skip=0):
+    # Фактор на одном инструменте sym; бенчмарк = рынок (для xbench/xvol). sym==MKT → без бенч-фактора.
+    if sym not in px.columns:
+        return pd.Series(dtype=float)
+    c = px[sym]
+    has_b = (MKT in px.columns) and (sym != MKT)
+    bc = px[MKT] if has_b else None
+    return factor_series(c, bc, fid, int(param), has_b, int(skip))
+
+def pair_target(px, A, B, HZ, step):
+    # Одна строка на (непересекающуюся) дату: forward(A) − forward(B) в % на каждом горизонте.
+    px = px.sort_index()
+    if A not in px.columns or B not in px.columns:
+        return pd.DataFrame()
+    a = px[A]; b = px[B]
+    keep = px.index[::max(1, int(step))]
+    d = pd.DataFrame(index=px.index)
+    for h in HZ:
+        d['t_' + str(h)] = ((a.shift(-h) / a) - (b.shift(-h) / b)) * 100.0
+    d = d.reindex(keep)
+    d['date'] = d.index
+    return _winsorize_targets(d.reset_index(drop=True), HZ)
+
+def pair_meta(px, A, B, MKT, cleaned, tg):
+    dts = sorted(pd.to_datetime(px.index).unique())
+    return {'a': A, 'b': B, 'market': MKT, 'has_market': bool(MKT in px.columns),
+            'periods': int(tg['date'].nunique()) if not tg.empty else 0,
+            'first': str(pd.Timestamp(dts[0]).date()) if dts else '',
+            'last': str(pd.Timestamp(dts[-1]).date()) if dts else '',
+            'cleaned': int(cleaned)}
+
 def _g(x):
     try:
         xf = float(x)
@@ -939,6 +976,128 @@ async def main():
                 'intersection': ({'mean': _f(inter['mean']), 't': _f(inter['t']), 'n': inter['n'], 'hit': _f(inter['hit'])} if inter else None),
                 'coactivation': co, 'grid': grid2, 'grid0': CFG['grid0'], 'grid1': CFG['grid1'],
                 'tun_idx': tun_idx, 'autotune': autotune, 'meta': meta}
+
+    # switch — ручной свип ОДНОГО фактора (на выбранном субъекте) для пары A/B: param × порог →
+    # условная средняя forward(A−B), избыток над безусловной (baseline), t, hit, значимость после FDR.
+    if mode == 'switch':
+        A = str(CFG['a']).upper(); B = str(CFG['b']).upper(); MKT = bench
+        fid = CFG['factor']; subject = CFG.get('subject', 'mkt'); side = CFG['side']
+        params = [int(p) for p in CFG['params']]
+        thresholds = sorted(float(t) for t in CFG['thresholds'])
+        skip = int(CFG.get('skip', 0)); alpha = float(CFG.get('fdrAlpha', 0.1))
+        sym = _subj_sym(subject, A, B, MKT)
+        tg = pair_target(px, A, B, HZ, H)
+        if tg.empty or tg['date'].nunique() < 10:
+            return {'error': 'Недостаточно истории для пары A/B (нужны обе бумаги).'}
+        base = pstat(tg, maincol)
+        decay = [{'h': h, 'mean': _f(float(tg['t_' + str(h)].mean()))} for h in HZ]
+        grid = []; pvals = []
+        for p in params:
+            fserie = subj_fval(px, sym, MKT, fid, p, skip).reindex(pd.to_datetime(tg['date']))
+            fvs = pd.Series(fserie.values)
+            for t in thresholds:
+                reg = {'side': side, 'threshold': t}
+                mask = region_mask(fvs, reg).fillna(False).values
+                sub = tg[mask]
+                st = pstat(sub, maincol)
+                cell = {'param': p, 'col': t, 'region': reg}
+                if st:
+                    cell.update({'n': st['n'], 'periods': st['periods'], 'mean': _f(st['mean']),
+                                 't': _f(st['t']), 'hit': _f(st['hit']),
+                                 'edge': _f(st['mean'] - base['mean']) if base else None,
+                                 'years': yearly_of(sub, maincol)})
+                    pvals.append((str(p) + ':' + str(t), st['p']))
+                else:
+                    cell.update({'n': int(len(sub)), 'periods': 0, 'mean': None, 't': None,
+                                 'hit': None, 'edge': None, 'years': []})
+                grid.append(cell)
+        sigset = _bh(pvals, alpha)
+        for cell in grid:
+            cell['sig'] = (str(cell['param']) + ':' + str(cell['col'])) in sigset
+        return {'mode': 'switch', 'a': A, 'b': B, 'market': MKT, 'subject': subject, 'subjectSym': sym,
+                'factor': fid, 'side': side, 'horizon': H, 'skip': skip, 'hz': HZ, 'params': params,
+                'cols': thresholds, 'decay': decay, 'fdrAlpha': alpha,
+                'baseline': _f(base['mean']) if base else None, 'baseHit': _f(base['hit']) if base else None,
+                'baseT': _f(base['t']) if base else None, 'baseN': base['n'] if base else 0,
+                'grid': grid, 'meta': pair_meta(px, A, B, MKT, n_cleaned, tg)}
+
+    # switch_auto — авто-скан связей «A vs B»: перебор субъект × фактор × период × сторона × порог.
+    # АНТИ-ПЕРЕОБУЧЕНИЕ: отбор условий на train (первые 70% дат) → подтверждение на holdout test (30%,
+    # для отбора не использовался) + FDR (Бенджамини-Хохберг) по всем условиям. Ранг по |edge| на test.
+    if mode == 'switch_auto':
+        A = str(CFG['a']).upper(); B = str(CFG['b']).upper(); MKT = bench
+        subjects = list(CFG.get('subjects') or ['a', 'b', 'mkt'])
+        grids = CFG.get('grids') or []
+        minN = int(CFG.get('minN', 24)); topK = int(CFG.get('topK', 12)); alpha = float(CFG.get('fdrAlpha', 0.1))
+        tg = pair_target(px, A, B, HZ, H)
+        if tg.empty or tg['date'].nunique() < 30:
+            return {'error': 'Мало истории для авто-скана: нужно >=30 непересекающихся периодов пары A/B.'}
+        dts = sorted(pd.to_datetime(tg['date']).unique())
+        split = dts[int(len(dts) * 0.7)]
+        is_train = (pd.to_datetime(tg['date']) < split).values
+        base_tr = pstat(tg[is_train], maincol); base_te = pstat(tg[~is_train], maincol); base_all = pstat(tg, maincol)
+        if not base_tr or not base_te:
+            return {'error': 'Недостаточно данных в train/test разбиении — расширьте окно лет.'}
+        cands = []
+        for subject in subjects:
+            sym = _subj_sym(subject, A, B, MKT)
+            if sym not in px.columns:
+                continue
+            for g in grids:
+                fid = g['factor']
+                if subject == 'mkt' and fid in ('xbench', 'xvol'):
+                    continue   # превышение бенчмарка рынком над самим собой = 0 (вырожденно)
+                for p in [int(x) for x in g['params']]:
+                    fserie = subj_fval(px, sym, MKT, fid, p, 0).reindex(pd.to_datetime(tg['date']))
+                    fvs = pd.Series(fserie.values)
+                    for sd in ('high', 'low'):
+                        for t in [float(x) for x in g['thresholds']]:
+                            reg = {'side': sd, 'threshold': t}
+                            mask = region_mask(fvs, reg).fillna(False).values
+                            st_tr = pstat(tg[mask & is_train], maincol)
+                            if not st_tr or st_tr['n'] < minN:
+                                continue
+                            cands.append({'subject': subject, 'sym': sym, 'factor': fid, 'param': p,
+                                          'side': sd, 'threshold': t, 'mask': mask, 'st_tr': st_tr})
+        if not cands:
+            return {'mode': 'switch_auto', 'a': A, 'b': B, 'market': MKT, 'horizon': H, 'subjects': subjects,
+                    'split': str(pd.Timestamp(split).date()),
+                    'baseline_all': _f(base_all['mean']) if base_all else None,
+                    'baseline_test': _f(base_te['mean']) if base_te else None,
+                    'baseHit_all': _f(base_all['hit']) if base_all else None,
+                    'minN': minN, 'fdrAlpha': alpha, 'topK': topK, 'n_scanned': 0, 'n_flagged': 0,
+                    'rules': [], 'meta': pair_meta(px, A, B, MKT, n_cleaned, tg)}
+        sigset = _bh([(i, c['st_tr']['p']) for i, c in enumerate(cands)], alpha)
+        rules = []
+        for i, c in enumerate(cands):
+            mask = c['mask']; st_tr = c['st_tr']
+            st_te = pstat(tg[mask & ~is_train], maincol)
+            st_all = pstat(tg[mask], maincol)
+            yrs = yearly_of(tg[mask], maincol)
+            tr_edge = st_tr['mean'] - base_tr['mean']
+            te_edge = (st_te['mean'] - base_te['mean']) if st_te else None
+            pos_years = int(sum(1 for y in yrs if (y.get('mean') or 0) > 0))
+            rules.append({'subject': c['subject'], 'sym': c['sym'], 'factor': c['factor'], 'param': c['param'],
+                          'side': c['side'], 'threshold': c['threshold'],
+                          'tr_mean': _f(st_tr['mean']), 'tr_edge': _f(tr_edge), 'tr_n': st_tr['n'],
+                          'te_mean': _f(st_te['mean']) if st_te else None, 'te_edge': _f(te_edge),
+                          'te_n': st_te['n'] if st_te else 0, 'te_t': _f(st_te['t']) if st_te else None,
+                          'all_mean': _f(st_all['mean']) if st_all else None, 'all_t': _f(st_all['t']) if st_all else None,
+                          'all_hit': _f(st_all['hit']) if st_all else None, 'all_n': st_all['n'] if st_all else 0,
+                          'fdr': bool(i in sigset), 'pos_years': pos_years, 'n_years': len(yrs),
+                          'years': yrs, 'hold': ('A' if (te_edge or 0) > 0 else 'B')})
+        # Робастные: прошли FDR, есть оценка на test, знак edge совпал train↔test, ≥8 наблюдений на test.
+        robust = [r for r in rules if r['fdr'] and r['te_edge'] is not None
+                  and ((r['te_edge'] > 0) == (r['tr_edge'] > 0)) and r['te_n'] >= 8]
+        robust.sort(key=lambda r: -abs(r['te_edge']))
+        return {'mode': 'switch_auto', 'a': A, 'b': B, 'market': MKT, 'horizon': H, 'subjects': subjects,
+                'split': str(pd.Timestamp(split).date()),
+                'baseline_all': _f(base_all['mean']) if base_all else None,
+                'baseline_test': _f(base_te['mean']) if base_te else None,
+                'baseHit_all': _f(base_all['hit']) if base_all else None,
+                'n_scanned': len(cands), 'n_flagged': int(sum(1 for r in rules if r['fdr'])),
+                'minN': minN, 'fdrAlpha': alpha, 'topK': topK,
+                'rules': robust[:topK], 'meta': pair_meta(px, A, B, MKT, n_cleaned, tg)}
 
     return {'error': 'Неизвестный режим: ' + str(mode)}
 

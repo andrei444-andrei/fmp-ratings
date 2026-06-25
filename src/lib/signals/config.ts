@@ -1,7 +1,7 @@
 // Нормализация/валидация конфига исследования (недоверенный ввод с клиента → безопасный объект
 // для Python). Три режима: factor (свип), signal (событийный анализ), combine (комбинация).
 
-import { FACTOR_BY_ID, supportsSkip, type FactorId, type Side, type SignalDef } from './factors';
+import { FACTORS, FACTOR_BY_ID, supportsSkip, type FactorId, type Side, type SignalDef } from './factors';
 
 // Допускаем иностранные тикеры: ведущая цифра (Токио 7203.T), суффикс биржи (.WA, .HK), до 14 симв.
 const TICKER = /^[A-Z0-9][A-Z0-9.\-]{0,13}$/;
@@ -109,10 +109,10 @@ function normFilter(raw: any): Record<string, unknown> | null {
   return { factor: f.id, param, side, threshold, op, skip };
 }
 
-export type StudyConfig = Record<string, unknown> & { mode: 'factor' | 'signal' | 'combine' | 'setops' | 'cellobs' | 'ma' | 'maops' | 'naaim' | 'corr' };
+export type StudyConfig = Record<string, unknown> & { mode: 'factor' | 'signal' | 'combine' | 'setops' | 'cellobs' | 'ma' | 'maops' | 'naaim' | 'corr' | 'switch' | 'switch_auto' };
 
 export function normalizeStudyConfig(body: any): StudyConfig {
-  const mode = ['factor', 'signal', 'combine', 'setops', 'cellobs', 'ma', 'maops', 'naaim', 'corr'].includes(body?.mode) ? body.mode : 'factor';
+  const mode = ['factor', 'signal', 'combine', 'setops', 'cellobs', 'ma', 'maops', 'naaim', 'corr', 'switch', 'switch_auto'].includes(body?.mode) ? body.mode : 'factor';
   const benchmark = (typeof body?.benchmark === 'string' && body.benchmark.trim() ? body.benchmark : 'SPY')
     .toUpperCase()
     .trim();
@@ -242,6 +242,61 @@ export function normalizeStudyConfig(body: any): StudyConfig {
     const region = normRegion(body?.cell?.region, bins);
     const year = Math.round(clampNum(body?.year, 0, 1900, 2100));
     return { ...base, factor: f.id, bins, skip, cell: region ? { param, region } : null, year };
+  }
+
+  // switch / switch_auto — «когда держать A вместо B». Цель = форвардная доходность A − B.
+  // Условие (фактор) считается на состоянии субъекта: 'a' (кандидат), 'b' (инкумбент) или 'mkt' (рынок=бенчмарк).
+  if (mode === 'switch' || mode === 'switch_auto') {
+    const normTk = (v: unknown, dflt: string): string => {
+      const s = String(v ?? '').toUpperCase().trim();
+      return TICKER.test(s) ? s : dflt;
+    };
+    const a = normTk(body?.a, '');
+    const b = normTk(body?.b, '');
+    // Вселенная для загрузки = обе бумаги пары; рынок (benchmark) main() добавит сам.
+    const swBase = { ...base, universe: [a, b].filter(Boolean), a, b };
+
+    if (mode === 'switch') {
+      const f = FACTOR_BY_ID[String(body?.factor)] || FACTOR_BY_ID.momentum;
+      const subject = body?.subject === 'a' || body?.subject === 'b' || body?.subject === 'mkt' ? body.subject : 'mkt';
+      const side: Side = body?.side === 'low' ? 'low' : body?.side === 'high' ? 'high' : f.defaultSide === 'low' ? 'low' : 'high';
+      const params = normNumberList(body?.params, f.defaultParams, 6).filter((p) => f.paramOptions.includes(p));
+      const thresholds = normNumberList(body?.thresholds, f.defaultThresholds, 40);
+      const skip = supportsSkip(f.id) ? Math.round(clampNum(body?.skip, 0, 0, 60)) : 0;
+      return {
+        ...swBase,
+        factor: f.id,
+        subject,
+        side,
+        params: params.length ? params : f.defaultParams,
+        thresholds,
+        skip,
+        fdrAlpha: clampNum(body?.fdrAlpha, 0.1, 0.01, 0.5),
+      };
+    }
+
+    // switch_auto — полный скан фактор × период × порог × сторона на выбранных субъектах.
+    // Защита от переобучения: отбор на train (70%) + подтверждение на holdout test (30%) + FDR.
+    const allSubjects = ['a', 'b', 'mkt'];
+    const subjects = Array.isArray(body?.subjects) ? allSubjects.filter((s) => body.subjects.includes(s)) : allSubjects;
+    const allFactorIds = FACTORS.map((f) => f.id as string);
+    const defaultScan = ['momentum', 'xbench', 'xvol', 'vol', 'dist_ath', 'sma_dist'];
+    const picked = Array.isArray(body?.factors) ? allFactorIds.filter((f) => body.factors.includes(f)) : defaultScan;
+    const factors = picked.length ? picked : defaultScan;
+    // Сетки порогов/периодов берём из реестра факторов (единый источник правды) и передаём в Python.
+    const grids = factors.map((fid) => {
+      const f = FACTOR_BY_ID[fid];
+      return { factor: f.id, params: f.defaultParams, thresholds: f.defaultThresholds, defaultSide: f.defaultSide };
+    });
+    return {
+      ...swBase,
+      subjects: subjects.length ? subjects : allSubjects,
+      factors,
+      grids,
+      minN: Math.round(clampNum(body?.minN, 24, 5, 5000)),
+      topK: Math.round(clampNum(body?.topK, 12, 3, 50)),
+      fdrAlpha: clampNum(body?.fdrAlpha, 0.1, 0.01, 0.5),
+    };
   }
 
   // combine

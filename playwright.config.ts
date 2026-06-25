@@ -15,6 +15,10 @@ export default defineConfig({
   use: {
     baseURL,
     trace: 'on-first-retry',
+    // Локально/в облачном окружении можно указать предустановленный Chromium (когда ревизия бандла
+    // Playwright не совпадает): PW_CHROMIUM_PATH=/opt/pw-browsers/chromium. В CI переменная не задана —
+    // поведение по умолчанию не меняется.
+    launchOptions: process.env.PW_CHROMIUM_PATH ? { executablePath: process.env.PW_CHROMIUM_PATH } : {},
   },
   projects: [
     { name: 'desktop', use: { ...devices['Desktop Chrome'] } },
