@@ -45,6 +45,17 @@ test.describe('Switch /switch', () => {
     }).toPass({ timeout: 5000 });
   });
 
+  test('авто-скан: «Поисковый» уровень / кандидаты дают видимый результат (не тупик)', async ({ page }) => {
+    await page.goto('/switch');
+    await setPair(page);
+    await page.getByRole('tab', { name: 'Поисковый' }).click(); // ослабляем строгость отбора
+    await page.getByTestId('run-switch').click();
+    const res = page.getByTestId('switch-auto-result');
+    await expect(res).toBeVisible({ timeout: 180000 });
+    // Либо робастные правила (loose), либо кандидаты-лиды — в любом случае есть карточки, а не «совсем ничего».
+    await expect(page.getByTestId('switch-rule').first()).toBeVisible({ timeout: 5000 });
+  });
+
   test('ручной свип: строит карту период × порог', async ({ page }) => {
     await page.goto('/switch');
     await setPair(page);

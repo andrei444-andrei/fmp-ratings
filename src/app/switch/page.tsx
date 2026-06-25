@@ -126,6 +126,7 @@ export default function SwitchPage() {
   const [scanFactors, setScanFactors] = useState<FactorId[]>([...SCAN_FACTORS]);
   const [minN, setMinN] = useState(24);
   const [topK, setTopK] = useState(12);
+  const [strict, setStrict] = useState<'strict' | 'medium' | 'loose'>('strict'); // уровень отбора робастных правил
 
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState('');
@@ -145,7 +146,7 @@ export default function SwitchPage() {
       const thresholds = thrStr.trim() ? parseList(thrStr) : fdef.defaultThresholds;
       return { ...common, mode: 'switch', factor, subject, side, params, thresholds };
     }
-    return { ...common, mode: 'switch_auto', subjects, factors: scanFactors, minN, topK };
+    return { ...common, mode: 'switch_auto', subjects, factors: scanFactors, minN, topK, strict };
   }
 
   async function run() {
@@ -313,6 +314,23 @@ export default function SwitchPage() {
                       />
                     </Field>
                   </div>
+                  <Field>
+                    <Label>Строгость отбора</Label>
+                    <SegmentedControl<'strict' | 'medium' | 'loose'>
+                      fullWidth
+                      value={strict}
+                      onChange={setStrict}
+                      options={[
+                        { value: 'strict', label: 'Строгий' },
+                        { value: 'medium', label: 'Средний' },
+                        { value: 'loose', label: 'Поисковый' },
+                      ]}
+                    />
+                    <p className="text-[11px] text-ink-3">
+                      Строгий — FDR-поправка на множественность (по умолч., мало ложных). Средний — значимость на train p&lt;0.05 без поправки.
+                      Поисковый — только совпадение знака на train↔test (лиды, не правила). Меньше факторов в скане → FDR мягче.
+                    </p>
+                  </Field>
                 </>
               ) : (
                 <>
@@ -440,6 +458,7 @@ function YearChips({ pos, total }: { pos: number; total: number }) {
 
 function AutoResult({ data }: { data: any }) {
   const rules: any[] = data.rules || [];
+  const candidates: any[] = data.candidates || [];
   const holdA = rules.filter((r) => r.hold === 'A');
   const holdB = rules.filter((r) => r.hold === 'B');
 
@@ -472,15 +491,35 @@ function AutoResult({ data }: { data: any }) {
       </Card>
 
       {rules.length === 0 ? (
-        <Card>
-          <CardContent className="py-10 text-center" data-testid="switch-auto-empty">
-            <p className="text-ink-2">Устойчивых правил не найдено.</p>
-            <p className="mt-1 text-sm text-ink-3">
-              Это честный результат: после out-of-sample проверки и поправки на множественные сравнения ни одно условие
-              не показало стабильного преимущества. Попробуйте другой горизонт, шире окно лет или другую пару.
-            </p>
-          </CardContent>
-        </Card>
+        candidates.length ? (
+          <div className="flex flex-col gap-3" data-testid="switch-auto-candidates">
+            <Card>
+              <CardContent className="py-4">
+                <p className="font-semibold text-ink-2">Робастных правил нет — показаны кандидаты-лиды.</p>
+                <p className="mt-1 text-sm text-ink-3">
+                  Топ по |преимуществу на test|, но они <b>не прошли</b>{' '}
+                  {data.strict === 'medium' ? 'порог значимости на train' : data.strict === 'loose' ? 'отбор' : 'FDR-поправку на множественность'} —
+                  это лиды для проверки, не подтверждённые правила (риск переобучения). Чтобы получить робастные:
+                  сузьте «Факторы в скане» (меньше тестов → FDR мягче), расширьте окно лет/смените горизонт или ослабьте «Строгость отбора».
+                </p>
+              </CardContent>
+            </Card>
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+              <RuleColumn title={`→ Скорее ${data.a}`} hint="кандидат (не подтверждён OOS+FDR)" rules={candidates.filter((r: any) => r.hold === 'A')} tone="up" hz={data.horizon} />
+              <RuleColumn title={`→ Скорее ${data.b}`} hint="кандидат (не подтверждён OOS+FDR)" rules={candidates.filter((r: any) => r.hold === 'B')} tone="down" hz={data.horizon} />
+            </div>
+          </div>
+        ) : (
+          <Card>
+            <CardContent className="py-10 text-center" data-testid="switch-auto-empty">
+              <p className="text-ink-2">Устойчивых правил не найдено.</p>
+              <p className="mt-1 text-sm text-ink-3">
+                Даже среди кандидатов нет условий с достаточной выборкой на test. Попробуйте другой горизонт, шире окно лет,
+                меньше «Мин. наблюдений» или другую пару.
+              </p>
+            </CardContent>
+          </Card>
+        )
       ) : (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           <RuleColumn title={`→ Держать ${data.a}`} hint={`когда выгоднее ${data.a}, чем ${data.b}`} rules={holdA} tone="up" hz={data.horizon} />
