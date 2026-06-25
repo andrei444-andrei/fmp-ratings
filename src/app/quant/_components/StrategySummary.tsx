@@ -110,6 +110,7 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
   const [allocLoading, setAllocLoading] = useState(false);
   const [allocErr, setAllocErr] = useState<string | null>(null);
   const [attrMode, setAttrMode] = useState<'contrib' | 'excess'>('contrib'); // вклад / Δ к SPY по годам
+  const [compMode, setCompMode] = useState<'all' | 'exBench'>('all'); // состав: все доли / без базового SPY
   async function loadAlloc(algoId: number, force = false) {
     setAllocLoading(true); setAllocErr(null);
     try {
@@ -425,31 +426,45 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
                 ) : !alloc || !alloc.years.length ? (
                   <div className="qc-state">Недостаточно данных по сделкам для оценки состава.</div>
                 ) : (() => {
-                  const cols = alloc.symbols.slice(0, ALLOC_TOPN);
+                  const ex = compMode === 'exBench';
+                  // в режиме «без SPY» исключаем бенч из колонок и нормируем на активный рукав
+                  const cols = alloc.symbols.filter(s => !ex || s !== benchName).slice(0, ALLOC_TOPN);
                   return (
                     <>
+                      <div className="qc-panel-h" style={{ marginTop: 2, paddingTop: 0 }}>
+                        <span className="c">{ex ? `доли активных позиций (без базового ${benchName})` : 'доли от всего портфеля'}</span>
+                        <span className="qc-spacer" />
+                        <span className="qc-seg">
+                          <button className={!ex ? 'on' : ''} onClick={() => setCompMode('all')}>Все доли</button>
+                          <button className={ex ? 'on' : ''} onClick={() => setCompMode('exBench')}>Без {benchName}</button>
+                        </span>
+                      </div>
                       <div className="qc-tblwrap" style={{ border: 0 }}>
                         <table className="qc-heat">
                           <thead><tr>
                             <th className="lbl">Год</th>
                             {cols.map(s => <th key={s}>{s}</th>)}
                             <th>Прочее</th>
-                            <th className="tot">Кэш</th>
+                            <th className="tot">{ex ? benchName : 'Кэш'}</th>
                           </tr></thead>
                           <tbody>
                             {alloc.years.map(y => {
+                              const bench = y.weights[benchName] || 0;
+                              // база нормировки: «без SPY» → активный рукав (всё кроме бенча и кэша); иначе gross (=1)
+                              const activeSum = ex ? Math.max(0, (1 - y.cash) - bench) : 1;
+                              const norm = (w: number) => (ex ? (activeSum > 1e-9 ? w / activeSum : 0) : w);
                               let sumTop = 0;
                               for (const s of cols) sumTop += y.weights[s] || 0;
-                              const other = Math.max(0, 1 - y.cash - sumTop);
+                              const otherRaw = ex ? Math.max(0, activeSum - sumTop) : Math.max(0, 1 - y.cash - sumTop);
                               return (
                                 <tr key={y.year}>
                                   <td className="lbl">{y.year}</td>
                                   {cols.map(s => {
-                                    const w = y.weights[s] || 0;
+                                    const w = norm(y.weights[s] || 0);
                                     return <td key={s} style={{ background: heatAlloc(w) }} title={`${s}: ${(w * 100).toFixed(1)}%`}>{wpct(w)}</td>;
                                   })}
-                                  <td style={{ background: heatAlloc(other) }} title={`прочие инструменты: ${(other * 100).toFixed(1)}%`}>{wpct(other)}</td>
-                                  <td className="tot" title={`вне рынка: ${(y.cash * 100).toFixed(1)}%`}>{wpct(y.cash)}</td>
+                                  <td style={{ background: heatAlloc(norm(otherRaw)) }} title={`прочие: ${(norm(otherRaw) * 100).toFixed(1)}%`}>{wpct(norm(otherRaw))}</td>
+                                  <td className="tot" title={ex ? `${benchName} (база): ${(bench * 100).toFixed(1)}% от портфеля` : `вне рынка: ${(y.cash * 100).toFixed(1)}%`}>{wpct(ex ? bench : y.cash)}</td>
                                 </tr>
                               );
                             })}
@@ -457,8 +472,10 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
                         </table>
                       </div>
                       <div className="qc-alloc-note">
-                        Оценка: позиции реконструированы из ордеров и оценены по ценам на конец каждого месяца (FMP), доли усреднены по году.
-                        Не учтены плечо/маржа, кэш-остаток и реинвест дивидендов; шорты — по модулю экспозиции.
+                        {ex
+                          ? `Доли активных позиций нормированы к активному рукаву (без базового ${benchName}) — видно, какие тикеры реально тянут портфель в каждый год. Последняя колонка «${benchName}» — доля базы от всего портфеля.`
+                          : `Оценка: позиции реконструированы из ордеров и оценены по ценам на конец каждого месяца (FMP), доли усреднены по году.`}
+                        {' '}Не учтены плечо/маржа, кэш-остаток и реинвест дивидендов; шорты — по модулю экспозиции.
                         {alloc.approx && ' Часть инструментов без рыночной цены оценена по последней цене сделки (приблизительно).'}
                         {alloc.capped && ' Ордера обрезаны лимитом — состав может быть неполным.'}
                       </div>
