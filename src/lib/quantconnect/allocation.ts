@@ -35,6 +35,8 @@ export type MonthBreadth = {
   ym: string;   // 'YYYY-MM'
   n: number;    // число активных позиций (вес ≥1% gross; 0 = в кэше)
   top1: number; // доля крупнейшей позиции (0..1) — мера перекоса
+  nEx: number;   // активных позиций БЕЗ базы (SPY) — размер активного рукава
+  top1ex: number; // доля крупнейшего не-SPY актива от активного рукава (0..1) — перекос в один тикер
 };
 export type AllocationResult = {
   id: number;
@@ -104,7 +106,8 @@ function monthEnds(firstMs: number, lastMs: number): { ms: number; year: number 
   return out;
 }
 
-export async function getStrategyAllocation(id: number, force = false, endIso?: string): Promise<AllocationResult> {
+export async function getStrategyAllocation(id: number, force = false, endIso?: string, bench = 'SPY'): Promise<AllocationResult> {
+  const benchSym = String(bench || 'SPY').toUpperCase();
   const tr = await getStrategyTrades(id, force);
   const empty = (error: string | null): AllocationResult => ({ id, name: tr.name, years: [], symbols: [], attribution: [], attributionByYear: [], breadth: [], approx: false, capped: tr.capped, error });
   if (tr.error) return empty(tr.error);
@@ -240,14 +243,20 @@ export async function getStrategyAllocation(id: number, force = false, endIso?: 
     return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
   };
   const breadth: MonthBreadth[] = snapshots.map(s => {
-    if (s.gross <= 0) return { ym: ymOf(s.ms), n: 0, top1: 0 };
-    let n = 0, top1 = 0;
-    for (const sv of s.signed.values()) {
-      const w = Math.abs(sv) / s.gross;
+    if (s.gross <= 0) return { ym: ymOf(s.ms), n: 0, top1: 0, nEx: 0, top1ex: 0 };
+    let n = 0, top1 = 0, nEx = 0, exGross = 0, exMax = 0;
+    for (const [sym, sv] of s.signed) {
+      const a = Math.abs(sv);
+      const w = a / s.gross;
       if (w >= 0.01) n++;
       if (w > top1) top1 = w;
+      if (String(sym).toUpperCase() !== benchSym) { // активный рукав — без базы (SPY)
+        exGross += a;
+        if (a > exMax) exMax = a;
+        if (w >= 0.01) nEx++;
+      }
     }
-    return { ym: ymOf(s.ms), n, top1 };
+    return { ym: ymOf(s.ms), n, top1, nEx, top1ex: exGross > 0 ? exMax / exGross : 0 };
   });
 
   return { id, name: tr.name, years, symbols, attribution, attributionByYear, breadth, approx, capped: tr.capped, error: null };

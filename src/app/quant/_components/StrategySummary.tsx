@@ -118,7 +118,8 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
       // а не до последнего ордера (позиции после последней сделки держатся).
       const dly = (series?.algos || []).find(a => a.id === algoId)?.daily;
       const end = dly && dly.length ? `&end=${dly[dly.length - 1].d}` : '';
-      const r: AllocationResult = await fetch(`/api/quantconnect/allocation?id=${algoId}${force ? '&force=1' : ''}${end}`).then(res => res.json());
+      const bench = `&bench=${encodeURIComponent(series?.benchmark?.name || 'SPY')}`;
+      const r: AllocationResult = await fetch(`/api/quantconnect/allocation?id=${algoId}${force ? '&force=1' : ''}${end}${bench}`).then(res => res.json());
       if (r.error) setAllocErr(r.error);
       setAlloc(r); setAllocFor(algoId);
     } catch (e: any) { setAllocErr(e.message); }
@@ -578,9 +579,9 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
                               Концентрация портфеля <span className="c">сколько позиций держится и насколько перекошено</span>
                             </div>
                             <div className="qc-alloc-note" style={{ marginTop: 0, marginBottom: 12 }}>
-                              Активных позиций: в среднем <b>{b.avgN.toFixed(1)}</b> · месяцев с одной позицией:{' '}
-                              <b>{(b.pctSingle * 100).toFixed(0)}%</b> · в кэше: <b>{(b.pctCash * 100).toFixed(0)}%</b> ·
-                              {' '}макс. доля одной позиции: <b>{(b.maxTop1 * 100).toFixed(0)}%</b>
+                              Активных позиций: в среднем <b>{b.avgN.toFixed(1)}</b> (без {benchName}: <b>{b.avgNex.toFixed(1)}</b>) ·
+                              {' '}месяцев, где один актив без {benchName} занимал {'>'}50% места: <b>{(b.pctDom * 100).toFixed(0)}%</b> ·
+                              {' '}в кэше: <b>{(b.pctCash * 100).toFixed(0)}%</b>
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxWidth: 560 }}>
                               {b.dist.map(d => (
@@ -595,21 +596,21 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
                             </div>
                             <div className="qc-tblwrap" style={{ border: 0, marginTop: 14 }}>
                               <table className="qc-heat">
-                                <thead><tr><th className="lbl">Год</th><th>Позиций (ср.)</th><th>% мес. с 1 позицией</th><th>Макс. доля топ-1</th></tr></thead>
+                                <thead><tr><th className="lbl">Год</th><th>Позиций (ср.)</th><th>Без {benchName} (ср.)</th><th>Доминанта {'>'}50% без {benchName}, % мес.</th></tr></thead>
                                 <tbody>
                                   {b.perYear.map(y => (
                                     <tr key={y.year}>
                                       <td className="lbl">{y.year}</td>
                                       <td>{y.avgN.toFixed(1)}</td>
-                                      <td style={{ background: heatRed(y.pctSingle) }}>{(y.pctSingle * 100).toFixed(0)}%</td>
-                                      <td style={{ background: heatRed(y.maxTop1) }}>{(y.maxTop1 * 100).toFixed(0)}%</td>
+                                      <td>{y.avgNex.toFixed(1)}</td>
+                                      <td style={{ background: heatRed(y.pctDom) }}>{(y.pctDom * 100).toFixed(0)}%</td>
                                     </tr>
                                   ))}
                                 </tbody>
                               </table>
                             </div>
                             <div className="qc-alloc-note">
-                              «Позиция» = вес ≥1% портфеля на конец месяца. Частые месяцы с 1 позицией или высокая «доля топ-1» = сильный перекос / низкая диверсификация. «Кэш» — месяцы без позиций.
+                              «Позиция» = вес ≥1% портфеля на конец месяца. «Доминанта {'>'}50% без {benchName}» — доля месяцев года, где ОДИН не-{benchName} актив занимал больше половины активного рукава; отвечает на «держался 1 месяц по 100% или весь год понемногу». «Кэш» — месяцы без позиций.
                             </div>
                           </div>
                         );

@@ -15,7 +15,8 @@ export async function GET(req: NextRequest) {
     const id = Number(sp.get('id'));
     if (!id) return NextResponse.json({ error: 'id обязателен', years: [], symbols: [] }, { status: 400 });
     const end = sp.get('end') || undefined;
-    const data = await getStrategyAllocation(id, !!sp.get('force'), end);
+    const bench = sp.get('bench') || 'SPY';
+    const data = await getStrategyAllocation(id, !!sp.get('force'), end, bench);
     return NextResponse.json(data);
   } catch (e: any) {
     await logAppError({ route: '/api/quantconnect/allocation', message: e.message, stack: e.stack });
