@@ -478,14 +478,17 @@ test.describe('Signals /signals', () => {
     await expect(out.getByTestId('corr-year-all')).toBeVisible(); // переключатель «Всё окно» / годы
   });
 
-  test('режим Фактор: фильтр выборки исключает наблюдения (бейдж с долей исключённых)', async ({ page }) => {
+  test('режим Фактор: фильтр выборки включается и отражается в баре LIVE-фильтра', async ({ page }) => {
     await setup(page);
     await page.getByTestId('tab-factor').click();
     await page.getByTestId('factor-filter-toggle').click(); // вкл фильтр (дефолт: vol(21) ≥ 30, исключить)
     await page.getByTestId('run-study').click();
     await expect(page.getByTestId('heat-cell').first()).toBeVisible({ timeout: 150000 });
-    // Бейдж фильтра виден → исключение применилось к панели (база и ячейки).
-    await expect(page.locator('[data-testid="signals-output"]').getByText(/фильтр:/)).toBeVisible();
+    // Узкая вселенная → отгружена панель наблюдений → фильтр отражается в баре «LIVE-фильтр» (вкл),
+    // с контролами включить/исключить (мгновенный пересчёт на клиенте).
+    const out = page.locator('[data-testid="signals-output"]');
+    await expect(out.getByTestId('live-filter')).toBeVisible();
+    await expect(out.getByTestId('live-filter-toggle')).toHaveText('вкл');
   });
 
   test('режим Фактор: LIVE-фильтр пересчитывает карту на клиенте (без перепрогона)', async ({ page }) => {
