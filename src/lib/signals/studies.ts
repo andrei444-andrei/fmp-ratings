@@ -363,6 +363,12 @@ async def main():
         skip = int(CFG.get('skip', 0))
         groups_cfg = CFG.get('groups') or [{'label': None, 'tickers': CFG['universe'], 'benchmark': bench}]
         flt = CFG.get('filter')
+        # Панель сырых наблюдений для ЖИВОГО (клиентского) пересчёта фильтра/окна лет без перепрогона.
+        # Только для накопительно/диапазонов (перцентили — кросс-секц. ранг, на клиенте не пересчитать) и
+        # пока суммарный объём в пределах лимита (большие вселенные → живой режим выкл).
+        panel_ok = (bins != 'quantile'); PANEL_CAP = 120000; total_panel = 0
+        vfac = (flt['factor'] if flt else 'vol'); vparam = (int(flt['param']) if flt else 21)
+        vskip = (int(flt.get('skip', 0)) if flt else 0)
         out_groups = []; total_obs = 0; all_syms = set(); flt_before = 0; flt_after = 0
         for grp in groups_cfg:
             gsyms = set(str(s).upper() for s in (grp.get('tickers') or []))
@@ -375,8 +381,19 @@ async def main():
             tgt_g = build_targets(pxg, gbench, HZ, H, outcome)
             if tgt_g.empty:
                 out_groups.append({'label': grp.get('label'), 'baseline': None, 'symbols': 0,
-                                   'benchmark': gbench, 'has_bench': has_b_g, 'grid': []})
+                                   'benchmark': gbench, 'has_bench': has_b_g, 'grid': [], 'panel': None})
                 continue
+            tgt_g0 = tgt_g  # НЕотфильтрованная панель — основа для клиентского пересчёта
+            # Подготовка панели группы: фактор-фильтр (v) + индекс дат. Сбой → живой режим выкл (не валим исследование).
+            gdates = []; gparams = None; vdf = None; didx = {}
+            if panel_ok:
+                try:
+                    vdf = build_fval(pxg, gbench, vfac, vparam, H, vskip).rename(columns={'fval': 'vval'})
+                    gdates = [pd.Timestamp(x) for x in sorted(pd.to_datetime(tgt_g0['date']).unique())]
+                    didx = {d: i for i, d in enumerate(gdates)}
+                    gparams = {}
+                except Exception:
+                    panel_ok = False; gparams = None
             # Фильтр выборки: исключаем/оставляем наблюдения по ВТОРИЧНОМУ фактору (напр. vol(21) ≥ 30
             # → exclude «турбулентные» дни). Применяется к панели группы → отражается и в базе, и в ячейках.
             if flt:
@@ -395,6 +412,24 @@ async def main():
             grid = []; pvals = []
             for p in params:
                 fv = build_fval(pxg, gbench, fid, p, H, skip)
+                # Панель: сырые наблюдения [индекс_даты, f, v, r] из НЕотфильтрованной панели. Сбой → выкл.
+                if panel_ok and gparams is not None:
+                    try:
+                        mg0 = tgt_g0.merge(fv, on=['symbol', 'date'], how='inner').merge(vdf, on=['symbol', 'date'], how='left')
+                        sb = mg0[['date', 'fval', 'vval', maincol]].dropna(subset=['fval', maincol])
+                        dd = list(sb['date']); fa = list(sb['fval']); va = list(sb['vval']); ra = list(sb[maincol])
+                        obs = []
+                        for i in range(len(sb)):
+                            vv = va[i]
+                            obs.append([int(didx[pd.Timestamp(dd[i])]), round(float(fa[i]), 3),
+                                        (round(float(vv), 3) if vv == vv else None), round(float(ra[i]), 3)])
+                        total_panel += len(obs)
+                        if total_panel > PANEL_CAP:
+                            panel_ok = False; gparams = None  # вселенная велика → живой режим выключаем
+                        else:
+                            gparams[str(p)] = obs
+                    except Exception:
+                        panel_ok = False; gparams = None
                 mg = tgt_g.merge(fv, on=['symbol', 'date'], how='inner')
                 fcol = mg['fval']
                 if bins == 'quantile':
@@ -430,9 +465,11 @@ async def main():
             sigset = _bh(pvals, alpha)
             for cell in grid:
                 cell['sig'] = (str(cell['param']) + ':' + str(cell['col'])) in sigset
+            gpanel = ({'dates': [str(d.date()) for d in gdates], 'params': gparams}
+                      if (panel_ok and gparams) else None)
             out_groups.append({'label': grp.get('label'), 'baseline': _f(base_g['mean']) if base_g else None,
                                'symbols': int(tgt_g['symbol'].nunique()), 'benchmark': gbench,
-                               'has_bench': has_b_g, 'grid': grid})
+                               'has_bench': has_b_g, 'grid': grid, 'panel': gpanel})
         dts = sorted(px.index)
         meta = {'symbols': int(len([s for s in all_syms if s in px.columns])),
                 'periods': int(len(px.index[::max(1, H)])), 'obs': int(total_obs),
@@ -444,6 +481,11 @@ async def main():
                 'filter': (flt if flt else None),
                 'filtered': ({'before': int(flt_before), 'after': int(flt_after),
                               'excluded': int(flt_before - flt_after)} if flt else None),
+                'panelFilter': ({'factor': vfac, 'param': vparam,
+                                 'side': (flt['side'] if (flt and flt.get('side') in ('high', 'low')) else 'high'),
+                                 'threshold': (float(flt['threshold']) if (flt and 'threshold' in flt) else 30.0),
+                                 'op': (flt.get('op') if flt else 'exclude'),
+                                 'enabled': bool(flt)} if panel_ok else None),
                 'fdrAlpha': alpha, 'params': params, 'cols': col_labels, 'hz': HZ, 'groups': out_groups, 'meta': meta}
 
     # setops — операции над множествами наблюдений ВЫБРАННЫХ ячеек одной группы (страны):
