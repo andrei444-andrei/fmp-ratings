@@ -21,6 +21,7 @@ import {
   useToast,
 } from '@/components/ui';
 import { FACTORS, FACTOR_BY_ID, signalLabel, supportsSkip, type FactorId, type Side, type SignalDef } from '@/lib/signals/factors';
+import { recomputeCells, type LiveFilter } from '@/lib/signals/recompute';
 import { UNIVERSE_PRESETS, type UniversePreset } from '@/lib/signals/presets';
 import { Heatmap, type HeatCell } from './Heatmap';
 
@@ -2185,6 +2186,59 @@ function LeaderboardView({ data, groups, winFrom, winTo }: { data: any; groups: 
   );
 }
 
+function LiveFilterBar({ pf, lf, setLf }: { pf: any; lf: LiveFilter; setLf: (f: LiveFilter) => void }) {
+  const ff = FACTOR_BY_ID[pf.factor as FactorId];
+  const set = (patch: Partial<LiveFilter>) => setLf({ ...lf, ...patch });
+  return (
+    <div className="space-y-2 rounded-fk border border-brand bg-surface-2 p-3" data-testid="live-filter">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant="brand">● LIVE-фильтр</Badge>
+        <span className="text-[11px] text-ink-3">фильтр / годы пересчитываются на клиенте — без перепрогона</span>
+        <button
+          type="button"
+          data-testid="live-filter-toggle"
+          onClick={() => set({ enabled: !lf.enabled })}
+          className={`ml-auto rounded-fk-sm px-2 py-0.5 text-[11px] font-semibold ${lf.enabled ? 'bg-brand-50 text-brand-700' : 'bg-surface-elev text-ink-3'}`}
+        >
+          {lf.enabled ? 'вкл' : 'выкл'}
+        </button>
+      </div>
+      {lf.enabled && (
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex gap-1 rounded-fk bg-surface-elev p-1">
+            {([['exclude', 'Исключить'], ['keep', 'Только']] as const).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => set({ op: id })}
+                className={`rounded-fk-sm px-2 py-1 text-[12px] font-semibold transition-colors ${lf.op === id ? 'bg-surface-2 text-ink shadow-fk-sm' : 'text-ink-3'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <span className="text-[12px] text-ink-2"><b>{ff?.label ?? pf.factor}</b> ({pf.param})</span>
+          <div className="flex gap-1 rounded-fk bg-surface-elev p-1">
+            {([['high', '≥'], ['low', '≤']] as const).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => set({ side: id })}
+                className={`rounded-fk-sm px-2 py-1 text-[12px] font-semibold transition-colors ${lf.side === id ? 'bg-surface-2 text-ink shadow-fk-sm' : 'text-ink-3'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="w-24"><NumberInput value={lf.threshold} onChange={(v: number) => set({ threshold: v })} /></div>
+          <span className="text-[12px] text-ink-3">{ff?.unit || ''}</span>
+          <span className="text-[11px] text-ink-3">детали ячейки (по горизонтам/тикерам) — по полному прогону</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FactorResult({ data, onSave, reqGroups = [], reqUniverse = [], reqBenchmark = 'SPY', groupTickersByLabel }: { data: any; onSave: (d: SignalDef, name?: string) => void; reqGroups?: { label?: string; tickers: string[]; benchmark?: string }[]; reqUniverse?: string[]; reqBenchmark?: string; groupTickersByLabel?: (label: string) => { tickers: string[]; benchmark?: string } | null }) {
   const f = FACTOR_BY_ID[data.factor];
   // Конфиг запроса вшит в результат (_req): тикеры групп нужны для setops (И/А без В) и доступны
@@ -2201,6 +2255,13 @@ function FactorResult({ data, onSave, reqGroups = [], reqUniverse = [], reqBench
   const hasYears = groups.some((g) => (g.grid || []).some((c: any) => Array.isArray(c.years)));
   const [winFrom, setWinFrom] = useState(minY);
   const [winTo, setWinTo] = useState(maxY);
+  // Живой фильтр выборки: при наличии панели наблюдений считается на клиенте мгновенно (без перепрогона).
+  const pf = data.panelFilter;
+  const hasPanel = !!pf && groups.some((g) => g.panel);
+  const [liveFilter, setLiveFilter] = useState<LiveFilter>({
+    enabled: !!pf?.enabled, side: pf?.side === 'low' ? 'low' : 'high',
+    threshold: Number(pf?.threshold ?? 30), op: pf?.op === 'keep' ? 'keep' : 'exclude',
+  });
   const [picks, setPicks] = useState<Set<string>>(new Set()); // ключи `${gi}|${param}|${col}` — выбор по ВСЕМ группам
   useEffect(() => {
     setWinFrom(minY);
@@ -2241,12 +2302,13 @@ function FactorResult({ data, onSave, reqGroups = [], reqUniverse = [], reqBench
       {data.outcome === 'alpha' && (
         <Badge variant="brand">исход: альфа (β-скоррект.) — «изб. дох.» = r − β·r_бенч</Badge>
       )}
-      {data.filter && data.filtered && (
+      {!hasPanel && data.filter && data.filtered && (
         <Badge variant="warn">
           фильтр: {data.filter.op === 'exclude' ? 'искл.' : 'только'} {FACTOR_BY_ID[data.filter.factor as FactorId]?.label ?? data.filter.factor} ({data.filter.param}) {data.filter.side === 'high' ? '≥' : '≤'} {fnum(data.filter.threshold, 0)} ·
           {' '}убрано {data.filtered.before ? Math.round((data.filtered.excluded / data.filtered.before) * 100) : 0}% ({data.filtered.excluded} из {data.filtered.before})
         </Badge>
       )}
+      {hasPanel && <LiveFilterBar pf={pf} lf={liveFilter} setLf={setLiveFilter} />}
       {hasYears && <YearRange min={minY} max={maxY} from={winFrom} to={winTo} setFrom={setWinFrom} setTo={setWinTo} />}
       <SelectionPanel
         data={data}
@@ -2271,35 +2333,48 @@ function FactorResult({ data, onSave, reqGroups = [], reqUniverse = [], reqBench
         <p className="text-[12px] text-ink-3">Ниже — карта по каждой стране/группе. Кликайте ячейки (можно в РАЗНЫХ странах) — детали и совокупная статистика появятся сверху.</p>
       )}
       {groups.map((g: any, i: number) => (
-        <FactorGroup key={i} gi={i} data={data} group={g} isRange={isRange} isQ={isQ} multi={multi} winFrom={winFrom} winTo={winTo} picks={picks} onToggle={toggle} />
+        <FactorGroup key={i} gi={i} data={data} group={g} isRange={isRange} isQ={isQ} multi={multi} winFrom={winFrom} winTo={winTo} picks={picks} onToggle={toggle} liveFilter={hasPanel ? liveFilter : undefined} />
       ))}
     </div>
   );
 }
 
-function FactorGroup({ gi, data, group, isRange, isQ, multi, winFrom, winTo, picks, onToggle }: { gi: number; data: any; group: any; isRange: boolean; isQ: boolean; multi: boolean; winFrom: number; winTo: number; picks: Set<string>; onToggle: (gi: number, c: HeatCell) => void }) {
+function FactorGroup({ gi, data, group, isRange, isQ, multi, winFrom, winTo, picks, onToggle, liveFilter }: { gi: number; data: any; group: any; isRange: boolean; isQ: boolean; multi: boolean; winFrom: number; winTo: number; picks: Set<string>; onToggle: (gi: number, c: HeatCell) => void; liveFilter?: LiveFilter }) {
   const mainH: number = data.horizon;
   const alpha: number = data.fdrAlpha || 0.1;
   const grid: any[] = group.grid || [];
   const useWin = grid.some((g: any) => Array.isArray(g.years));
 
-  // Пересчёт каждой ячейки под выбранное окно лет (из по-годовой агрегации).
+  // ЖИВОЙ пересчёт из сырых наблюдений (панель): окно лет + фильтр — мгновенно, без перепрогона.
+  const panel = group.panel;
+  const live = useMemo(
+    () => (panel && liveFilter ? recomputeCells(grid, panel, data.bins, winFrom, winTo, liveFilter) : null),
+    [panel, grid, data.bins, winFrom, winTo, liveFilter],
+  );
+  // Фолбэк — по-годовой пересчёт из достаточных статистик (когда панели нет: большие вселенные/перцентили).
   const recomputed = useMemo(
     () => grid.map((g: any) => ({ g, agg: useWin && g.years ? aggCell(g.years, winFrom, winTo, mainH) : null })),
     [grid, useWin, winFrom, winTo, mainH],
   );
   const sigSet = useMemo(() => {
+    if (live) return bhSig([...live.entries()].filter(([, v]) => v).map(([k, v]) => ({ key: k, p: pval(v!.t) })), alpha);
     if (!useWin) return null;
     return bhSig(recomputed.filter((r) => r.agg).map((r) => ({ key: `${r.g.param}:${r.g.col}`, p: pval(r.agg!.t) })), alpha);
-  }, [recomputed, useWin, alpha]);
+  }, [live, recomputed, useWin, alpha]);
 
-  const cells: HeatCell[] = recomputed.map(({ g, agg }) => ({
-    row: g.param,
-    col: g.col,
-    value: agg ? agg.mean : useWin ? null : g.mean,
-    n: agg ? agg.n : useWin ? 0 : g.n,
-    sig: useWin ? !!(sigSet && sigSet.has(`${g.param}:${g.col}`)) : g.sig,
-  }));
+  const cells: HeatCell[] = recomputed.map(({ g, agg }) => {
+    if (live) {
+      const s = live.get(`${g.param}:${g.col}`);
+      return { row: g.param, col: g.col, value: s ? s.mean : null, n: s ? s.n : 0, sig: !!(sigSet && sigSet.has(`${g.param}:${g.col}`)) };
+    }
+    return {
+      row: g.param,
+      col: g.col,
+      value: agg ? agg.mean : useWin ? null : g.mean,
+      n: agg ? agg.n : useWin ? 0 : g.n,
+      sig: useWin ? !!(sigSet && sigSet.has(`${g.param}:${g.col}`)) : g.sig,
+    };
+  });
 
   // Подсветка ячеек ЭТОЙ группы: глобальные ключи `${gi}|param|col` → локальные `param|col`.
   const prefix = `${gi}|`;

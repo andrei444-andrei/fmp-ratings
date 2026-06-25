@@ -487,4 +487,16 @@ test.describe('Signals /signals', () => {
     // Бейдж фильтра виден → исключение применилось к панели (база и ячейки).
     await expect(page.locator('[data-testid="signals-output"]').getByText(/фильтр:/)).toBeVisible();
   });
+
+  test('режим Фактор: LIVE-фильтр пересчитывает карту на клиенте (без перепрогона)', async ({ page }) => {
+    await setup(page);
+    await page.getByTestId('run-study').click();
+    await expect(page.getByTestId('heat-cell').first()).toBeVisible({ timeout: 150000 });
+    const out = page.locator('[data-testid="signals-output"]');
+    // Сервер отгрузил панель наблюдений → появилась панель живого фильтра.
+    await expect(out.getByTestId('live-filter')).toBeVisible();
+    // Включаем живой фильтр — карта пересчитывается на клиенте, ячейки остаются (без сетевого прогона).
+    await out.getByTestId('live-filter-toggle').click();
+    await expect(page.getByTestId('heat-cell').first()).toBeVisible();
+  });
 });
