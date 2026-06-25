@@ -76,9 +76,12 @@ export async function ensureForecastTables(): Promise<void> {
     year INTEGER NOT NULL,
     fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
     found INTEGER NOT NULL DEFAULT 0,
+    attempts INTEGER NOT NULL DEFAULT 1,
     note TEXT,
     PRIMARY KEY (asset, year)
   )`);
+  // attempts — счётчик попыток поиска по ячейке (для ретраев «ничего не нашли»).
+  try { await libsqlClient.execute(`ALTER TABLE forecast_fetch_log ADD COLUMN attempts INTEGER NOT NULL DEFAULT 1`); } catch { /* колонка уже есть */ }
   ensured = true;
 }
 
@@ -136,6 +139,19 @@ export async function fetchedCells(): Promise<Set<string>> {
   return new Set(log.map((l) => `${l.asset}:${l.year}`));
 }
 
+// Прогресс по ячейкам: сколько прогнозов нашли и сколько было попыток.
+// Нужно для ретраев: ячейку с found=0 перезапрашиваем, пока attempts < лимита,
+// варьируя запрос — одна неудачная попытка больше НЕ оставляет ячейку пустой навсегда.
+export async function fetchProgress(): Promise<Map<string, { found: number; attempts: number }>> {
+  await ensureForecastTables();
+  const r = await libsqlClient.execute(`SELECT asset, year, found, attempts FROM forecast_fetch_log`);
+  const m = new Map<string, { found: number; attempts: number }>();
+  for (const x of r.rows) {
+    m.set(`${String(x.asset)}:${Number(x.year)}`, { found: Number(x.found), attempts: Number(x.attempts ?? 1) });
+  }
+  return m;
+}
+
 // Заменить AI-прогнозы по ячейке (ручные/проверенные — не трогаем) и записать лог.
 export async function replaceCellForecasts(
   asset: string,
@@ -157,8 +173,8 @@ export async function replaceCellForecasts(
     });
   }
   stmts.push({
-    sql: `INSERT INTO forecast_fetch_log (asset, year, fetched_at, found, note) VALUES (?, ?, ?, ?, ?)
-          ON CONFLICT(asset, year) DO UPDATE SET fetched_at = excluded.fetched_at, found = excluded.found, note = excluded.note`,
+    sql: `INSERT INTO forecast_fetch_log (asset, year, fetched_at, found, note, attempts) VALUES (?, ?, ?, ?, ?, 1)
+          ON CONFLICT(asset, year) DO UPDATE SET fetched_at = excluded.fetched_at, found = excluded.found, note = excluded.note, attempts = forecast_fetch_log.attempts + 1`,
     args: [asset, year, now, rows.length, note],
   });
   await libsqlClient.batch(stmts);

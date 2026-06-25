@@ -1,7 +1,7 @@
 import { aimlChat, aimlChatWithCitations, getAimlSonarModel, getAimlModel, getAimlApiKey } from '@/lib/aimlapi';
 import { logAppError } from '@/lib/app-errors';
 import { COUNTRIES, cellOf, type SignalTier } from '@/app/forecasts/mock';
-import { replaceCellForecasts, fetchedCells, type ForecastFormat, type ForecastRow } from './store';
+import { replaceCellForecasts, fetchProgress, type ForecastFormat, type ForecastRow } from './store';
 
 // Добыча реальных прогнозов инвестбанков: ОТДЕЛЬНЫЙ англоязычный веб-запрос на
 // каждую (актив × год) через Perplexity Sonar (aimlapi, §3) → текст + источники.
@@ -176,8 +176,16 @@ async function translateRows(rows: NewRow[]): Promise<void> {
 //  3) дата-гейт: оставляем только статьи в окне year-ahead для года Y; явно
 //     не-тот-год отбрасываем; недатированные помечаем dateOk=false;
 //  4) best-effort открываем URL и сверяем дату → source_verified.
-async function fetchCellFromSonar(code: string, year: number): Promise<{ rows: NewRow[]; dropped: number }> {
+async function fetchCellFromSonar(code: string, year: number, attempt = 1): Promise<{ rows: NewRow[]; dropped: number }> {
   const noun = assetNoun(code);
+
+  // Ретраи: пустую ячейку перезапрашиваем, РАСШИРЯЯ круг источников с каждой
+  // попыткой (одна формулировка часто упирается в NONE на трудных рынках/годах).
+  const BROADEN = attempt >= 3
+    ? ` BROADEN WIDELY: also accept local/regional brokers, asset managers, ETF issuers, central-bank-adjacent research, and reputable financial-media year-ahead OUTLOOK articles. A single sourced directional sentence is enough.`
+    : attempt === 2
+      ? ` BROADEN: also include local brokers, fund managers, the financial press and consensus surveys; even one sourced directional sentence counts.`
+      : '';
 
   // шаг 1 — собрать взгляды. КЛЮЧЕВОЕ-1: ограничиваем веб-поиск Sonar окном
   // публикации year-ahead (сен. Y−1 … фев. Y) — иначе поиск тащит свежак (обзоры
@@ -209,7 +217,8 @@ async function fetchCellFromSonar(code: string, year: number): Promise<{ rows: N
           `any ${year} index target or expected return %; a short VERBATIM quote stating the EXPECTATION; and 1–2 sentences of key reasoning/nuances (drivers, risks, caveats). ` +
           `STRICT EXCLUSIONS — do NOT report: (a) RETROSPECTIVE performance ("recorded a gain", "fell 15%", "finished the year up X", monthly/past-period reviews); ` +
           `(b) commentary about a DIFFERENT asset (e.g. currencies, a single stock, a sub-region) rather than ${noun} itself; (c) truncated fragments that are not a complete statement of a view. ` +
-          `List EVERY genuine forward-looking item, even one — partial is fine. Answer NONE only if there is genuinely no forward-looking view about ${noun} for ${year}.`,
+          `List EVERY genuine forward-looking item, even one — partial is fine. Answer NONE only if there is genuinely no forward-looking view about ${noun} for ${year}.` +
+          BROADEN,
       },
     ],
     max_tokens: 900,
@@ -364,9 +373,13 @@ export async function ingestForecasts(opts: {
     ? opts.targets
     : COUNTRIES.flatMap((c) => opts.years.map((y) => ({ asset: c.code, year: y })));
 
-  // пропускаем уже найденные (если не force)
-  const done = opts.force ? new Set<string>() : await fetchedCells();
-  const pending = all.filter((t) => !done.has(`${t.asset}:${t.year}`));
+  // Ячейку считаем «закрытой» (пропускаем), если уже нашли ≥1 прогноз ЛИБО
+  // исчерпали лимит попыток. Пустые (found=0, attempts<лимита) — перезапрашиваем
+  // с расширением круга источников: одна неудача больше не оставляет 0 навсегда.
+  const MAX_ATTEMPTS = 3;
+  const progress = opts.force ? new Map<string, { found: number; attempts: number }>() : await fetchProgress();
+  const isSatisfied = (key: string) => { const p = progress.get(key); return !!p && (p.found > 0 || p.attempts >= MAX_ATTEMPTS); };
+  const pending = all.filter((t) => !isSatisfied(`${t.asset}:${t.year}`));
   const batch = pending.slice(0, limit);
 
   let found = 0, errors = 0;
@@ -377,9 +390,10 @@ export async function ingestForecasts(opts: {
       try {
         let rows: NewRow[], note: string;
         if (mode === 'sonar') {
-          const r = await fetchCellFromSonar(t.asset, t.year);
+          const attempt = (progress.get(`${t.asset}:${t.year}`)?.attempts ?? 0) + 1;
+          const r = await fetchCellFromSonar(t.asset, t.year, attempt);
           rows = r.rows;
-          note = r.dropped > 0 ? `sonar (отброшено по дате: ${r.dropped})` : 'sonar';
+          note = r.dropped > 0 ? `sonar a${attempt} (отброшено по дате: ${r.dropped})` : `sonar a${attempt}`;
         } else {
           rows = syntheticCell(t.asset, t.year);
           note = 'synthetic';
