@@ -129,7 +129,8 @@ function extractSeries(chart: any, preferred: string): QcSeriesPoint[] {
 // Эндпоинт может вернуть status=loading (график строится) ИЛИ ошибку «Error retrieving
 // backtest chart, please try again later» (success=false) — оба случая транзиентные,
 // ретраим. На последней попытке транзиентную ошибку пробрасываем (видна причина).
-const CHART_TRANSIENT = /try again later|retrieving.*chart|чарт|too many|rate.?limit|timeout|temporarily/i;
+// Транзиентные ошибки QC (просят повторить позже) — для chart/read, files/read и т.п.
+const QC_TRANSIENT = /try again later|retrieving|too many|rate.?limit|timeout|temporarily/i;
 export async function qcReadSeries(
   projectId: number | string,
   backtestId: string,
@@ -152,7 +153,7 @@ export async function qcReadSeries(
       data = await qcPost('/backtests/chart/read', body);
     } catch (e: any) {
       const msg = String(e?.message || e);
-      if (CHART_TRANSIENT.test(msg) && attempt < maxAttempts - 1) { await sleep(2000); continue; }
+      if (QC_TRANSIENT.test(msg) && attempt < maxAttempts - 1) { await sleep(2000); continue; }
       throw e; // не транзиентная или попытки кончились — пусть причина будет видна
     }
     const chart = data?.chart ?? data?.Chart;
@@ -169,10 +170,39 @@ export async function qcReadSeries(
 export type QcFile = { name: string; content: string };
 
 // Файлы (исходный код) проекта QuantConnect.
-export async function qcReadProjectFiles(projectId: number | string): Promise<QcFile[]> {
-  const data = await qcPost('/files/read', { projectId: Number(projectId) });
-  const arr = Array.isArray(data?.files) ? data.files : [];
-  return arr.map((f: any) => ({ name: String(f.name ?? ''), content: String(f.content ?? '') }));
+export async function qcReadProjectFiles(projectId: number | string, maxAttempts = 4): Promise<QcFile[]> {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    let data: any;
+    try {
+      data = await qcPost('/files/read', { projectId: Number(projectId) });
+    } catch (e: any) {
+      const msg = String(e?.message || e);
+      if (QC_TRANSIENT.test(msg) && attempt < maxAttempts - 1) { await sleep(1500); continue; }
+      throw e;
+    }
+    const arr = Array.isArray(data?.files) ? data.files : Array.isArray(data?.Files) ? data.Files : [];
+    const files: QcFile[] = arr.map((f: any) => ({ name: String(f.name ?? f.Name ?? ''), content: String(f.content ?? f.Content ?? '') }));
+    // пустой список бывает транзиентным (QC флачит) — ретраим; непустой возвращаем сразу
+    if (files.length || attempt === maxAttempts - 1) return files;
+    await sleep(1500);
+  }
+  return [];
+}
+
+// Содержимое одного файла проекта (QC иногда отдаёт bulk /files/read без content —
+// тогда добираем пофайлово по name). Возвращает '' при ошибке/пустоте.
+export async function qcReadProjectFile(projectId: number | string, name: string): Promise<string> {
+  try {
+    const data = await qcPost('/files/read', { projectId: Number(projectId), name });
+    // Именованный read может вернуть массив files, одиночный объект file ИЛИ
+    // content на верхнем уровне — поддерживаем все формы.
+    const arr = Array.isArray(data?.files) ? data.files : Array.isArray(data?.Files) ? data.Files : [];
+    const single = data?.file ?? data?.File;
+    const f = arr.find((x: any) => String(x?.name ?? x?.Name ?? '') === name) ?? arr[0] ?? single;
+    return String(f?.content ?? f?.Content ?? data?.content ?? data?.Content ?? '');
+  } catch {
+    return '';
+  }
 }
 
 // Статистика бектеста (Sharpe, Sortino, трейды, win-rate и т.д.).

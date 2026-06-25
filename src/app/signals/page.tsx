@@ -21,10 +21,11 @@ import {
   useToast,
 } from '@/components/ui';
 import { FACTORS, FACTOR_BY_ID, signalLabel, supportsSkip, type FactorId, type Side, type SignalDef } from '@/lib/signals/factors';
+import { recomputeCells, type LiveFilter } from '@/lib/signals/recompute';
 import { UNIVERSE_PRESETS, type UniversePreset } from '@/lib/signals/presets';
 import { Heatmap, type HeatCell } from './Heatmap';
 
-type Mode = 'factor' | 'signal' | 'combine' | 'ma';
+type Mode = 'factor' | 'signal' | 'combine' | 'ma' | 'naaim' | 'corr';
 type SavedSignal = { id: number; name: string; def: SignalDef };
 
 const CUR_YEAR = new Date().getFullYear();
@@ -232,20 +233,22 @@ export default function SignalsPage() {
 
 function Tabs({ tab, setTab }: { tab: Mode; setTab: (m: Mode) => void }) {
   const items: { id: Mode; label: string }[] = [
-    { id: 'factor', label: '1 · Фактор' },
-    { id: 'signal', label: '2 · Сигнал' },
-    { id: 'combine', label: '3 · Комбинация' },
-    { id: 'ma', label: '4 · SMA/EMA' },
+    { id: 'factor', label: 'Фактор' },
+    { id: 'signal', label: 'Сигнал' },
+    { id: 'combine', label: 'Комбинация' },
+    { id: 'ma', label: 'SMA/EMA' },
+    { id: 'naaim', label: 'NAAIM' },
+    { id: 'corr', label: 'Корреляции' },
   ];
   return (
-    <div className="flex gap-1 rounded-fk bg-surface-2 p-1">
+    <div className="grid grid-cols-3 gap-1 rounded-fk bg-surface-2 p-1">
       {items.map((it) => (
         <button
           key={it.id}
           type="button"
           data-testid={`tab-${it.id}`}
           onClick={() => setTab(it.id)}
-          className={`flex-1 rounded-fk-sm px-3 py-1.5 text-[13px] font-semibold transition-colors ${
+          className={`min-w-0 truncate rounded-fk-sm px-2.5 py-1.5 text-[13px] font-semibold transition-colors ${
             tab === it.id ? 'bg-surface-elev text-ink shadow-fk-sm' : 'text-ink-3 hover:text-ink-2'
           }`}
         >
@@ -317,6 +320,10 @@ function Signals() {
   const [fThresholds, setFThresholds] = useState<string>(factorDef.defaultThresholds.join(', '));
   const [fSkip, setFSkip] = useState(0);
   const [fOutcome, setFOutcome] = useState<'excess' | 'alpha'>('excess'); // исход: превышение бенчмарка vs β-альфа
+  // Фильтр выборки: исключить/оставить наблюдения по вторичному фактору (дефолт под пример vol(21) ≥ 30).
+  const [fFilter, setFFilter] = useState<{ enabled: boolean; factor: FactorId; param: number; side: Side; threshold: number; op: 'exclude' | 'keep' }>(
+    { enabled: false, factor: 'vol', param: 21, side: 'high', threshold: 30, op: 'exclude' },
+  );
 
   // ── Сигнал ──
   const [sFactor, setSFactor] = useState<FactorId>('momentum');
@@ -327,6 +334,18 @@ function Signals() {
   const [sLo, setSLo] = useState<number>(sDef.defaultThresholds[0]);
   const [sHi, setSHi] = useState<number>(sDef.defaultThresholds[sDef.defaultThresholds.length - 1]);
   const [sSkip, setSSkip] = useState(0);
+
+  // ── NAAIM (форвардная альфа инструмента на правилах внешнего недельного ряда) ──
+  // Дефолты порогов — из постановки: нижние 10% за 52н + не ниже пред. недели; >80 и +15 за 4н; >100.
+  const [nR1, setNR1] = useState({ enabled: true, lookbackW: 52, pct: 10 });
+  const [nR2, setNR2] = useState({ enabled: true, level: 80, riseW: 4, riseBy: 15 });
+  const [nR3, setNR3] = useState({ enabled: true, level: 100 });
+  const [nEntryLag, setNEntryLag] = useState(0); // доп. торговых дней после след. дня
+
+  // ── Корреляции активов ──
+  const [cFreq, setCFreq] = useState<'d' | 'w' | 'm'>('w'); // частота доходностей: дн/нед/мес
+  const [cMomWindow, setCMomWindow] = useState(126); // окно трейлинг-моментума, дн.
+  const [cBasketN, setCBasketN] = useState(5); // размер low-corr корзины
 
   // ── Комбинация ──
   const [saved, setSaved] = useState<SavedSignal[] | null>(null);
@@ -432,7 +451,7 @@ function Signals() {
         if (Number.isFinite(c.horizon)) setHorizon(c.horizon);
         if (typeof c.yearFrom === 'string') setYearFrom(c.yearFrom);
         if (typeof c.yearTo === 'string') setYearTo(c.yearTo);
-        if (c.tab === 'factor' || c.tab === 'signal' || c.tab === 'combine' || c.tab === 'ma') setTab(c.tab);
+        if (['factor', 'signal', 'combine', 'ma', 'naaim', 'corr'].includes(c.tab)) setTab(c.tab);
         if (typeof c.factorId === 'string' && FACTOR_BY_ID[c.factorId as FactorId]) setFactorId(c.factorId);
         if (c.fSide === 'high' || c.fSide === 'low' || c.fSide === 'band') setFSide(c.fSide);
         if (c.fBins === 'cumulative' || c.fBins === 'range' || c.fBins === 'quantile') setFBins(c.fBins);
@@ -440,6 +459,23 @@ function Signals() {
         if (typeof c.fThresholds === 'string') setFThresholds(c.fThresholds);
         if (Number.isFinite(c.fSkip)) setFSkip(c.fSkip);
         if (c.fOutcome === 'excess' || c.fOutcome === 'alpha') setFOutcome(c.fOutcome);
+        if (c.fFilter && typeof c.fFilter === 'object' && FACTOR_BY_ID[c.fFilter.factor as FactorId]) {
+          setFFilter({
+            enabled: c.fFilter.enabled === true,
+            factor: c.fFilter.factor,
+            param: Number(c.fFilter.param) || 21,
+            side: c.fFilter.side === 'low' ? 'low' : 'high',
+            threshold: Number(c.fFilter.threshold) || 0,
+            op: c.fFilter.op === 'keep' ? 'keep' : 'exclude',
+          });
+        }
+        if (c.nR1 && typeof c.nR1 === 'object') setNR1({ enabled: c.nR1.enabled !== false, lookbackW: Number(c.nR1.lookbackW) || 52, pct: Number(c.nR1.pct) || 10 });
+        if (c.nR2 && typeof c.nR2 === 'object') setNR2({ enabled: c.nR2.enabled !== false, level: Number(c.nR2.level) || 80, riseW: Number(c.nR2.riseW) || 4, riseBy: Number(c.nR2.riseBy) || 15 });
+        if (c.nR3 && typeof c.nR3 === 'object') setNR3({ enabled: c.nR3.enabled !== false, level: Number(c.nR3.level) || 100 });
+        if (Number.isFinite(c.nEntryLag)) setNEntryLag(c.nEntryLag);
+        if (c.cFreq === 'd' || c.cFreq === 'w' || c.cFreq === 'm') setCFreq(c.cFreq);
+        if (Number.isFinite(c.cMomWindow)) setCMomWindow(c.cMomWindow);
+        if (Number.isFinite(c.cBasketN)) setCBasketN(c.cBasketN);
       }
     } catch {
       /* ignore */
@@ -463,12 +499,12 @@ function Signals() {
     try {
       localStorage.setItem(
         'signals:config',
-        JSON.stringify({ presets: [...presets], custom, benchmark, horizon, yearFrom, yearTo, tab, factorId, fSide, fBins, fParams, fThresholds, fSkip, fOutcome }),
+        JSON.stringify({ presets: [...presets], custom, benchmark, horizon, yearFrom, yearTo, tab, factorId, fSide, fBins, fParams, fThresholds, fSkip, fOutcome, fFilter, nR1, nR2, nR3, nEntryLag, cFreq, cMomWindow, cBasketN }),
       );
     } catch {
       /* ignore */
     }
-  }, [hydrated, presets, custom, benchmark, horizon, yearFrom, yearTo, tab, factorId, fSide, fBins, fParams, fThresholds, fSkip, fOutcome]);
+  }, [hydrated, presets, custom, benchmark, horizon, yearFrom, yearTo, tab, factorId, fSide, fBins, fParams, fThresholds, fSkip, fOutcome, fFilter, nR1, nR2, nR3, nEntryLag, cFreq, cMomWindow, cBasketN]);
 
   // Пермалинк: отражаем id открытого снимка в адресной строке (?result=<id>) БЕЗ навигации —
   // ссылку можно скопировать и открыть напрямую. id=null убирает параметр (свежий прогон).
@@ -543,7 +579,7 @@ function Signals() {
       setRunning(false);
       setErrMsg('');
       setResult(res.payload);
-      if (['factor', 'signal', 'combine', 'ma'].includes(res.payload.mode)) setTab(res.payload.mode);
+      if (['factor', 'signal', 'combine', 'ma', 'naaim', 'corr'].includes(res.payload.mode)) setTab(res.payload.mode);
       reflectResultId(id); // адресная строка → пермалинк на этот снимок
       setStatus('Сохранённый результат');
     } catch (e: any) {
@@ -589,7 +625,7 @@ function Signals() {
 
   async function runStudy(payload: Record<string, unknown>) {
     if (running) return;
-    const minU = payload.mode === 'ma' ? 1 : 4; // SMA/EMA пулит по своим тикерам — хватит и одного
+    const minU = payload.mode === 'ma' ? 1 : payload.mode === 'naaim' ? 0 : payload.mode === 'corr' ? 2 : 4; // corr — матрица по ≥2 активам; naaim — один инструмент
     if (universe.length < minU) {
       toast({ variant: 'error', title: 'Маловата вселенная', description: `Нужно ≥ ${minU} инструмент${minU === 1 ? '' : 'ов'}.` });
       return;
@@ -673,7 +709,7 @@ function Signals() {
   function runFactor() {
     runStudy({
       mode: 'factor', factor: factorId, side: fSide, bins: fBins, params: fParams,
-      thresholds: parseList(fThresholds), skip: supportsSkip(factorId) ? fSkip : 0, outcome: fOutcome, groups,
+      thresholds: parseList(fThresholds), skip: supportsSkip(factorId) ? fSkip : 0, outcome: fOutcome, filter: fFilter, groups,
     });
   }
   function runSignal() {
@@ -698,6 +734,16 @@ function Signals() {
   function runMa() {
     // Матрица SMA/EMA: вселенную/бенчмарк/окно лет (start/end из yearFrom/yearTo) добавляет runStudy.
     runStudy({ mode: 'ma' });
+  }
+
+  function runNaaim() {
+    // Инструмент = бенчмарк (по умолч. SPY). Ряд NAAIM подкладывает роут. Окно лет — общее.
+    runStudy({ mode: 'naaim', r1: nR1, r2: nR2, r3: nR3, entryLag: nEntryLag });
+  }
+
+  function runCorr() {
+    // Матрица корреляций по выбранной вселенной (2–40 активов). Окно лет — общее.
+    runStudy({ mode: 'corr', freq: cFreq, momWindow: cMomWindow, basketN: cBasketN });
   }
 
   function togglePicked(id: number) {
@@ -822,6 +868,8 @@ function Signals() {
                   setSkip={setFSkip}
                   outcome={fOutcome}
                   setOutcome={setFOutcome}
+                  filter={fFilter}
+                  setFilter={setFFilter}
                   onRun={runFactor}
                   running={running}
                   canRun={universe.length >= 4}
@@ -880,6 +928,42 @@ function Signals() {
                   onRun={runMa}
                   running={running}
                   canRun={universe.length >= 1}
+                />
+              )}
+              {tab === 'naaim' && (
+                <NaaimForm
+                  instrument={benchmark}
+                  r1={nR1}
+                  setR1={setNR1}
+                  r2={nR2}
+                  setR2={setNR2}
+                  r3={nR3}
+                  setR3={setNR3}
+                  entryLag={nEntryLag}
+                  setEntryLag={setNEntryLag}
+                  yearFrom={yearFrom}
+                  setYearFrom={setYearFrom}
+                  yearTo={yearTo}
+                  setYearTo={setYearTo}
+                  onRun={runNaaim}
+                  running={running}
+                />
+              )}
+              {tab === 'corr' && (
+                <CorrForm
+                  freq={cFreq}
+                  setFreq={setCFreq}
+                  momWindow={cMomWindow}
+                  setMomWindow={setCMomWindow}
+                  basketN={cBasketN}
+                  setBasketN={setCBasketN}
+                  yearFrom={yearFrom}
+                  setYearFrom={setYearFrom}
+                  yearTo={yearTo}
+                  setYearTo={setYearTo}
+                  onRun={runCorr}
+                  running={running}
+                  canRun={universe.length >= 2}
                 />
               )}
             </CardContent>
@@ -1044,6 +1128,8 @@ function Signals() {
             {result?.mode === 'signal' && <SignalResult data={result} onSave={saveSignalDef} />}
             {result?.mode === 'combine' && <CombineResult data={result} />}
             {result?.mode === 'ma' && <MaResult data={result} />}
+            {result?.mode === 'naaim' && <NaaimResult data={result} />}
+            {result?.mode === 'corr' && <CorrResult data={result} />}
           </div>
         </Card>
       </main>
@@ -1105,6 +1191,68 @@ function FactorSelect({ value, onChange }: { value: FactorId; onChange: (id: Fac
         ))}
       </optgroup>
     </Select>
+  );
+}
+
+function FactorFilter({ filter, setFilter }: any) {
+  const set = (patch: any) => setFilter({ ...filter, ...patch });
+  const ff = FACTOR_BY_ID[filter.factor as FactorId] || FACTOR_BY_ID.vol;
+  return (
+    <div className="space-y-2 rounded-fk border border-line bg-surface-2 p-3" data-testid="factor-filter">
+      <button
+        type="button"
+        data-testid="factor-filter-toggle"
+        onClick={() => set({ enabled: !filter.enabled })}
+        className={`flex w-full items-center justify-between text-[13px] font-semibold ${filter.enabled ? 'text-ink' : 'text-ink-3'}`}
+      >
+        <span>Фильтр выборки — исключить случаи</span>
+        <span className={`rounded-fk-sm px-2 py-0.5 text-[11px] ${filter.enabled ? 'bg-brand-50 text-brand-700' : 'bg-surface-elev text-ink-3'}`}>
+          {filter.enabled ? 'вкл' : 'выкл'}
+        </span>
+      </button>
+      {filter.enabled && (
+        <div className="space-y-2">
+          <div className="flex gap-1 rounded-fk bg-surface-elev p-1">
+            {([['exclude', 'Исключить'], ['keep', 'Оставить только']] as const).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => set({ op: id })}
+                className={`flex-1 rounded-fk-sm px-2 py-1 text-[12px] font-semibold transition-colors ${filter.op === id ? 'bg-surface-2 text-ink shadow-fk-sm' : 'text-ink-3'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <Field>
+            <Label>Фактор фильтра</Label>
+            <FactorSelect value={filter.factor} onChange={(id: any) => set({ factor: id })} />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field><Label htmlFor="flp">{ff.paramLabel || 'Период'}</Label><NumberInput id="flp" value={filter.param} onChange={(v: number) => set({ param: v })} /></Field>
+            <Field>
+              <Label>Сторона</Label>
+              <div className="flex gap-1 rounded-fk bg-surface-elev p-1">
+                {([['high', '≥ порог'], ['low', '≤ порог']] as const).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => set({ side: id })}
+                    className={`flex-1 rounded-fk-sm px-2 py-1 text-[12px] font-semibold transition-colors ${filter.side === id ? 'bg-surface-2 text-ink shadow-fk-sm' : 'text-ink-3'}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </Field>
+          </div>
+          <Field><Label htmlFor="flt">Порог ({ff.unit || '—'})</Label><NumberInput id="flt" value={filter.threshold} onChange={(v: number) => set({ threshold: v })} /></Field>
+          <p className="text-[11px] text-ink-3">
+            {filter.op === 'exclude' ? 'Убрать' : 'Оставить только'} наблюдения, где <b>{ff.label}</b> ({filter.param}) {filter.side === 'high' ? '≥' : '≤'} {fnum(filter.threshold, 0)}{ff.unit || ''}. Применяется к базе и всем ячейкам карты.
+          </p>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1206,6 +1354,7 @@ function FactorForm(p: any) {
           <p className="text-[11px] text-ink-3">Исключить последние N торг. дней из расчёта (напр. 5 — убрать недельную реверсию).</p>
         </Field>
       )}
+      <FactorFilter filter={p.filter} setFilter={p.setFilter} />
       <Button onClick={p.onRun} loading={p.running} disabled={!p.canRun} fullWidth data-testid="run-study">
         Построить карту
       </Button>
@@ -1585,6 +1734,142 @@ function SavedList({ saved, onLoad, onDelete }: { saved: SavedSignal[] | null; o
 
 // Профиль по горизонтам: накопленная изб. доходность к каждому горизонту (дн.).
 // Подписи осей в той же SVG, что и линия → точное выравнивание; нулевая линия; основной горизонт жирнее.
+function RuleCard({ title, enabled, onToggle, testid, children }: any) {
+  return (
+    <div data-testid={testid} className="space-y-2 rounded-fk border border-line bg-surface-2 p-3">
+      <button
+        type="button"
+        onClick={onToggle}
+        data-testid={`${testid}-toggle`}
+        className={`flex w-full items-center justify-between text-[13px] font-semibold ${enabled ? 'text-ink' : 'text-ink-3'}`}
+      >
+        <span>{title}</span>
+        <span className={`rounded-fk-sm px-2 py-0.5 text-[11px] ${enabled ? 'bg-brand-50 text-brand-700' : 'bg-surface-elev text-ink-3'}`}>
+          {enabled ? 'вкл' : 'выкл'}
+        </span>
+      </button>
+      {enabled && <div className="space-y-2">{children}</div>}
+    </div>
+  );
+}
+
+function NaaimForm(p: any) {
+  const setR1 = (patch: any) => p.setR1({ ...p.r1, ...patch });
+  const setR2 = (patch: any) => p.setR2({ ...p.r2, ...patch });
+  const setR3 = (patch: any) => p.setR3({ ...p.r3, ...patch });
+  return (
+    <>
+      <p className="text-[12px] text-ink-3">
+        Форвардная доходность инструмента <b>{p.instrument}</b> на правилах недельного ряда <b>NAAIM Exposure Index</b>.
+        «Альфа» = средний форвард на сигнале − безусловная база (вклад тайминга). Вход — следующий торговый день
+        <b> после</b> даты значения NAAIM (без заглядывания вперёд). Инструмент = бенчмарк (меняется селектором сверху).
+      </p>
+      <div className="grid grid-cols-2 gap-3">
+        <Field>
+          <Label htmlFor="nyf">Год от</Label>
+          <Select id="nyf" value={p.yearFrom} onChange={(e: any) => p.setYearFrom(e.target.value)}>
+            <option value="">самый ранний</option>
+            {YEARS.map((y) => (<option key={y} value={y}>{y}</option>))}
+          </Select>
+        </Field>
+        <Field>
+          <Label htmlFor="nyt">Год до</Label>
+          <Select id="nyt" value={p.yearTo} onChange={(e: any) => p.setYearTo(e.target.value)}>
+            <option value="">текущий</option>
+            {YEARS.map((y) => (<option key={y} value={y}>{y}</option>))}
+          </Select>
+        </Field>
+      </div>
+
+      <RuleCard testid="naaim-rule1" title="Правило 1 — отскок из перепроданности" enabled={p.r1.enabled} onToggle={() => setR1({ enabled: !p.r1.enabled })}>
+        <div className="grid grid-cols-2 gap-3">
+          <Field><Label htmlFor="n1pct">Нижние, %</Label><NumberInput id="n1pct" value={p.r1.pct} onChange={(v: number) => setR1({ pct: v })} /></Field>
+          <Field><Label htmlFor="n1w">Окно, недель</Label><NumberInput id="n1w" value={p.r1.lookbackW} onChange={(v: number) => setR1({ lookbackW: v })} /></Field>
+        </div>
+        <p className="text-[11px] text-ink-3">NAAIM в нижних {fnum(p.r1.pct, 0)}% за {p.r1.lookbackW} недель И не ниже значения прошлой недели.</p>
+      </RuleCard>
+
+      <RuleCard testid="naaim-rule2" title="Правило 2 — нарастающий risk-on" enabled={p.r2.enabled} onToggle={() => setR2({ enabled: !p.r2.enabled })}>
+        <div className="grid grid-cols-3 gap-3">
+          <Field><Label htmlFor="n2lvl">NAAIM &gt;</Label><NumberInput id="n2lvl" value={p.r2.level} onChange={(v: number) => setR2({ level: v })} /></Field>
+          <Field><Label htmlFor="n2by">Рост ≥, пп</Label><NumberInput id="n2by" value={p.r2.riseBy} onChange={(v: number) => setR2({ riseBy: v })} /></Field>
+          <Field><Label htmlFor="n2w">За, недель</Label><NumberInput id="n2w" value={p.r2.riseW} onChange={(v: number) => setR2({ riseW: v })} /></Field>
+        </div>
+        <p className="text-[11px] text-ink-3">NAAIM &gt; {fnum(p.r2.level, 0)} И вырос ≥ {fnum(p.r2.riseBy, 0)} пунктов за {p.r2.riseW} недель.</p>
+      </RuleCard>
+
+      <RuleCard testid="naaim-rule3" title="Правило 3 — bullish" enabled={p.r3.enabled} onToggle={() => setR3({ enabled: !p.r3.enabled })}>
+        <Field><Label htmlFor="n3lvl">NAAIM &gt;</Label><NumberInput id="n3lvl" value={p.r3.level} onChange={(v: number) => setR3({ level: v })} /></Field>
+        <p className="text-[11px] text-ink-3">NAAIM &gt; {fnum(p.r3.level, 0)}.</p>
+      </RuleCard>
+
+      <Field>
+        <Label htmlFor="nlag">Вход: +дней после следующего торгового дня</Label>
+        <NumberInput id="nlag" value={p.entryLag} onChange={(v: number) => p.setEntryLag(v)} />
+        <p className="text-[11px] text-ink-3">0 = вход на следующий торговый день после даты NAAIM (point-in-time). Больше — консервативнее.</p>
+      </Field>
+
+      <Button onClick={p.onRun} loading={p.running} fullWidth data-testid="run-study">
+        Оценить альфу NAAIM-сигналов
+      </Button>
+    </>
+  );
+}
+
+function CorrForm(p: any) {
+  return (
+    <>
+      <p className="text-[12px] text-ink-3">
+        Матрица корреляций доходностей выбранной вселенной (<b>2–40 активов</b>) — полная за окно и <b>по годам</b>.
+        Плюс трейлинг-моментум и средняя корреляция: ищем <b>низкокоррелированные растущие</b> активы и собираем
+        low-corr корзину (идея — диверсификация под плечо). Вселенную выбери выше (пресеты «Сырьё», «Секторные/Страновые ETF», «Металлы»…).
+      </p>
+      <Field>
+        <Label>Частота доходностей</Label>
+        <div className="flex gap-1 rounded-fk bg-surface-2 p-1">
+          {([['d', 'Дневные'], ['w', 'Недельные'], ['m', 'Месячные']] as const).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => p.setFreq(id)}
+              className={`flex-1 rounded-fk-sm px-2 py-1 text-[12px] font-semibold transition-colors ${
+                p.freq === id ? 'bg-surface-elev text-ink shadow-fk-sm' : 'text-ink-3'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] text-ink-3">Недельные/месячные — меньше шума для кросс-активных корреляций; дневные — больше наблюдений по годам.</p>
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field><Label htmlFor="cmw">Окно моментума, дн.</Label><NumberInput id="cmw" value={p.momWindow} onChange={p.setMomWindow} /></Field>
+        <Field><Label htmlFor="cbn">Размер корзины</Label><NumberInput id="cbn" value={p.basketN} onChange={p.setBasketN} /></Field>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field>
+          <Label htmlFor="cyf">Год от</Label>
+          <Select id="cyf" value={p.yearFrom} onChange={(e: any) => p.setYearFrom(e.target.value)}>
+            <option value="">самый ранний</option>
+            {YEARS.map((y) => (<option key={y} value={y}>{y}</option>))}
+          </Select>
+        </Field>
+        <Field>
+          <Label htmlFor="cyt">Год до</Label>
+          <Select id="cyt" value={p.yearTo} onChange={(e: any) => p.setYearTo(e.target.value)}>
+            <option value="">текущий</option>
+            {YEARS.map((y) => (<option key={y} value={y}>{y}</option>))}
+          </Select>
+        </Field>
+      </div>
+      <Button onClick={p.onRun} loading={p.running} fullWidth data-testid="run-study" disabled={!p.canRun}>
+        Построить матрицу корреляций
+      </Button>
+      {!p.canRun && <p className="text-[11px] font-medium text-warn-strong">Кнопка неактивна: выберите вселенную (≥ 2 актива) выше.</p>}
+    </>
+  );
+}
+
 function DecayChart({ points, mainH }: { points: { h: number; mean: number | null }[]; mainH: number }) {
   const valid = points.filter((p) => p.mean != null && Number.isFinite(p.mean));
   if (valid.length < 2) return null;
@@ -1901,6 +2186,59 @@ function LeaderboardView({ data, groups, winFrom, winTo }: { data: any; groups: 
   );
 }
 
+function LiveFilterBar({ pf, lf, setLf }: { pf: any; lf: LiveFilter; setLf: (f: LiveFilter) => void }) {
+  const ff = FACTOR_BY_ID[pf.factor as FactorId];
+  const set = (patch: Partial<LiveFilter>) => setLf({ ...lf, ...patch });
+  return (
+    <div className="space-y-2 rounded-fk border border-brand bg-surface-2 p-3" data-testid="live-filter">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant="brand">● LIVE-фильтр</Badge>
+        <span className="text-[11px] text-ink-3">фильтр / годы пересчитываются на клиенте — без перепрогона</span>
+        <button
+          type="button"
+          data-testid="live-filter-toggle"
+          onClick={() => set({ enabled: !lf.enabled })}
+          className={`ml-auto rounded-fk-sm px-2 py-0.5 text-[11px] font-semibold ${lf.enabled ? 'bg-brand-50 text-brand-700' : 'bg-surface-elev text-ink-3'}`}
+        >
+          {lf.enabled ? 'вкл' : 'выкл'}
+        </button>
+      </div>
+      {lf.enabled && (
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex gap-1 rounded-fk bg-surface-elev p-1">
+            {([['exclude', 'Исключить'], ['keep', 'Только']] as const).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => set({ op: id })}
+                className={`rounded-fk-sm px-2 py-1 text-[12px] font-semibold transition-colors ${lf.op === id ? 'bg-surface-2 text-ink shadow-fk-sm' : 'text-ink-3'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <span className="text-[12px] text-ink-2"><b>{ff?.label ?? pf.factor}</b> ({pf.param})</span>
+          <div className="flex gap-1 rounded-fk bg-surface-elev p-1">
+            {([['high', '≥'], ['low', '≤']] as const).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => set({ side: id })}
+                className={`rounded-fk-sm px-2 py-1 text-[12px] font-semibold transition-colors ${lf.side === id ? 'bg-surface-2 text-ink shadow-fk-sm' : 'text-ink-3'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="w-24"><NumberInput value={lf.threshold} onChange={(v: number) => set({ threshold: v })} /></div>
+          <span className="text-[12px] text-ink-3">{ff?.unit || ''}</span>
+          <span className="text-[11px] text-ink-3">детали ячейки (по горизонтам/тикерам) — по полному прогону</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FactorResult({ data, onSave, reqGroups = [], reqUniverse = [], reqBenchmark = 'SPY', groupTickersByLabel }: { data: any; onSave: (d: SignalDef, name?: string) => void; reqGroups?: { label?: string; tickers: string[]; benchmark?: string }[]; reqUniverse?: string[]; reqBenchmark?: string; groupTickersByLabel?: (label: string) => { tickers: string[]; benchmark?: string } | null }) {
   const f = FACTOR_BY_ID[data.factor];
   // Конфиг запроса вшит в результат (_req): тикеры групп нужны для setops (И/А без В) и доступны
@@ -1917,6 +2255,13 @@ function FactorResult({ data, onSave, reqGroups = [], reqUniverse = [], reqBench
   const hasYears = groups.some((g) => (g.grid || []).some((c: any) => Array.isArray(c.years)));
   const [winFrom, setWinFrom] = useState(minY);
   const [winTo, setWinTo] = useState(maxY);
+  // Живой фильтр выборки: при наличии панели наблюдений считается на клиенте мгновенно (без перепрогона).
+  const pf = data.panelFilter;
+  const hasPanel = !!pf && groups.some((g) => g.panel);
+  const [liveFilter, setLiveFilter] = useState<LiveFilter>({
+    enabled: !!pf?.enabled, side: pf?.side === 'low' ? 'low' : 'high',
+    threshold: Number(pf?.threshold ?? 30), op: pf?.op === 'keep' ? 'keep' : 'exclude',
+  });
   const [picks, setPicks] = useState<Set<string>>(new Set()); // ключи `${gi}|${param}|${col}` — выбор по ВСЕМ группам
   useEffect(() => {
     setWinFrom(minY);
@@ -1957,6 +2302,13 @@ function FactorResult({ data, onSave, reqGroups = [], reqUniverse = [], reqBench
       {data.outcome === 'alpha' && (
         <Badge variant="brand">исход: альфа (β-скоррект.) — «изб. дох.» = r − β·r_бенч</Badge>
       )}
+      {!hasPanel && data.filter && data.filtered && (
+        <Badge variant="warn">
+          фильтр: {data.filter.op === 'exclude' ? 'искл.' : 'только'} {FACTOR_BY_ID[data.filter.factor as FactorId]?.label ?? data.filter.factor} ({data.filter.param}) {data.filter.side === 'high' ? '≥' : '≤'} {fnum(data.filter.threshold, 0)} ·
+          {' '}убрано {data.filtered.before ? Math.round((data.filtered.excluded / data.filtered.before) * 100) : 0}% ({data.filtered.excluded} из {data.filtered.before})
+        </Badge>
+      )}
+      {hasPanel && <LiveFilterBar pf={pf} lf={liveFilter} setLf={setLiveFilter} />}
       {hasYears && <YearRange min={minY} max={maxY} from={winFrom} to={winTo} setFrom={setWinFrom} setTo={setWinTo} />}
       <SelectionPanel
         data={data}
@@ -1981,35 +2333,48 @@ function FactorResult({ data, onSave, reqGroups = [], reqUniverse = [], reqBench
         <p className="text-[12px] text-ink-3">Ниже — карта по каждой стране/группе. Кликайте ячейки (можно в РАЗНЫХ странах) — детали и совокупная статистика появятся сверху.</p>
       )}
       {groups.map((g: any, i: number) => (
-        <FactorGroup key={i} gi={i} data={data} group={g} isRange={isRange} isQ={isQ} multi={multi} winFrom={winFrom} winTo={winTo} picks={picks} onToggle={toggle} />
+        <FactorGroup key={i} gi={i} data={data} group={g} isRange={isRange} isQ={isQ} multi={multi} winFrom={winFrom} winTo={winTo} picks={picks} onToggle={toggle} liveFilter={hasPanel ? liveFilter : undefined} />
       ))}
     </div>
   );
 }
 
-function FactorGroup({ gi, data, group, isRange, isQ, multi, winFrom, winTo, picks, onToggle }: { gi: number; data: any; group: any; isRange: boolean; isQ: boolean; multi: boolean; winFrom: number; winTo: number; picks: Set<string>; onToggle: (gi: number, c: HeatCell) => void }) {
+function FactorGroup({ gi, data, group, isRange, isQ, multi, winFrom, winTo, picks, onToggle, liveFilter }: { gi: number; data: any; group: any; isRange: boolean; isQ: boolean; multi: boolean; winFrom: number; winTo: number; picks: Set<string>; onToggle: (gi: number, c: HeatCell) => void; liveFilter?: LiveFilter }) {
   const mainH: number = data.horizon;
   const alpha: number = data.fdrAlpha || 0.1;
   const grid: any[] = group.grid || [];
   const useWin = grid.some((g: any) => Array.isArray(g.years));
 
-  // Пересчёт каждой ячейки под выбранное окно лет (из по-годовой агрегации).
+  // ЖИВОЙ пересчёт из сырых наблюдений (панель): окно лет + фильтр — мгновенно, без перепрогона.
+  const panel = group.panel;
+  const live = useMemo(
+    () => (panel && liveFilter ? recomputeCells(grid, panel, data.bins, winFrom, winTo, liveFilter) : null),
+    [panel, grid, data.bins, winFrom, winTo, liveFilter],
+  );
+  // Фолбэк — по-годовой пересчёт из достаточных статистик (когда панели нет: большие вселенные/перцентили).
   const recomputed = useMemo(
     () => grid.map((g: any) => ({ g, agg: useWin && g.years ? aggCell(g.years, winFrom, winTo, mainH) : null })),
     [grid, useWin, winFrom, winTo, mainH],
   );
   const sigSet = useMemo(() => {
+    if (live) return bhSig([...live.entries()].filter(([, v]) => v).map(([k, v]) => ({ key: k, p: pval(v!.t) })), alpha);
     if (!useWin) return null;
     return bhSig(recomputed.filter((r) => r.agg).map((r) => ({ key: `${r.g.param}:${r.g.col}`, p: pval(r.agg!.t) })), alpha);
-  }, [recomputed, useWin, alpha]);
+  }, [live, recomputed, useWin, alpha]);
 
-  const cells: HeatCell[] = recomputed.map(({ g, agg }) => ({
-    row: g.param,
-    col: g.col,
-    value: agg ? agg.mean : useWin ? null : g.mean,
-    n: agg ? agg.n : useWin ? 0 : g.n,
-    sig: useWin ? !!(sigSet && sigSet.has(`${g.param}:${g.col}`)) : g.sig,
-  }));
+  const cells: HeatCell[] = recomputed.map(({ g, agg }) => {
+    if (live) {
+      const s = live.get(`${g.param}:${g.col}`);
+      return { row: g.param, col: g.col, value: s ? s.mean : null, n: s ? s.n : 0, sig: !!(sigSet && sigSet.has(`${g.param}:${g.col}`)) };
+    }
+    return {
+      row: g.param,
+      col: g.col,
+      value: agg ? agg.mean : useWin ? null : g.mean,
+      n: agg ? agg.n : useWin ? 0 : g.n,
+      sig: useWin ? !!(sigSet && sigSet.has(`${g.param}:${g.col}`)) : g.sig,
+    };
+  });
 
   // Подсветка ячеек ЭТОЙ группы: глобальные ключи `${gi}|param|col` → локальные `param|col`.
   const prefix = `${gi}|`;
@@ -2384,6 +2749,204 @@ function PooledCard({ pooled, count, labels, countries, fullWindow, winFrom, win
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function NaaimMeta({ meta }: { meta: any }) {
+  if (!meta) return null;
+  return (
+    <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-ink-3" data-testid="naaim-meta">
+      <span>Инструмент: <b className="text-ink-2">{meta.instrument}</b></span>
+      <span>Цены: {meta.first} … {meta.last}</span>
+      <span>NAAIM: {meta.naaim_first} … {meta.naaim_last} ({meta.weeks} нед.)</span>
+      <span>Вход: след. день +{meta.entryLag}</span>
+      <span>База: {meta.base_n} входов</span>
+    </div>
+  );
+}
+
+function NaaimResult({ data }: { data: any }) {
+  const rules: any[] = data.rules || [];
+  const src = data.meta?.naaim_source;
+  const real = src === 'manual' || src === 'naaim.org' || src === 'csv-url';
+  const srcLabel = src === 'manual' ? 'реальные (загружены вручную)'
+    : src === 'naaim.org' || src === 'csv-url' ? 'реальные (авто-фетч)'
+    : src === 'synthetic' ? 'СИНТЕТИКА (демо) — загрузите реальные через POST /api/admin/naaim'
+    : String(src ?? '—');
+  return (
+    <div className="space-y-4" data-testid="naaim-result">
+      <NaaimMeta meta={data.meta} />
+      <Badge variant={real ? 'brand' : 'warn'} data-testid="naaim-source">Данные NAAIM: {srcLabel}</Badge>
+      <p className="text-[12px] text-ink-3">
+        Инструмент <b>{data.instrument}</b> · горизонт {data.horizon}д · «альфа» = ср. форвард на сигнале − безусловная база ({fpct(data.baseline)}).
+      </p>
+      {rules.map((r) => (
+        <div key={r.id} data-testid={`naaim-rule-${r.id}`} className="space-y-3 rounded-fk border border-line bg-surface-elev p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="neutral">{r.label}</Badge>
+            <span className="text-[11px] text-ink-3">недель сигнала: {r.weeks}</span>
+          </div>
+          {r.stat ? (
+            <>
+              <div className="flex flex-wrap gap-3">
+                <Stat label="Альфа (edge)" value={fpct(r.stat.edge)} tone={(r.stat.edge ?? 0) >= 0 ? 'up' : 'down'} hint={`база ${fpct(data.baseline)}`} />
+                <Stat label="Ср. форвард" value={fpct(r.stat.mean)} tone={(r.stat.mean ?? 0) >= 0 ? 'up' : 'down'} />
+                <Stat label="t-стат (period)" value={fnum(r.stat.t)} />
+                <Stat label="Доля плюс" value={fnum(r.stat.hit, 1) + '%'} />
+                <Stat label="Наблюдений" value={String(r.stat.n)} />
+              </div>
+              {r.decay && <DecayBlock points={r.decay.map((d: any) => ({ h: d.h, mean: d.mean }))} mainH={data.horizon} />}
+              <YearlyBars yearly={r.yearly} />
+            </>
+          ) : (
+            <p className="text-[13px] text-ink-3">Слишком мало недель с сигналом — ослабьте порог или расширьте окно лет.</p>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function corrBg(v: number | null): string {
+  if (v == null || !Number.isFinite(v)) return 'transparent';
+  const t = Math.max(-1, Math.min(1, v));
+  const a = Math.round(Math.pow(Math.abs(t), 0.85) * 0.85 * 1000) / 1000;
+  // высокая ПРЯМАЯ корреляция = красный (плохо для диверсификации); ОБРАТНАЯ = зелёный (хорошо).
+  return t >= 0 ? `rgba(239,68,68,${a})` : `rgba(16,185,129,${a})`;
+}
+
+function CorrMatrix({ assets, matrix }: { assets: string[]; matrix: (number | null)[][] }) {
+  return (
+    <div className="overflow-auto" data-testid="corr-matrix">
+      <table className="border-separate" style={{ borderSpacing: 2 }}>
+        <thead>
+          <tr>
+            <th className="sticky left-0 z-10 bg-surface-elev px-1" />
+            {assets.map((a) => (
+              <th key={a} className="px-0.5 py-0.5 text-[9px] font-semibold text-ink-2 tabular-nums" style={{ writingMode: 'vertical-rl' }}>{a}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {assets.map((a, i) => (
+            <tr key={a}>
+              <td className="sticky left-0 z-10 bg-surface-elev px-1 py-0.5 text-right text-[10px] font-semibold text-ink tabular-nums whitespace-nowrap">{a}</td>
+              {assets.map((b, j) => {
+                const v = matrix[i]?.[j] ?? null;
+                const diag = i === j;
+                return (
+                  <td key={b} className="p-0">
+                    <div
+                      className="flex h-6 w-9 items-center justify-center rounded-[3px] border border-line text-[9px] tabular-nums text-ink"
+                      title={`${a} × ${b}: ${v == null ? '—' : v.toFixed(2)}`}
+                      style={{ background: diag ? 'rgba(120,120,120,0.12)' : corrBg(v) }}
+                    >
+                      {diag ? '' : v == null ? '' : v.toFixed(2)}
+                    </div>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function CorrResult({ data }: { data: any }) {
+  const [year, setYear] = useState<number | 'all'>('all');
+  const years = (data.years || []) as { year: number; matrix: (number | null)[][] }[];
+  const m = data.meta || {};
+  const active = year === 'all' ? data.matrix : years.find((y) => y.year === year)?.matrix ?? data.matrix;
+  const freqLabel = m.freq === 'd' ? 'дневные' : m.freq === 'w' ? 'недельные' : 'месячные';
+  const pa = (data.perAsset || []).slice().sort((x: any, y: any) => (y.mom ?? -1e9) - (x.mom ?? -1e9));
+  const b = data.basket;
+  const lev = m.lev || 2;
+  return (
+    <div className="space-y-4" data-testid="corr-result">
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-ink-3">
+        <span>Активов: <b className="text-ink-2">{m.nAssets}</b></span>
+        <span>Доходности: {freqLabel} ({m.nObs} набл.)</span>
+        <span>Период: {m.first} … {m.last}</span>
+        <span>Моментум: трейлинг {m.momWindow}д</span>
+      </div>
+      <div className="flex flex-wrap items-center gap-1">
+        <span className="mr-1 text-[11px] text-ink-3">Матрица:</span>
+        <button
+          type="button"
+          data-testid="corr-year-all"
+          onClick={() => setYear('all')}
+          className={`rounded-fk-sm px-2 py-0.5 text-[11px] font-semibold ${year === 'all' ? 'bg-brand-50 text-brand-700' : 'bg-surface-2 text-ink-3'}`}
+        >
+          Всё окно
+        </button>
+        {years.map((y) => (
+          <button
+            key={y.year}
+            type="button"
+            onClick={() => setYear(y.year)}
+            className={`rounded-fk-sm px-2 py-0.5 text-[11px] font-semibold tabular-nums ${year === y.year ? 'bg-brand-50 text-brand-700' : 'bg-surface-2 text-ink-3'}`}
+          >
+            {y.year}
+          </button>
+        ))}
+      </div>
+      <p className="text-[11px] text-ink-3">
+        <span className="font-semibold" style={{ color: 'rgb(239,68,68)' }}>Красный</span> = высокая прямая корреляция (плохо для диверсификации),{' '}
+        <span className="font-semibold" style={{ color: 'rgb(16,185,129)' }}>зелёный</span> = обратная (хорошо). Активы упорядочены кластерами.
+      </p>
+      <CorrMatrix assets={data.assets} matrix={active} />
+      <div className="overflow-auto">
+        <table className="w-full text-[12px]">
+          <thead>
+            <tr className="text-[10px] uppercase text-ink-3">
+              <th className="p-1 text-left">Актив</th>
+              <th className="p-1 text-right">Моментум</th>
+              <th className="p-1 text-right">Год. вол.</th>
+              <th className="p-1 text-right">Ср. корр.</th>
+              <th className="p-1 text-left" />
+            </tr>
+          </thead>
+          <tbody>
+            {pa.map((r: any) => {
+              const good = (r.mom ?? -1) > 0 && (r.avgCorr ?? 1) < 0.5;
+              return (
+                <tr key={r.sym} className="border-t border-line">
+                  <td className="p-1 font-semibold text-ink">{r.sym}</td>
+                  <td className="p-1 text-right tabular-nums" style={{ color: (r.mom ?? 0) >= 0 ? 'rgb(5,150,105)' : 'rgb(220,38,38)' }}>{fpct(r.mom)}</td>
+                  <td className="p-1 text-right tabular-nums text-ink-2">{fpct(r.vol)}</td>
+                  <td className="p-1 text-right tabular-nums text-ink-2">{fnum(r.avgCorr)}</td>
+                  <td className="p-1">{good && <Badge variant="up">диверсификатор · ↑моментум</Badge>}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {b ? (
+        <div className="space-y-2 rounded-fk border border-line bg-surface-elev p-3" data-testid="corr-basket">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="brand">Low-corr корзина · {b.picked.length} активов</Badge>
+            <span className="text-[12px] font-semibold text-ink-2">{b.picked.join(' · ')}</span>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <Stat label="Ср. попарн. корр." value={fnum(b.avgPairCorr)} />
+            {b.annRet != null && <Stat label="Доходность (год, equal-wt)" value={fpct(b.annRet)} tone={(b.annRet ?? 0) >= 0 ? 'up' : 'down'} />}
+            {b.annVol != null && <Stat label="Волатильность (год)" value={fpct(b.annVol)} />}
+            {b.sharpe != null && <Stat label="Sharpe" value={fnum(b.sharpe)} />}
+            {b.maxDD != null && <Stat label="Макс. просадка" value={fpct(b.maxDD)} tone="down" />}
+          </div>
+          {b.annRet != null && b.annVol != null && (
+            <p className="text-[11px] text-ink-3">
+              При плече ×{lev}: доходность ≈ {fpct((b.annRet || 0) * lev)}, волатильность ≈ {fpct((b.annVol || 0) * lev)} (Sharpe не меняется; <b>без</b> учёта стоимости плеча и издержек). In-sample, равные веса, дневной ребаланс — ориентир, не бэктест.
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="text-[13px] text-ink-3">Корзину не собрать: нет ≥2 активов с положительным моментумом в окне.</p>
+      )}
+    </div>
   );
 }
 

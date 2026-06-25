@@ -310,6 +310,29 @@ def pair_meta(px, A, B, MKT, cleaned, tg):
             'last': str(pd.Timestamp(dts[-1]).date()) if dts else '',
             'cleaned': int(cleaned)}
 
+def _g(x):
+    try:
+        xf = float(x)
+        return str(int(xf)) if abs(xf - int(xf)) < 1e-9 else str(round(xf, 2))
+    except Exception:
+        return str(x)
+
+# Сводка по одному правилу NAAIM: форвардная статистика инструмента + edge к безусловной базе.
+def _naaim_rule_out(rid, label, df, base_h, H, HZ, fired_weeks):
+    maincol = 't_' + str(H)
+    st = pstat(df, maincol) if (not df.empty and maincol in df.columns) else None
+    decay = []
+    for h in HZ:
+        col = 't_' + str(h)
+        m = _f(df[col].mean()) if (not df.empty and col in df.columns) else None
+        decay.append({'h': h, 'mean': m, 'base': base_h.get(h)})
+    yearly = yearly_of(df, maincol) if (not df.empty and maincol in df.columns) else []
+    edge = _f(st['mean'] - base_h.get(H)) if (st is not None and base_h.get(H) is not None) else None
+    return {'id': rid, 'label': label, 'weeks': int(fired_weeks),
+            'stat': ({'mean': _f(st['mean']), 't': _f(st['t']), 'hit': _f(st['hit']),
+                      'n': st['n'], 'edge': edge} if st else None),
+            'decay': decay, 'yearly': yearly}
+
 async def main():
     mode = CFG['mode']; bench = str(CFG['benchmark']); syms = list(CFG['universe']); H = int(CFG['horizon'])
     # Локальные бенчмарки групп тоже нужно загрузить — иначе forward считается СЫРЫМ (не excess),
@@ -318,7 +341,7 @@ async def main():
     fetch_syms = list(dict.fromkeys([str(s).upper() for s in syms] + [bench.upper()] + gbenches))
     print('Загружаю цены:', len(fetch_syms), '(вкл. бенчмарки групп)')
     px = await get_prices(fetch_syms)
-    min_cols = 1 if mode == 'ma' else 2   # ma не использует бенчмарк → хватает одного тикера
+    min_cols = 1 if mode in ('ma', 'naaim') else 2   # ma/naaim анализируют один инструмент
     if px is None or px.empty or px.shape[1] < min_cols:
         return {'error': 'Недостаточно данных: не загрузились цены.'}
     px, n_cleaned = clean_prices(px)  # битые бары (невозможные доходности) → NaN
@@ -376,7 +399,14 @@ async def main():
         col_labels = [c['label'] for c in cols]
         skip = int(CFG.get('skip', 0))
         groups_cfg = CFG.get('groups') or [{'label': None, 'tickers': CFG['universe'], 'benchmark': bench}]
-        out_groups = []; total_obs = 0; all_syms = set()
+        flt = CFG.get('filter')
+        # Панель сырых наблюдений для ЖИВОГО (клиентского) пересчёта фильтра/окна лет без перепрогона.
+        # Только для накопительно/диапазонов (перцентили — кросс-секц. ранг, на клиенте не пересчитать) и
+        # пока суммарный объём в пределах лимита (большие вселенные → живой режим выкл).
+        panel_ok = (bins != 'quantile'); PANEL_CAP = 120000; total_panel = 0
+        vfac = (flt['factor'] if flt else 'vol'); vparam = (int(flt['param']) if flt else 21)
+        vskip = (int(flt.get('skip', 0)) if flt else 0)
+        out_groups = []; total_obs = 0; all_syms = set(); flt_before = 0; flt_after = 0
         for grp in groups_cfg:
             gsyms = set(str(s).upper() for s in (grp.get('tickers') or []))
             all_syms |= gsyms
@@ -388,13 +418,55 @@ async def main():
             tgt_g = build_targets(pxg, gbench, HZ, H, outcome)
             if tgt_g.empty:
                 out_groups.append({'label': grp.get('label'), 'baseline': None, 'symbols': 0,
-                                   'benchmark': gbench, 'has_bench': has_b_g, 'grid': []})
+                                   'benchmark': gbench, 'has_bench': has_b_g, 'grid': [], 'panel': None})
                 continue
+            tgt_g0 = tgt_g  # НЕотфильтрованная панель — основа для клиентского пересчёта
+            # Подготовка панели группы: фактор-фильтр (v) + индекс дат. Сбой → живой режим выкл (не валим исследование).
+            gdates = []; gparams = None; vdf = None; didx = {}
+            if panel_ok:
+                try:
+                    vdf = build_fval(pxg, gbench, vfac, vparam, H, vskip).rename(columns={'fval': 'vval'})
+                    gdates = [pd.Timestamp(x) for x in sorted(pd.to_datetime(tgt_g0['date']).unique())]
+                    didx = {d: i for i, d in enumerate(gdates)}
+                    gparams = {}
+                except Exception:
+                    panel_ok = False; gparams = None
+            # Фильтр выборки: исключаем/оставляем наблюдения по ВТОРИЧНОМУ фактору (напр. vol(21) ≥ 30
+            # → exclude «турбулентные» дни). Применяется к панели группы → отражается и в базе, и в ячейках.
+            if flt:
+                ff = build_fval(pxg, gbench, flt['factor'], int(flt['param']), H, int(flt.get('skip', 0)))
+                tgt_g = tgt_g.merge(ff.rename(columns={'fval': 'ffval'}), on=['symbol', 'date'], how='left')
+                cond = region_mask(tgt_g['ffval'], flt).fillna(False)
+                flt_before += len(tgt_g)
+                tgt_g = (tgt_g[cond] if flt.get('op') == 'keep' else tgt_g[~cond]).drop(columns=['ffval'])
+                flt_after += len(tgt_g)
+                if tgt_g.empty:
+                    out_groups.append({'label': grp.get('label'), 'baseline': None, 'symbols': 0,
+                                       'benchmark': gbench, 'has_bench': has_b_g, 'grid': []})
+                    continue
             base_g = pstat(tgt_g, maincol)
             if base_g: total_obs += base_g['n']
             grid = []; pvals = []
             for p in params:
                 fv = build_fval(pxg, gbench, fid, p, H, skip)
+                # Панель: сырые наблюдения [индекс_даты, f, v, r] из НЕотфильтрованной панели. Сбой → выкл.
+                if panel_ok and gparams is not None:
+                    try:
+                        mg0 = tgt_g0.merge(fv, on=['symbol', 'date'], how='inner').merge(vdf, on=['symbol', 'date'], how='left')
+                        sb = mg0[['date', 'fval', 'vval', maincol]].dropna(subset=['fval', maincol])
+                        dd = list(sb['date']); fa = list(sb['fval']); va = list(sb['vval']); ra = list(sb[maincol])
+                        obs = []
+                        for i in range(len(sb)):
+                            vv = va[i]
+                            obs.append([int(didx[pd.Timestamp(dd[i])]), round(float(fa[i]), 3),
+                                        (round(float(vv), 3) if vv == vv else None), round(float(ra[i]), 3)])
+                        total_panel += len(obs)
+                        if total_panel > PANEL_CAP:
+                            panel_ok = False; gparams = None  # вселенная велика → живой режим выключаем
+                        else:
+                            gparams[str(p)] = obs
+                    except Exception:
+                        panel_ok = False; gparams = None
                 mg = tgt_g.merge(fv, on=['symbol', 'date'], how='inner')
                 fcol = mg['fval']
                 if bins == 'quantile':
@@ -430,9 +502,11 @@ async def main():
             sigset = _bh(pvals, alpha)
             for cell in grid:
                 cell['sig'] = (str(cell['param']) + ':' + str(cell['col'])) in sigset
+            gpanel = ({'dates': [str(d.date()) for d in gdates], 'params': gparams}
+                      if (panel_ok and gparams) else None)
             out_groups.append({'label': grp.get('label'), 'baseline': _f(base_g['mean']) if base_g else None,
                                'symbols': int(tgt_g['symbol'].nunique()), 'benchmark': gbench,
-                               'has_bench': has_b_g, 'grid': grid})
+                               'has_bench': has_b_g, 'grid': grid, 'panel': gpanel})
         dts = sorted(px.index)
         meta = {'symbols': int(len([s for s in all_syms if s in px.columns])),
                 'periods': int(len(px.index[::max(1, H)])), 'obs': int(total_obs),
@@ -441,6 +515,14 @@ async def main():
                 'benchmark': bench, 'has_bench': True, 'cleaned': int(n_cleaned)}
         return {'mode': 'factor', 'factor': fid, 'side': side, 'bins': bins, 'horizon': H, 'skip': skip,
                 'outcome': outcome,
+                'filter': (flt if flt else None),
+                'filtered': ({'before': int(flt_before), 'after': int(flt_after),
+                              'excluded': int(flt_before - flt_after)} if flt else None),
+                'panelFilter': ({'factor': vfac, 'param': vparam,
+                                 'side': (flt['side'] if (flt and flt.get('side') in ('high', 'low')) else 'high'),
+                                 'threshold': (float(flt['threshold']) if (flt and 'threshold' in flt) else 30.0),
+                                 'op': (flt.get('op') if flt else 'exclude'),
+                                 'enabled': bool(flt)} if panel_ok else None),
                 'fdrAlpha': alpha, 'params': params, 'cols': col_labels, 'hz': HZ, 'groups': out_groups, 'meta': meta}
 
     # setops — операции над множествами наблюдений ВЫБРАННЫХ ячеек одной группы (страны):
@@ -657,6 +739,181 @@ async def main():
                 'operands': [{'type': cd.get('type'), 'window': int(cd.get('window', 0)),
                               'side': cd.get('side'), 'n': op_counts[i]} for i, cd in enumerate(conds)],
                 'n_total': int(len(bas))}
+
+    if mode == 'corr':
+        # Матрица корреляций доходностей активов: полная за окно + по календарным годам.
+        # Плюс трейлинг-моментум, год. волатильность, средняя корреляция к остальным и жадная
+        # low-corr корзина среди активов с положительным моментумом (идея: диверсификация под плечо).
+        assets0 = [str(s).upper() for s in syms]
+        cols = [a for a in dict.fromkeys(assets0) if a in px.columns and px[a].notna().sum() >= 60]
+        if len(cols) < 2:
+            return {'error': 'Нужно ≥2 актива с достаточной историей. Выберите вселенную выше.'}
+        sub = px[cols]
+        freq = CFG.get('freq', 'd')
+        if freq == 'w':
+            rp = sub.resample('W-FRI').last()
+        elif freq == 'm':
+            rp = sub.resample('M').last()
+        else:
+            rp = sub
+        rets = rp.pct_change()
+        if rets.shape[0] < 30:
+            return {'error': 'Слишком короткая история для корреляций в выбранном окне.'}
+        mp = 20 if freq == 'd' else 8
+        cmf = rets.corr(min_periods=mp)
+        # Упорядочиваем активы по первому собственному вектору корреляции — близкие встают рядом (блоки).
+        try:
+            M = cmf.reindex(index=cols, columns=cols).values.astype('float64')
+            M = np.where(np.isnan(M), 0.0, M)
+            np.fill_diagonal(M, 1.0)
+            w, V = np.linalg.eigh(M)
+            order = list(np.argsort(V[:, -1]))
+            cols = [cols[i] for i in order]
+        except Exception:
+            pass
+        def corr_matrix(r):
+            cm = r.corr(min_periods=mp)
+            out = []
+            for a in cols:
+                row = []
+                for b in cols:
+                    v = cm.loc[a, b] if (a in cm.index and b in cm.columns) else None
+                    row.append(_f(v) if (v is not None and v == v) else None)
+                out.append(row)
+            return out
+        full = corr_matrix(rets)
+        years = sorted(set(int(y) for y in rets.index.year))
+        per_year = []
+        for y in years:
+            ry = rets[rets.index.year == y]
+            if ry.shape[0] < (20 if freq == 'd' else 6):
+                continue
+            per_year.append({'year': int(y), 'matrix': corr_matrix(ry)})
+        # моментум (трейлинг momWindow торг. дн.) и год. волатильность — по ДНЕВНЫМ ценам.
+        momW = int(CFG.get('momWindow', 126))
+        dret = sub.pct_change()
+        cmf2 = cmf.reindex(index=cols, columns=cols)
+        per_asset = []
+        mom = {}
+        for a in cols:
+            c = sub[a].dropna()
+            m = ((c.iloc[-1] / c.iloc[-1 - momW] - 1.0) * 100.0) if len(c) > momW else None
+            mom[a] = m
+            others = [cmf2.loc[a, b] for b in cols if b != a and cmf2.loc[a, b] == cmf2.loc[a, b]]
+            per_asset.append({'sym': a, 'mom': _f(m), 'vol': _f(dret[a].std() * math.sqrt(252) * 100.0),
+                              'avgCorr': _f(sum(others) / len(others)) if others else None})
+        # Корзина: среди активов с mom>0 жадно набираем минимально коррелированные.
+        basketN = int(CFG.get('basketN', 5))
+        pos = sorted([a for a in cols if mom.get(a) is not None and mom[a] > 0], key=lambda a: -mom[a])
+        picked = []
+        if pos:
+            picked = [pos[0]]
+            while len(picked) < basketN and len(picked) < len(pos):
+                best = None; best_score = 1e18
+                for a in pos:
+                    if a in picked: continue
+                    mx = max([abs(cmf2.loc[a, p]) for p in picked if cmf2.loc[a, p] == cmf2.loc[a, p]] + [0.0])
+                    if mx < best_score: best_score = mx; best = a
+                if best is None: break
+                picked.append(best)
+        basket = None
+        if len(picked) >= 2:
+            bret = dret[picked].mean(axis=1).dropna()
+            pc = [cmf2.loc[x, y] for i, x in enumerate(picked) for y in picked[i + 1:] if cmf2.loc[x, y] == cmf2.loc[x, y]]
+            stat = {'picked': picked, 'mom': {a: _f(mom[a]) for a in picked},
+                    'avgPairCorr': _f(sum(pc) / len(pc)) if pc else None}
+            if len(bret) > 60:
+                ann = float((1.0 + bret).prod() ** (252.0 / len(bret)) - 1.0) * 100.0
+                vol = float(bret.std() * math.sqrt(252)) * 100.0
+                eq = (1.0 + bret).cumprod(); dd = float(((eq / eq.cummax()) - 1.0).min()) * 100.0
+                stat.update({'annRet': _f(ann), 'annVol': _f(vol), 'sharpe': _f(ann / vol) if vol > 0 else None, 'maxDD': _f(dd)})
+            basket = stat
+        meta = {'first': str(pd.Timestamp(rets.index[0]).date()), 'last': str(pd.Timestamp(rets.index[-1]).date()),
+                'nAssets': len(cols), 'freq': freq, 'nObs': int(rets.shape[0]), 'momWindow': momW,
+                'lev': float(CFG.get('lev', 2))}
+        return {'mode': 'corr', 'assets': cols, 'matrix': full, 'years': per_year,
+                'perAsset': per_asset, 'basket': basket, 'meta': meta}
+
+    if mode == 'naaim':
+        # Оценка форвардной альфы инструмента (по умолч. SPY) на правилах внешнего недельного ряда NAAIM.
+        # POINT-IN-TIME: правила используют ТОЛЬКО недельные значения <= текущей недели; вход — следующий
+        # торговый день СТРОГО после даты значения NAAIM (+ entryLag). База — безусловная средняя форвардная
+        # доходность по ВСЕМ недельным точкам; альфа правила = ср. форвард на сигнале − база.
+        inst = str(CFG.get('instrument', bench)).upper()
+        if inst not in px.columns:
+            return {'error': 'Нет цен инструмента ' + inst + '.'}
+        cv = px[inst]
+        if cv.notna().sum() < 200:
+            return {'error': 'Слишком короткая история цен инструмента ' + inst + '.'}
+        nz = CFG.get('naaim') or []
+        if len(nz) < 20:
+            return {'error': 'Нет недельного ряда NAAIM (загрузите данные через /api/admin/naaim).'}
+        nf = pd.DataFrame(nz)
+        nf['d'] = pd.to_datetime(nf['date'], errors='coerce')
+        nf['v'] = pd.to_numeric(nf['value'], errors='coerce')
+        nf = nf.dropna(subset=['d', 'v']).sort_values('d')
+        if CFG.get('start'): nf = nf[nf['d'] >= pd.Timestamp(CFG['start'])]
+        if CFG.get('end'): nf = nf[nf['d'] <= pd.Timestamp(CFG['end'])]
+        nf = nf.reset_index(drop=True)
+        if len(nf) < 20:
+            return {'error': 'Мало недель NAAIM в выбранном окне дат.'}
+        v = nf['v']
+        # --- три правила (трейлинг, без заглядывания вперёд) ---
+        r1c = CFG.get('r1') or {}; r2c = CFG.get('r2') or {}; r3c = CFG.get('r3') or {}
+        lookbackW = int(r1c.get('lookbackW', 52)); pct = float(r1c.get('pct', 10))
+        rollq = v.rolling(lookbackW, min_periods=max(8, lookbackW // 2)).quantile(pct / 100.0)
+        rule1 = (v <= rollq) & (v >= v.shift(1))
+        lvl2 = float(r2c.get('level', 80)); riseW = int(r2c.get('riseW', 4)); riseBy = float(r2c.get('riseBy', 15))
+        rule2 = (v > lvl2) & ((v - v.shift(riseW)) >= riseBy)
+        lvl3 = float(r3c.get('level', 100))
+        rule3 = (v > lvl3)
+        rules = []
+        if r1c.get('enabled', True) is not False:
+            rules.append(('rule1', 'Нижние ' + _g(pct) + '% за ' + str(lookbackW) + 'н, не ниже пред. недели', rule1.fillna(False)))
+        if r2c.get('enabled', True) is not False:
+            rules.append(('rule2', 'NAAIM > ' + _g(lvl2) + ' и +' + _g(riseBy) + ' за ' + str(riseW) + 'н', rule2.fillna(False)))
+        if r3c.get('enabled', True) is not False:
+            rules.append(('rule3', 'NAAIM > ' + _g(lvl3), rule3.fillna(False)))
+        if not rules:
+            return {'error': 'Все правила выключены — включите хотя бы одно.'}
+        # --- вход: первый торговый день СТРОГО после даты недели (+ entryLag) ---
+        entryLag = int(CFG.get('entryLag', 0))
+        idx = px.index
+        pos_arr = idx.searchsorted(nf['d'].values, side='right') + entryLag
+        vals = cv.values.astype('float64'); n = len(idx)
+        def fwd_at(p, h):
+            if p < 0 or p + h >= n: return None
+            a = vals[p]; b = vals[p + h]
+            if not (a == a) or not (b == b) or a <= 0: return None
+            return (b / a - 1.0) * 100.0
+        ent = []
+        for k in range(len(nf)):
+            p = int(pos_arr[k])
+            ent.append({'p': p, 'e': str(pd.Timestamp(idx[p]).date())} if (0 <= p < n) else None)
+        def series_for(mask):
+            rows = []
+            for k in range(len(nf)):
+                if mask is not None and not bool(mask.iloc[k]): continue
+                e = ent[k]
+                if e is None: continue
+                row = {'date': e['e']}
+                for h in HZ: row['t_' + str(h)] = fwd_at(e['p'], h)
+                rows.append(row)
+            return pd.DataFrame(rows)
+        base_df = series_for(None)
+        base_h = {h: (_f(base_df['t_' + str(h)].mean()) if (not base_df.empty and ('t_' + str(h)) in base_df.columns) else None) for h in HZ}
+        out_rules = []; any_mask = None
+        for rid, rlabel, rmask in rules:
+            any_mask = rmask if any_mask is None else (any_mask | rmask)
+            out_rules.append(_naaim_rule_out(rid, rlabel, series_for(rmask), base_h, H, HZ, int(rmask.sum())))
+        if len(rules) >= 2 and any_mask is not None:
+            out_rules.append(_naaim_rule_out('any', 'Любое из правил', series_for(any_mask), base_h, H, HZ, int(any_mask.sum())))
+        meta = {'instrument': inst, 'first': str(pd.Timestamp(idx[0]).date()), 'last': str(pd.Timestamp(idx[-1]).date()),
+                'naaim_first': str(nf['d'].iloc[0].date()), 'naaim_last': str(nf['d'].iloc[-1].date()),
+                'naaim_source': str(CFG.get('naaim_source', 'cache')), 'weeks': int(len(nf)),
+                'base_n': int(len(base_df)), 'entryLag': entryLag}
+        return {'mode': 'naaim', 'horizon': H, 'hz': HZ, 'instrument': inst,
+                'baseline': base_h.get(H), 'rules': out_rules, 'meta': meta}
 
     if mode == 'signal':
         s0 = CFG['signal']

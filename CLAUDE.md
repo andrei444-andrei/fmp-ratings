@@ -4,6 +4,10 @@
 - Главный документ для управления архитектурой продукта — **[CONSTITUTION.md](./CONSTITUTION.md)**.
 - Это источник правды по архитектурным принципам и закреплённым именам/контрактам (`app_errors`, `/api/admin/errors`, `/admin`, `AIMLAPI_KEY` и т.д.). Любую задачу начинай со сверки с ним.
 
+## Vercel / доступы (§7–8 конституции)
+- **Рабочий (основной) Vercel-проект — `fmp-ratings`**, прод **https://fmp-ratings.vercel.app** (projectId `prj_d11oBF3KpYor2kcCtiftYAW2mx4R`, teamId `team_m6VRwbVYnv0Agtlolj2LGily`). Все Vercel-операции (логи/ошибки/деплои/прод-URL) — по нему (второй проект `fmp-ratings-e4v4` вспомогательный).
+- **Без тупых approval-промптов:** read-only диагностические инструменты разрешены в коммитнутом `.claude/settings.json` (`permissions.allow`), а не в `settings.local.json` (per-user, в `.gitignore` → в новых чатах не действует). Новый безопасный read-only инструмент, который зря спрашивает доступ → добавь в `.claude/settings.json` и закоммить.
+
 ## Git / PR workflow
 - После пуша создавать PR **сразу как обычный (не draft)** и **сразу мержить** в `main` через GitHub API, без ожидания ревью.
 - Перед мержем дожидаться, что обязательные CI-проверки (если они есть) прошли успешно. Vercel Preview — необязательный, ждать его не нужно.

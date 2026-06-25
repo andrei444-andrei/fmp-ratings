@@ -3,6 +3,7 @@ import { syntheticSeries } from '@/lib/research/metrics';
 import { runSignalStudy } from '@/lib/signals/runner';
 import { buildStudyCode } from '@/lib/signals/studies';
 import { normalizeStudyConfig } from '@/lib/signals/config';
+import { getNaaimForStudy } from '@/lib/research/naaim';
 import { logAppError } from '@/lib/app-errors';
 
 export const dynamic = 'force-dynamic';
@@ -13,6 +14,12 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const cfg = normalizeStudyConfig(body);
   const ua = req.headers.get('user-agent');
+  // Режим NAAIM: внешний недельный ряд кладём в конфиг (кэш-первым; фолбэк — синтетика). Не бросает.
+  if (cfg.mode === 'naaim') {
+    const nb = await getNaaimForStudy();
+    (cfg as Record<string, unknown>).naaim = nb.rows.map((r) => ({ date: r.date, value: r.value }));
+    (cfg as Record<string, unknown>).naaim_source = nb.source;
+  }
   const code = buildStudyCode(Buffer.from(JSON.stringify(cfg)).toString('base64'));
 
   const encoder = new TextEncoder();

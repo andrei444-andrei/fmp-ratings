@@ -401,11 +401,11 @@ test.describe('Signals /signals', () => {
     // Создаём два различных сигнала во вкладке «Сигнал».
     await page.getByTestId('tab-signal').click();
     await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
-    await expect(page.getByText('Сигнал сохранён')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('Сигнал сохранён').first()).toBeVisible({ timeout: 15000 });
     // Меняем порог и сохраняем второй (другое определение).
     await page.locator('#sthr').fill('-10');
     await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
-    await expect(page.getByText('Сигнал сохранён')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('Сигнал сохранён').first()).toBeVisible({ timeout: 15000 });
 
     // Переходим в комбинацию, выбираем оба сигнала.
     await page.getByTestId('tab-combine').click();
@@ -417,5 +417,89 @@ test.describe('Signals /signals', () => {
     await expect(
       page.locator('[data-testid="signals-output"]').getByText(/Пересечение|Автоподбор/).first(),
     ).toBeVisible({ timeout: 150000 });
+  });
+
+  test('режим NAAIM: три правила оцениваются point-in-time, рендерится альфа по инструменту', async ({ page }) => {
+    await setup(page); // вселенную NAAIM игнорирует (меряем сам бенчмарк), но страница успевает осесть
+    await page.getByTestId('tab-naaim').click();
+    await page.getByTestId('run-study').click();
+    const out = page.locator('[data-testid="signals-output"]');
+    await expect(out.getByTestId('naaim-result')).toBeVisible({ timeout: 150000 });
+    // Без ключей/кэша NAAIM — детерминированная синтетика (честно помечена как демо).
+    await expect(out.getByTestId('naaim-source')).toContainText(/СИНТЕТИКА|реальные/);
+    // Каждое из трёх правил + «любое» дают карточку; у активного правила — статистика «Альфа (edge)».
+    await expect(out.getByTestId('naaim-rule-rule1')).toBeVisible();
+    await expect(out.getByTestId('naaim-rule-rule2')).toBeVisible();
+    await expect(out.getByTestId('naaim-rule-rule3')).toBeVisible();
+    await expect(out.getByText('Альфа (edge)').first()).toBeVisible();
+
+    // Выключение правила 3 убирает его карточку из результата (форма управляет составом).
+    await page.getByTestId('naaim-rule3-toggle').click();
+    await page.getByTestId('run-study').click();
+    await expect(out.getByTestId('naaim-rule-rule1')).toBeVisible({ timeout: 150000 });
+    await expect(out.getByTestId('naaim-rule-rule3')).toHaveCount(0);
+  });
+
+  test('NAAIM: ингест через /api/admin/naaim → вкладка считает на реальных (manual) данных', async ({ page, request }) => {
+    // Недельная история (детерминированная, разные форматы дат/разделителей понимаются парсером).
+    const lines: string[] = [];
+    for (let i = 0, ms = Date.UTC(2018, 0, 3); ms <= Date.UTC(2024, 11, 25); ms += 7 * 864e5, i++) {
+      const d = new Date(ms).toISOString().slice(0, 10);
+      const v = Math.round((60 + 45 * Math.sin(i / 6) + (i % 5) * 3) * 10) / 10; // ~15..110, иногда >100
+      lines.push(`${d},${v}`);
+    }
+    const post = await request.post('/api/admin/naaim', { headers: { 'content-type': 'text/csv' }, data: lines.join('\n') });
+    expect(post.ok()).toBeTruthy();
+    const pj = await post.json();
+    expect(pj.ok).toBe(true);
+    expect(pj.count).toBeGreaterThan(100);
+
+    const status = await (await request.get('/api/admin/naaim')).json();
+    expect(status.source).toBe('manual');
+    expect(status.count).toBe(pj.count);
+
+    // Теперь вкладка NAAIM видит реальные (загруженные) данные, а не синтетику.
+    await setup(page);
+    await page.getByTestId('tab-naaim').click();
+    await page.getByTestId('run-study').click();
+    const out = page.locator('[data-testid="signals-output"]');
+    await expect(out.getByTestId('naaim-result')).toBeVisible({ timeout: 150000 });
+    await expect(out.getByTestId('naaim-source')).toContainText('реальные');
+  });
+
+  test('режим Корреляции: матрица активов строится (полная + по годам), таблица активов', async ({ page }) => {
+    await setup(page); // вселенная AAA..FFF
+    await page.getByTestId('tab-corr').click();
+    await page.getByTestId('run-study').click();
+    const out = page.locator('[data-testid="signals-output"]');
+    await expect(out.getByTestId('corr-result')).toBeVisible({ timeout: 150000 });
+    await expect(out.getByTestId('corr-matrix')).toBeVisible();
+    await expect(out.getByTestId('corr-matrix')).toContainText('AAA'); // тикеры вселенной в матрице
+    await expect(out.getByTestId('corr-year-all')).toBeVisible(); // переключатель «Всё окно» / годы
+  });
+
+  test('режим Фактор: фильтр выборки включается и отражается в баре LIVE-фильтра', async ({ page }) => {
+    await setup(page);
+    await page.getByTestId('tab-factor').click();
+    await page.getByTestId('factor-filter-toggle').click(); // вкл фильтр (дефолт: vol(21) ≥ 30, исключить)
+    await page.getByTestId('run-study').click();
+    await expect(page.getByTestId('heat-cell').first()).toBeVisible({ timeout: 150000 });
+    // Узкая вселенная → отгружена панель наблюдений → фильтр отражается в баре «LIVE-фильтр» (вкл),
+    // с контролами включить/исключить (мгновенный пересчёт на клиенте).
+    const out = page.locator('[data-testid="signals-output"]');
+    await expect(out.getByTestId('live-filter')).toBeVisible();
+    await expect(out.getByTestId('live-filter-toggle')).toHaveText('вкл');
+  });
+
+  test('режим Фактор: LIVE-фильтр пересчитывает карту на клиенте (без перепрогона)', async ({ page }) => {
+    await setup(page);
+    await page.getByTestId('run-study').click();
+    await expect(page.getByTestId('heat-cell').first()).toBeVisible({ timeout: 150000 });
+    const out = page.locator('[data-testid="signals-output"]');
+    // Сервер отгрузил панель наблюдений → появилась панель живого фильтра.
+    await expect(out.getByTestId('live-filter')).toBeVisible();
+    // Включаем живой фильтр — карта пересчитывается на клиенте, ячейки остаются (без сетевого прогона).
+    await out.getByTestId('live-filter-toggle').click();
+    await expect(page.getByTestId('heat-cell').first()).toBeVisible();
   });
 });

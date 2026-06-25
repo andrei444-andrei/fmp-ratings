@@ -9,6 +9,7 @@ const LINKS = [
   { href: '/switch', label: 'Переключение A/B' },
   { href: '/backtest', label: 'Тестирование стратегий' },
   { href: '/quant', label: 'Аналитика алгоритмов' },
+  { href: '/forecasts', label: 'Прогнозы vs факт' },
   { href: '/polymarket', label: 'Polymarket' },
   { href: '/admin', label: 'Admin' },
 ];
