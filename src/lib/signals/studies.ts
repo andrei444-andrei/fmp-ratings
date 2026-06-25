@@ -1076,28 +1076,44 @@ async def main():
             yrs = yearly_of(tg[mask], maincol)
             tr_edge = st_tr['mean'] - base_tr['mean']
             te_edge = (st_te['mean'] - base_te['mean']) if st_te else None
+            sign_ok = (st_te is not None) and ((te_edge > 0) == (tr_edge > 0))
             pos_years = int(sum(1 for y in yrs if (y.get('mean') or 0) > 0))
             rules.append({'subject': c['subject'], 'sym': c['sym'], 'factor': c['factor'], 'param': c['param'],
                           'side': c['side'], 'threshold': c['threshold'],
-                          'tr_mean': _f(st_tr['mean']), 'tr_edge': _f(tr_edge), 'tr_n': st_tr['n'],
+                          'tr_mean': _f(st_tr['mean']), 'tr_edge': _f(tr_edge), 'tr_n': st_tr['n'], 'tr_p': _f(st_tr['p']),
                           'te_mean': _f(st_te['mean']) if st_te else None, 'te_edge': _f(te_edge),
                           'te_n': st_te['n'] if st_te else 0, 'te_t': _f(st_te['t']) if st_te else None,
                           'all_mean': _f(st_all['mean']) if st_all else None, 'all_t': _f(st_all['t']) if st_all else None,
                           'all_hit': _f(st_all['hit']) if st_all else None, 'all_n': st_all['n'] if st_all else 0,
-                          'fdr': bool(i in sigset), 'pos_years': pos_years, 'n_years': len(yrs),
+                          'fdr': bool(i in sigset), 'sign_ok': bool(sign_ok), 'pos_years': pos_years, 'n_years': len(yrs),
                           'years': yrs, 'hold': ('A' if (te_edge or 0) > 0 else 'B')})
-        # Робастные: прошли FDR, есть оценка на test, знак edge совпал train↔test, ≥8 наблюдений на test.
-        robust = [r for r in rules if r['fdr'] and r['te_edge'] is not None
-                  and ((r['te_edge'] > 0) == (r['tr_edge'] > 0)) and r['te_n'] >= 8]
-        robust.sort(key=lambda r: -abs(r['te_edge']))
+        # Уровень строгости «робастного» правила (главный список). Всегда нужны: оценка на test, ≥8 набл.,
+        # совпадение знака edge train↔test. Дополнительно по уровню:
+        #   strict (по умолч.) — FDR (Бенджамини-Хохберг по всем условиям);
+        #   medium — номинальная значимость на train (p<0.05) без поправки на множественность;
+        #   loose  — только OOS-подтверждение знака (поисковый режим).
+        strict = CFG.get('strict', 'strict')
+        def _robust_ok(r):
+            if r['te_edge'] is None or r['te_n'] < 8 or not r['sign_ok']:
+                return False
+            if strict == 'loose':
+                return True
+            if strict == 'medium':
+                return (r['tr_p'] is not None) and (r['tr_p'] < 0.05)
+            return r['fdr']
+        robust = sorted([r for r in rules if _robust_ok(r)], key=lambda r: -abs(r['te_edge']))
+        # Кандидаты-лиды: топ по |edge на test| среди условий с оценкой на test (≥8 набл.), БЕЗ строгого фильтра —
+        # чтобы всегда было что показать (с честными флагами FDR/знак). Это лиды для проверки, не правила.
+        candidates = sorted([r for r in rules if r['te_edge'] is not None and r['te_n'] >= 8],
+                            key=lambda r: -abs(r['te_edge']))[:topK]
         return {'mode': 'switch_auto', 'a': A, 'b': B, 'market': MKT, 'horizon': H, 'subjects': subjects,
-                'split': str(pd.Timestamp(split).date()),
+                'split': str(pd.Timestamp(split).date()), 'strict': strict,
                 'baseline_all': _f(base_all['mean']) if base_all else None,
                 'baseline_test': _f(base_te['mean']) if base_te else None,
                 'baseHit_all': _f(base_all['hit']) if base_all else None,
                 'n_scanned': len(cands), 'n_flagged': int(sum(1 for r in rules if r['fdr'])),
                 'minN': minN, 'fdrAlpha': alpha, 'topK': topK,
-                'rules': robust[:topK], 'meta': pair_meta(px, A, B, MKT, n_cleaned, tg)}
+                'rules': robust[:topK], 'candidates': candidates, 'meta': pair_meta(px, A, B, MKT, n_cleaned, tg)}
 
     return {'error': 'Неизвестный режим: ' + str(mode)}
 

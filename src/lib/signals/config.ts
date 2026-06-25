@@ -296,6 +296,7 @@ export function normalizeStudyConfig(body: any): StudyConfig {
       minN: Math.round(clampNum(body?.minN, 24, 5, 5000)),
       topK: Math.round(clampNum(body?.topK, 12, 3, 50)),
       fdrAlpha: clampNum(body?.fdrAlpha, 0.1, 0.01, 0.5),
+      strict: ['strict', 'medium', 'loose'].includes(body?.strict) ? body.strict : 'strict', // уровень отбора робастных правил
     };
   }
 
