@@ -8,6 +8,7 @@ import { computeDrawdowns } from '@/lib/quantconnect/drawdowns';
 import type { SeriesResponse, TradesResponse, QcTrade } from '@/lib/quantconnect/types';
 import type { AllocationResult } from '@/lib/quantconnect/allocation';
 import { anchorYearAttribution } from '@/lib/quantconnect/attribution';
+import { summarizeBreadth } from '@/lib/quantconnect/breadth';
 
 const ALLOC_TOPN = 12;
 function wpct(w: number): string { return w > 0.0005 ? (w * 100).toFixed(w < 0.1 ? 1 : 0) + '%' : ''; }
@@ -546,6 +547,52 @@ export default function StrategySummary({ includeArchived }: { includeArchived: 
                                 ? `Вклад тикера в доходность стратегии за год (доля экспозиции × доходность тикера, помесячно). «Итог» = фактическая доходность стратегии за год (по equity-кривой).`
                                 : `Насколько тикер обыграл ${benchName} за год. «Итог» = фактическое опережение ${benchName} за год (доходность стратегии − ${benchName}).`}
                               {' '}Доли тикеров масштабированы к фактической годовой доходности; показаны топ-{ALLOC_TOPN}, «Итог» учитывает все.
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {alloc.breadth && alloc.breadth.length > 0 && (() => {
+                        const b = summarizeBreadth(alloc.breadth);
+                        const heatRed = (v: number) => `rgba(219,59,68,${(Math.min(1, v) * 0.5).toFixed(3)})`;
+                        return (
+                          <div style={{ marginTop: 20 }}>
+                            <div className="qc-panel-h">
+                              Концентрация портфеля <span className="c">сколько позиций держится и насколько перекошено</span>
+                            </div>
+                            <div className="qc-alloc-note" style={{ marginTop: 0, marginBottom: 12 }}>
+                              Активных позиций: в среднем <b>{b.avgN.toFixed(1)}</b> · месяцев с одной позицией:{' '}
+                              <b>{(b.pctSingle * 100).toFixed(0)}%</b> · в кэше: <b>{(b.pctCash * 100).toFixed(0)}%</b> ·
+                              {' '}макс. доля одной позиции: <b>{(b.maxTop1 * 100).toFixed(0)}%</b>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxWidth: 560 }}>
+                              {b.dist.map(d => (
+                                <div key={d.k} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                                  <span style={{ width: 64, textAlign: 'right', color: '#8a8f98' }}>{d.k === 'кэш' ? 'кэш' : d.k + ' поз.'}</span>
+                                  <span style={{ flex: 1, height: 14, background: '#eef0f2', borderRadius: 3, overflow: 'hidden' }}>
+                                    <span style={{ display: 'block', height: '100%', width: `${(d.pct * 100).toFixed(1)}%`, background: d.k === 'кэш' ? '#b8bdc4' : d.k === '1' ? '#db3b44' : '#4a9d6a' }} />
+                                  </span>
+                                  <span style={{ width: 108, color: '#8a8f98' }}>{(d.pct * 100).toFixed(0)}% · {d.count} мес.</span>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="qc-tblwrap" style={{ border: 0, marginTop: 14 }}>
+                              <table className="qc-heat">
+                                <thead><tr><th className="lbl">Год</th><th>Позиций (ср.)</th><th>% мес. с 1 позицией</th><th>Макс. доля топ-1</th></tr></thead>
+                                <tbody>
+                                  {b.perYear.map(y => (
+                                    <tr key={y.year}>
+                                      <td className="lbl">{y.year}</td>
+                                      <td>{y.avgN.toFixed(1)}</td>
+                                      <td style={{ background: heatRed(y.pctSingle) }}>{(y.pctSingle * 100).toFixed(0)}%</td>
+                                      <td style={{ background: heatRed(y.maxTop1) }}>{(y.maxTop1 * 100).toFixed(0)}%</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                            <div className="qc-alloc-note">
+                              «Позиция» = вес ≥1% портфеля на конец месяца. Частые месяцы с 1 позицией или высокая «доля топ-1» = сильный перекос / низкая диверсификация. «Кэш» — месяцы без позиций.
                             </div>
                           </div>
                         );

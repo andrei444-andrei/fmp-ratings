@@ -30,6 +30,12 @@ export type YearAttribution = {
   contrib: Record<string, number>; // тикер → вклад в доходность за год
   excess: Record<string, number>;  // тикер → насколько обыграл SPY за год
 };
+// Концентрация портфеля на конец месяца: сколько активных позиций и доля крупнейшей.
+export type MonthBreadth = {
+  ym: string;   // 'YYYY-MM'
+  n: number;    // число активных позиций (вес ≥1% gross; 0 = в кэше)
+  top1: number; // доля крупнейшей позиции (0..1) — мера перекоса
+};
 export type AllocationResult = {
   id: number;
   name: string;
@@ -37,6 +43,7 @@ export type AllocationResult = {
   symbols: string[];   // символы по убыванию средней значимости (для колонок таблицы)
   attribution: TickerAttribution[]; // по убыванию excess (накопл.)
   attributionByYear: YearAttribution[]; // вклад/excess по годам
+  breadth: MonthBreadth[]; // концентрация по месяцам (число позиций + доля топ-1)
   approx: boolean;     // были ли инструменты без рыночной цены (оценка по сделкам)
   capped: boolean;     // ордера обрезаны лимитом → состав может быть неполным
   error: string | null;
@@ -99,7 +106,7 @@ function monthEnds(firstMs: number, lastMs: number): { ms: number; year: number 
 
 export async function getStrategyAllocation(id: number, force = false, endIso?: string): Promise<AllocationResult> {
   const tr = await getStrategyTrades(id, force);
-  const empty = (error: string | null): AllocationResult => ({ id, name: tr.name, years: [], symbols: [], attribution: [], attributionByYear: [], approx: false, capped: tr.capped, error });
+  const empty = (error: string | null): AllocationResult => ({ id, name: tr.name, years: [], symbols: [], attribution: [], attributionByYear: [], breadth: [], approx: false, capped: tr.capped, error });
   if (tr.error) return empty(tr.error);
   const trades = (tr.trades || []).filter(t => t.time && (t.direction === 'buy' || t.direction === 'sell') && t.quantity > 0);
   if (!trades.length) return empty(null);
@@ -227,5 +234,21 @@ export async function getStrategyAllocation(id: number, force = false, endIso?: 
     return { year, contrib, excess };
   });
 
-  return { id, name: tr.name, years, symbols, attribution, attributionByYear, approx, capped: tr.capped, error: null };
+  // концентрация по месяцам: сколько активных позиций (вес ≥1% gross) и доля топ-1.
+  const ymOf = (ms: number) => {
+    const d = new Date(ms);
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+  };
+  const breadth: MonthBreadth[] = snapshots.map(s => {
+    if (s.gross <= 0) return { ym: ymOf(s.ms), n: 0, top1: 0 };
+    let n = 0, top1 = 0;
+    for (const sv of s.signed.values()) {
+      const w = Math.abs(sv) / s.gross;
+      if (w >= 0.01) n++;
+      if (w > top1) top1 = w;
+    }
+    return { ym: ymOf(s.ms), n, top1 };
+  });
+
+  return { id, name: tr.name, years, symbols, attribution, attributionByYear, breadth, approx, capped: tr.capped, error: null };
 }
