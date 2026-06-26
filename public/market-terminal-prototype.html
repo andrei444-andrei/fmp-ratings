@@ -150,7 +150,9 @@
   .dr-h{display:flex;align-items:flex-start;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--fk-line)}
   .dr-h .x{cursor:pointer;color:var(--fk-text-3);font-size:18px;line-height:1}
   .dr-b{padding:16px 18px;overflow:auto}
-  .dr-spark{height:120px;background:var(--fk-surface-2);border-radius:var(--fk-radius);display:flex;align-items:center;justify-content:center;margin-bottom:12px}
+  .dr-spark{background:var(--fk-surface-2);border-radius:var(--fk-radius);overflow:hidden;margin-bottom:12px;padding:6px}
+  .dr-spark svg{width:100%;height:auto;display:block}
+  .stat{min-width:0}
   .statgrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px}
   .stat{background:var(--fk-surface-2);border-radius:var(--fk-radius-sm);padding:9px 11px}
   .stat .k{font-size:10px;color:var(--fk-text-3);text-transform:uppercase;letter-spacing:.04em}
@@ -164,7 +166,48 @@
   .foot{margin-top:18px;color:var(--fk-text-3);font-size:11px;text-align:center}
   .section-t{font-size:13px;font-weight:700;margin:6px 0 0}
 
-  @media(max-width:880px){.pulse{grid-template-columns:1fr}.blocks{grid-template-columns:1fr}.triple{grid-template-columns:1fr}}
+  svg{vertical-align:middle}
+
+  /* мобильные карточки инструментов */
+  .mlist{padding:2px 0}
+  .mrow{position:relative;padding:11px 14px;border-bottom:1px solid var(--fk-line)}
+  .mrow:last-child{border-bottom:0}
+  .mrow.r{cursor:pointer}
+  .mrow.r:active{background:var(--fk-surface-2)}
+  .mr-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .mr-id{display:flex;align-items:baseline;gap:8px;min-width:0}
+  .mr-id .sy{font-weight:700;font-size:14px}
+  .mr-id .nm{color:var(--fk-text-3);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mr-now{display:flex;align-items:center;gap:9px;flex:none}
+  .mr-now .delta{font-size:13px}
+  .mr-metrics{display:flex;flex-wrap:wrap;gap:7px 14px;margin-top:10px}
+  .chip{display:inline-flex;align-items:baseline;gap:5px;font-size:12px;font-variant-numeric:tabular-nums}
+  .chip > i{font-style:normal;font-size:10px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--fk-text-3)}
+  .chip.range{align-items:center}
+  .mrow > .del{position:absolute;top:50%;transform:translateY(-50%);right:9px;font-size:16px;opacity:.7}
+  .mrow.editing{padding-right:38px}
+
+  @media(max-width:880px){.pulse{grid-template-columns:1fr}.blocks{grid-template-columns:1fr}.triple{grid-template-columns:1fr 1fr}}
+  @media(max-width:700px){
+    .wrap{padding:14px 12px 84px}
+    .nav{gap:13px;padding:0 12px;overflow-x:auto}
+    .nav a.link{flex:none}
+    .nav .gh{display:none}
+    .triple{grid-template-columns:1fr}
+    .toolbar{gap:9px}
+    .toolbar .tb-spacer{display:none}
+    .toolbar .seg{flex:1 0 100%}
+    .toolbar .seg button{flex:1}
+    .toolbar .btn{flex:1;justify-content:center}
+    .ticker{top:56px}
+    .panel .field input.in,.panel .field select.in{flex:1 1 100%;min-width:0!important}
+    .cc{width:42px;height:34px;font-size:10.5px}
+    .corr td.lbl{font-size:10.5px}
+    .drawer{width:100%;max-width:100%;left:0;right:0;top:auto;bottom:0;height:90vh;border-left:0;border-top:1px solid var(--fk-line);border-radius:18px 18px 0 0;animation:sheet-in .24s cubic-bezier(.16,1,.3,1)}
+    .statgrid{grid-template-columns:1fr 1fr}
+    .legend{font-size:10.5px}
+  }
+  @keyframes sheet-in{from{transform:translateY(100%)}to{transform:translateY(0)}}
 </style>
 </head>
 <body>
@@ -370,25 +413,48 @@ function renderPulse(){
 }
 
 function cellVal(row,i){return state.mode==='excess'?(row.r[i]-SPY[i]):row.r[i]}
+function isMobile(){return window.matchMedia('(max-width:700px)').matches}
+function rowFlags(row){return (row.z?'<span class="flag z" title="|z|>2">⚡</span>':'')+(row.vr?'<span class="flag v" title="vol_ratio>1.5">!</span>':'')}
 
-function blockTable(b){
-  const isEdit=editing.has(b.id);
+function blockBodyTable(b,isEdit){
   const head=['Инстр.','тренд','1D','5D','21D','63D','YTD','vs SPY','vol21','52w'];
   const ths='<tr>'+head.map((h,i)=>'<th class="'+(i<2?'l':'')+'">'+h+'</th>').join('')+(isEdit?'<th></th>':'')+'</tr>';
   const body=b.rows.map((row,idx)=>{
-    const flags=(row.z?'<span class="flag z" title="|z|>2">⚡</span>':'')+(row.vr?'<span class="flag v" title="vol_ratio>1.5">!</span>':'');
-    const rs=row.r[3]-SPY[3];
     const cells=PCOLS.map((p,i)=>'<td>'+plain(cellVal(row,i))+'</td>').join('');
     const clickable=isEdit?'':'class="r" onclick="openDrawer(\''+b.id+'\','+idx+')"';
     return '<tr '+clickable+'>'+
       '<td class="l"><span class="inst"><span class="sy">'+row.sy+'</span><span class="nm">'+row.nm+'</span></span></td>'+
       '<td class="l">'+spark(row.seed,46,16,null,(row.r[3]>0?.12:-.12))+'</td>'+
       cells+
-      '<td>'+plain(rs)+'</td>'+
-      '<td class="num">'+row.vol.toFixed(1)+flags+'</td>'+
+      '<td>'+plain(row.r[3]-SPY[3])+'</td>'+
+      '<td class="num">'+row.vol.toFixed(1)+rowFlags(row)+'</td>'+
       '<td><span class="rangebar"><span class="rb"><i style="width:'+row.p52+'%"></i></span><span class="rb-v num">'+row.p52+'%</span></span></td>'+
       (isEdit?'<td><button class="del" title="удалить" onclick="delRow(\''+b.id+'\','+idx+',event)">✕</button></td>':'')+
     '</tr>'}).join('');
+  return '<table><thead>'+ths+'</thead><tbody>'+body+'</tbody></table>';
+}
+
+function blockBodyCards(b,isEdit){
+  return '<div class="mlist">'+b.rows.map((row,idx)=>{
+    const d0=cellVal(row,0);
+    const head=spark(row.seed,54,18,null,(row.r[3]>0?.12:-.12))+
+      '<span class="delta '+(d0>0.05?'up':(d0<-0.05?'down':'flat'))+'"><span class="arr">'+(d0>0.05?'▲':(d0<-0.05?'▼':'·'))+'</span>'+(d0>0?'+':'')+d0.toFixed(1)+'</span>';
+    const chips=[['5D',1],['21D',2],['63D',3],['YTD',4]].map(c=>'<span class="chip"><i>'+c[0]+'</i>'+plain(cellVal(row,c[1]))+'</span>').join('')+
+      '<span class="chip"><i>vs SPY</i>'+plain(row.r[3]-SPY[3])+'</span>'+
+      '<span class="chip"><i>vol21</i><span class="num">'+row.vol.toFixed(1)+'</span>'+rowFlags(row)+'</span>'+
+      '<span class="chip range"><i>52w</i><span class="rb"><i style="width:'+row.p52+'%"></i></span><span class="rb-v num">'+row.p52+'%</span></span>';
+    const onc=isEdit?'':' onclick="openDrawer(\''+b.id+'\','+idx+')"';
+    return '<div class="mrow'+(isEdit?' editing':' r')+'"'+onc+'>'+
+      '<div class="mr-top"><div class="mr-id"><span class="sy">'+row.sy+'</span><span class="nm">'+row.nm+'</span></div><div class="mr-now">'+head+'</div></div>'+
+      '<div class="mr-metrics">'+chips+'</div>'+
+      (isEdit?'<button class="del" title="удалить" onclick="delRow(\''+b.id+'\','+idx+',event)">✕</button>':'')+
+    '</div>';
+  }).join('')+'</div>';
+}
+
+function blockTable(b){
+  const isEdit=editing.has(b.id);
+  const body=isMobile()?blockBodyCards(b,isEdit):blockBodyTable(b,isEdit);
   const seg=isEdit?'<button class="ed on" onclick="toggleEdit(\''+b.id+'\')">✓ готово</button>':'<button class="ed" onclick="toggleEdit(\''+b.id+'\')">✎ изм.</button>';
   const benchBadge=b.bench==='—'?'':'<span class="badge brand">бенч '+b.bench+'</span>';
   const addbar='<div class="addbar'+(isEdit?' open':'')+'">'+
@@ -402,7 +468,7 @@ function blockTable(b){
       '<button class="btn sm" onclick="aiAdd(\''+b.id+'\')">✨ Подобрать в этот блок</button></div></div>';
   return '<div class="card"><div class="block-h"><div class="left"><span class="ttl">'+b.title+'</span>'+benchBadge+'</div>'+
     '<div class="right"><span class="meta">'+b.breadth+'</span>'+seg+'</div></div>'+
-    '<table><thead>'+ths+'</thead><tbody>'+body+'</tbody></table>'+addbar+'</div>';
+    body+addbar+'</div>';
 }
 function renderBlocks(){
   document.getElementById('blocks').innerHTML=universe.map(blockTable).join('');
@@ -515,6 +581,13 @@ let toastT;
 function toast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>el.classList.remove('show'),2200)}
 
 renderTicker();renderPulse();renderBlocks();renderCorr();
+
+// перерисовываем сетки/матрицу при пересечении мобильного брейкпоинта (таблица ↔ карточки)
+let lastMobile=isMobile();
+let resizeT;
+window.addEventListener('resize',()=>{clearTimeout(resizeT);resizeT=setTimeout(()=>{
+  if(isMobile()!==lastMobile){lastMobile=isMobile();renderBlocks();renderCorr();}
+},150)});
 </script>
 </body>
 </html>
