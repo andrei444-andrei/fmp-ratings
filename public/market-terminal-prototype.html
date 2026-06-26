@@ -28,7 +28,7 @@
 
   .nav{position:sticky;top:0;z-index:40;background:rgba(255,255,255,.86);backdrop-filter:blur(10px);
     border-bottom:1px solid var(--fk-line);height:52px;display:flex;align-items:center;padding:0 20px;gap:18px}
-  .brand{width:18px;height:18px;border-radius:6px;background:linear-gradient(135deg,var(--fk-brand),#9b8bff)}
+  .logo{width:18px;height:18px;border-radius:6px;background:linear-gradient(135deg,var(--fk-brand),#9b8bff)}
   .nav a.link{color:var(--fk-text-2);font-weight:500;padding:6px 2px;font-size:12.5px}
   .nav a.link.active{color:var(--fk-text);font-weight:650}
   .nav .spacer{flex:1}
@@ -59,8 +59,8 @@
 
   .triple{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
   .mini-t{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--fk-text-3);margin-bottom:8px}
-  .row-lite{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 0}
-  .row-lite .sy{font-weight:650;font-size:12px;width:46px}
+  .row-lite{display:flex;align-items:center;gap:11px;padding:4px 0}
+  .row-lite .sy{font-weight:650;font-size:12px;width:44px;flex:none}
 
   .delta{font-variant-numeric:tabular-nums;font-weight:650;font-size:12px;display:inline-flex;align-items:center;gap:3px}
   .delta .arr{font-size:9px}
@@ -79,9 +79,10 @@
     padding:5px 12px;border-radius:6px;cursor:pointer}
   .seg button.on{background:#fff;color:var(--fk-text);box-shadow:var(--fk-shadow-sm)}
   .tb-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--fk-text-3)}
-  .tb-spacer{flex:1}
-  .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--fk-line-strong);background:#fff;
+  .tb-actions{margin-left:auto;display:flex;gap:10px}
+  .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--fk-line-strong);background:#fff;white-space:nowrap;
     border-radius:9px;padding:6px 12px;font-size:12px;font-weight:600;color:var(--fk-text);cursor:pointer;box-shadow:var(--fk-shadow-sm)}
+  .toolbar .btn,.toolbar .seg,.toolbar .tb-actions{flex:none}
   .btn:hover{background:var(--fk-surface-2)}
   .btn.brand{background:var(--fk-brand);border-color:var(--fk-brand);color:#fff}
   .btn.brand:hover{background:var(--fk-brand-700)}
@@ -195,9 +196,9 @@
     .nav .gh{display:none}
     .triple{grid-template-columns:1fr}
     .toolbar{gap:9px}
-    .toolbar .tb-spacer{display:none}
     .toolbar .seg{flex:1 0 100%}
     .toolbar .seg button{flex:1}
+    .toolbar .tb-actions{margin-left:0;flex:1 0 100%}
     .toolbar .btn{flex:1;justify-content:center}
     .ticker{top:56px}
     .panel .field input.in,.panel .field select.in{flex:1 1 100%;min-width:0!important}
@@ -212,7 +213,7 @@
 </head>
 <body>
   <div class="nav">
-    <span class="brand"></span>
+    <span class="logo"></span>
     <a class="link" href="#">Модель сигналов</a>
     <a class="link" href="#">Переключение A/B</a>
     <a class="link active" href="#">Рыночный терминал</a>
@@ -251,9 +252,10 @@
         <button class="on" onclick="setMode('abs')">Абсолют&nbsp;%</button>
         <button onclick="setMode('excess')">Превышение бенча&nbsp;(SPY)</button>
       </div>
-      <span class="tb-spacer"></span>
-      <button class="btn" onclick="togglePanel('basketPanel')">＋ Новая корзина</button>
-      <button class="btn brand" onclick="togglePanel('aiPanel')">✨ AI-подбор тикеров</button>
+      <div class="tb-actions">
+        <button class="btn" onclick="togglePanel('basketPanel')">＋ Новая корзина</button>
+        <button class="btn brand" onclick="togglePanel('aiPanel')">✨ AI-подбор тикеров</button>
+      </div>
     </div>
     <div class="mode-note" id="modeNote">Значения в таблицах — <b>превышение бенчмарка SPY</b> (relative): доходность инструмента минус доходность SPY за тот же период. Для SPY = 0.</div>
 
