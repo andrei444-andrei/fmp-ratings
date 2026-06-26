@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation';
 import ThemeToggle from './ThemeToggle';
 
 const LINKS = [
+  { href: '/researcher', label: 'Скринер' },
   { href: '/signals', label: 'Модель сигналов' },
   { href: '/switch', label: 'Переключение A/B' },
   { href: '/backtest', label: 'Тестирование стратегий' },

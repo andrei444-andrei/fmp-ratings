@@ -109,10 +109,10 @@ function normFilter(raw: any): Record<string, unknown> | null {
   return { factor: f.id, param, side, threshold, op, skip };
 }
 
-export type StudyConfig = Record<string, unknown> & { mode: 'factor' | 'signal' | 'combine' | 'setops' | 'cellobs' | 'ma' | 'maops' | 'naaim' | 'corr' | 'switch' | 'switch_auto' };
+export type StudyConfig = Record<string, unknown> & { mode: 'factor' | 'signal' | 'combine' | 'setops' | 'cellobs' | 'ma' | 'maops' | 'naaim' | 'corr' | 'switch' | 'switch_auto' | 'screen' };
 
 export function normalizeStudyConfig(body: any): StudyConfig {
-  const mode = ['factor', 'signal', 'combine', 'setops', 'cellobs', 'ma', 'maops', 'naaim', 'corr', 'switch', 'switch_auto'].includes(body?.mode) ? body.mode : 'factor';
+  const mode = ['factor', 'signal', 'combine', 'setops', 'cellobs', 'ma', 'maops', 'naaim', 'corr', 'switch', 'switch_auto', 'screen'].includes(body?.mode) ? body.mode : 'factor';
   const benchmark = (typeof body?.benchmark === 'string' && body.benchmark.trim() ? body.benchmark : 'SPY')
     .toUpperCase()
     .trim();
@@ -158,6 +158,11 @@ export function normalizeStudyConfig(body: any): StudyConfig {
   if (mode === 'signal') {
     const sig = normSignal(body?.signal) || { factor: 'momentum', param: 5, side: 'low', threshold: -5 };
     return { ...base, signal: sig };
+  }
+
+  if (mode === 'screen') {
+    // Скринер: панель сделок по вселенной (до 40 тикеров — больше нечитаемо/тяжело). Условия — на клиенте.
+    return { ...base, universe: normUniverse(body?.universe, '', 40) };
   }
 
   if (mode === 'corr') {

@@ -834,6 +834,41 @@ async def main():
         return {'mode': 'corr', 'assets': cols, 'matrix': full, 'years': per_year,
                 'perAsset': per_asset, 'basket': basket, 'meta': meta}
 
+    if mode == 'screen':
+        # Скринер: ПАНЕЛЬ СДЕЛОК (наблюдений) — на каждую (тикер, дата) набор факторов на входе + форвардный
+        # результат (excess vs бенч за H). Условия (блоки ИЛИ / И-НЕ), разрезы и провал в сделки клиент
+        # считает МГНОВЕННО на стороне фронта (без перепрогона). Здесь — только данные.
+        tgt = build_targets(px, bench, [H], H, 'excess')
+        if tgt.empty or tgt['symbol'].nunique() < 1:
+            return {'error': 'Недостаточно истории для скрин-панели — расширьте окно лет/вселенную.'}
+        # Фиксированный набор метрик-столбцов (клиент берёт любые в условия/показ без перезагрузки).
+        METR = [('momentum', 21), ('momentum', 63), ('momentum', 126), ('momentum', 252),
+                ('vol', 21), ('vol', 63), ('dist_ath', 0), ('xbench', 63), ('sma_dist', 50), ('sma_dist', 200), ('rsi', 14)]
+        cols = [f + '_' + str(p) for f, p in METR]
+        m = tgt[['symbol', 'date', 't_' + str(H)]].rename(columns={'t_' + str(H): 'fwd'})
+        for (f, p), cn in zip(METR, cols):
+            fv = build_fval(px, bench, f, p, H, 0).rename(columns={'fval': cn})
+            m = m.merge(fv, on=['symbol', 'date'], how='left')
+        m = m.dropna(subset=['fwd'])
+        if m.empty:
+            return {'error': 'Нет сделок в окне — расширьте годы.'}
+        gdates = [pd.Timestamp(x) for x in sorted(pd.to_datetime(m['date']).unique())]
+        didx = {d: i for i, d in enumerate(gdates)}
+        syms = sorted(m['symbol'].unique())
+        sidx = {s: i for i, s in enumerate(syms)}
+        rows = []
+        for r in m.to_dict('records'):
+            row = [int(sidx[r['symbol']]), int(didx[pd.Timestamp(r['date'])]), round(float(r['fwd']), 3)]
+            for cn in cols:
+                v = r.get(cn)
+                row.append(round(float(v), 3) if (v is not None and v == v) else None)
+            rows.append(row)
+        meta = {'symbols': len(syms), 'obs': len(rows),
+                'first': str(gdates[0].date()) if gdates else '', 'last': str(gdates[-1].date()) if gdates else '',
+                'benchmark': bench, 'horizon': H}
+        return {'mode': 'screen', 'symbols': syms, 'dates': [str(d.date()) for d in gdates],
+                'cols': cols, 'rows': rows, 'horizon': H, 'meta': meta}
+
     if mode == 'naaim':
         # Оценка форвардной альфы инструмента (по умолч. SPY) на правилах внешнего недельного ряда NAAIM.
         # POINT-IN-TIME: правила используют ТОЛЬКО недельные значения <= текущей недели; вход — следующий
