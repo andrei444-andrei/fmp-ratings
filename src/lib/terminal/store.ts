@@ -5,7 +5,8 @@ import { gzipSync, gunzipSync } from 'node:zlib';
 import { libsqlClient } from '@/db/client';
 
 // Версия формата метрик: бамп → старые снапшоты «промахиваются» и пересобираются.
-export const TERMINAL_EPOCH = '1';
+// '2': добавлена корреляционная матрица + sparkT в payload — старые снапшоты промахиваются.
+export const TERMINAL_EPOCH = '2';
 export const SNAPSHOT_TTL_MS = 45 * 60 * 1000; // EOD-данные; обновляем не чаще ~45 мин
 
 let ensured = false;

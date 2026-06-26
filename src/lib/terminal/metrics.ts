@@ -98,13 +98,18 @@ export function calendarReturn(bars: Bar[], boundaryISO: string): number | null 
   return ((last - base) / base) * 100;
 }
 
+/** Индексы прореживания ряда длины len до ~target точек (сохраняя первую и последнюю). */
+export function downsampleIdx(len: number, target = 80): number[] {
+  if (len <= target) return Array.from({ length: len }, (_, i) => i);
+  const out: number[] = [];
+  const step = (len - 1) / (target - 1);
+  for (let i = 0; i < target; i++) out.push(Math.round(i * step));
+  return out;
+}
+
 /** Прореживание ряда до ~target точек (для спарклайна), сохраняя первую и последнюю. */
 export function downsample(closes: number[], target = 80): number[] {
-  if (closes.length <= target) return closes.slice();
-  const out: number[] = [];
-  const step = (closes.length - 1) / (target - 1);
-  for (let i = 0; i < target; i++) out.push(closes[Math.round(i * step)]);
-  return out;
+  return downsampleIdx(closes.length, target).map((i) => closes[i]);
 }
 
 /** Корреляция Пирсона двух выровненных рядов дневных доходностей. */
@@ -144,6 +149,7 @@ export function computeInstrumentMetrics(bars: Bar[]): InstrumentMetrics | null 
   const vol63 = annualizedVol(closes, 63);
   const ma50 = sma(closes, 50);
   const ma200 = sma(closes, 200);
+  const sidx = downsampleIdx(closes.length, 80);
 
   return {
     symbol: '',
@@ -161,6 +167,7 @@ export function computeInstrumentMetrics(bars: Bar[]): InstrumentMetrics | null 
     aboveMA50: ma50 == null ? null : last > ma50,
     aboveMA200: ma200 == null ? null : last > ma200,
     excess63: null,
-    spark: downsample(closes, 80),
+    spark: sidx.map((i) => closes[i]),
+    sparkT: sidx.map((i) => clean[i].date),
   };
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Delta, Sparkline, SegmentedControl, Badge, Skeleton } from '@/components/ui';
 import type { CorrelationMatrix, InstrumentMetrics, MarketOverview, OverviewBlock } from '@/lib/terminal/types';
 
@@ -437,6 +437,7 @@ function DetailDrawer({
 }) {
   const m = sel.m;
   const [hz, setHz] = useState('1г');
+  const [chartMode, setChartMode] = useState<'price' | 'norm'>('price');
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);
@@ -445,9 +446,9 @@ function DetailDrawer({
 
   const pts = HORIZONS.find((h) => h.label === hz)?.pts ?? 999;
   const spark = m.spark.slice(-Math.min(pts, m.spark.length));
+  const sparkD = m.sparkT.slice(-Math.min(pts, m.sparkT.length));
 
   const retItems: { label: string; v: number | null }[] = [
-    { label: '1D', v: m.returns[1] },
     { label: '1н', v: m.returns[5] },
     { label: '1м', v: m.returns[21] },
     { label: '3м', v: m.returns[63] },
@@ -490,24 +491,22 @@ function DetailDrawer({
         </div>
 
         <div className="overflow-auto px-5 py-4">
-          {/* график + горизонт */}
-          <div className="mb-2.5 flex items-center justify-between">
-            <span className="text-[10.5px] font-bold uppercase tracking-wide text-ink-3">Динамика цены</span>
+          {/* график: цена / нормализованная доходность · горизонт · ховер дата→цена */}
+          <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+            <SegmentedControl size="sm" value={chartMode} onChange={(v) => setChartMode(v as 'price' | 'norm')} options={[{ label: 'Цена', value: 'price' }, { label: 'Доходность %', value: 'norm' }]} />
             <SegmentedControl size="sm" value={hz} onChange={setHz} options={HORIZONS.map((h) => ({ label: h.label, value: h.label }))} />
           </div>
-          <div className="mb-4 flex h-32 items-center justify-center rounded-fk bg-surface-2 px-2">
-            <Sparkline data={spark.length >= 2 ? spark : m.spark} width={400} height={108} strokeWidth={2} />
+          <div className="mb-4 rounded-fk bg-surface-2 p-2">
+            <PriceChart prices={spark.length >= 2 ? spark : m.spark} dates={sparkD.length >= 2 ? sparkD : m.sparkT} normalized={chartMode === 'norm'} />
           </div>
 
-          {/* доходность — term structure */}
-          <div className="mb-2 text-[10.5px] font-bold uppercase tracking-wide text-ink-3">Доходность · структура по срокам</div>
-          <div className="mb-2 space-y-1">
-            {retItems.map((it) => <BarRow key={it.label} label={it.label} value={it.v} max={retMax} suffix="%" />)}
+          {/* доходность — term structure (+ YTD инлайном) */}
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-[10.5px] font-bold uppercase tracking-wide text-ink-3">Доходность · структура по срокам</span>
+            <span className="text-[11px] text-ink-2">YTD <b className={m.ytd == null ? 'text-ink-3' : m.ytd >= 0 ? 'text-up-strong' : 'text-down-strong'}>{fmt(m.ytd)}%</b></span>
           </div>
-          <div className="mb-4 grid grid-cols-3 gap-2">
-            <Chip k="MTD" v={fmt(m.mtd)} tone={toneOf(m.mtd)} />
-            <Chip k="QTD" v={fmt(m.qtd)} tone={toneOf(m.qtd)} />
-            <Chip k="YTD" v={fmt(m.ytd)} tone={toneOf(m.ytd)} />
+          <div className="mb-4 space-y-1">
+            {retItems.map((it) => <BarRow key={it.label} label={it.label} value={it.v} max={retMax} suffix="%" />)}
           </div>
 
           {/* относительная сила */}
@@ -533,7 +532,6 @@ function DetailDrawer({
           )}
           <div className="grid grid-cols-3 gap-2">
             <Chip k="vol21" v={m.vol21 != null ? m.vol21.toFixed(1) : '—'} />
-            <Chip k="vol63" v={m.vol63 != null ? m.vol63.toFixed(1) : '—'} />
             <Chip k="vol21/63" v={m.volRatio != null ? '×' + m.volRatio.toFixed(2) : '—'} tone={m.volRatio != null && m.volRatio > 1.5 ? 'warn' : undefined} />
             <Chip k="z-score" v={m.z63 != null ? (m.z63 > 0 ? '+' : '') + m.z63.toFixed(1) : '—'} tone={m.z63 != null && Math.abs(m.z63) > 2 ? 'warn' : undefined} />
             <Chip k="MA50" v={m.aboveMA50 == null ? '—' : m.aboveMA50 ? 'выше' : 'ниже'} tone={m.aboveMA50 == null ? undefined : m.aboveMA50 ? 'up' : 'down'} />
@@ -548,6 +546,90 @@ function DetailDrawer({
         </div>
       </div>
     </>
+  );
+}
+
+function PriceChart({ prices, dates, normalized }: { prices: number[]; dates: string[]; normalized: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [w, setW] = useState(400);
+  const [hi, setHi] = useState<number | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const update = () => setW(el.clientWidth || 400);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const H = 140;
+  const pad = 8;
+  const base = prices.length ? prices[0] : 1;
+  const vals = normalized && base ? prices.map((p) => (p / base - 1) * 100) : prices;
+  const n = vals.length;
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const span = max - min || 1;
+  const X = (i: number) => (n <= 1 ? 0 : (i / (n - 1)) * (w - 1));
+  const Y = (v: number) => pad + (H - 2 * pad) - ((v - min) / span) * (H - 2 * pad);
+  const up = n >= 2 ? vals[n - 1] >= vals[0] : true;
+  const color = up ? 'var(--fk-up)' : 'var(--fk-down)';
+  const gid = `pc-${up ? 'u' : 'd'}`;
+  const line = vals.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`).join(' ');
+  const area = `${line} L${X(n - 1).toFixed(1)} ${H} L0 ${H} Z`;
+  // ключ анимации: меняется при смене режима/горизонта/инструмента → линия «рисуется» заново
+  const animKey = `${normalized ? 'n' : 'p'}-${n}-${Math.round((prices[0] || 0) * 100)}`;
+  const fmtDate = (d: string) => {
+    const t = new Date(d + 'T00:00:00');
+    return isNaN(t.getTime()) ? d : t.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: '2-digit' });
+  };
+  const onMove = (e: any) => {
+    if (n < 2) return;
+    const i = Math.max(0, Math.min(n - 1, Math.round((e.nativeEvent.offsetX / (w || 1)) * (n - 1))));
+    setHi(i);
+  };
+  const tipLeft = hi == null ? 0 : Math.max(2, Math.min(w - 110, X(hi) - 55));
+  return (
+    <div ref={ref} className="relative select-none" style={{ height: H }} onMouseMove={onMove} onMouseLeave={() => setHi(null)}>
+      {n >= 2 && (
+        <svg width={w} height={H} viewBox={`0 0 ${w} ${H}`} className="block">
+          <defs>
+            <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={color} stopOpacity="0.18" />
+              <stop offset="100%" stopColor={color} stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          {normalized && <line x1="0" x2={w} y1={Y(0).toFixed(1)} y2={Y(0).toFixed(1)} stroke="var(--fk-line-strong)" strokeDasharray="3 3" />}
+          <path key={`area-${animKey}`} d={area} fill={`url(#${gid})`} className="animate-overlay-in" />
+          <path
+            key={`line-${animKey}`}
+            d={line}
+            pathLength={1}
+            fill="none"
+            stroke={color}
+            strokeWidth={1.8}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            className="animate-draw-line"
+            style={{ strokeDasharray: 1, strokeDashoffset: 1 }}
+          />
+          {hi != null && (
+            <>
+              <line x1={X(hi)} x2={X(hi)} y1={0} y2={H} stroke="var(--fk-line-strong)" />
+              <circle cx={X(hi)} cy={Y(vals[hi])} r={3.5} fill={color} stroke="#fff" strokeWidth={1.5} />
+            </>
+          )}
+        </svg>
+      )}
+      {hi != null && (
+        <div className="pointer-events-none absolute top-1 rounded-fk-sm border border-line bg-surface-elev px-2 py-1 text-[11px] shadow-fk-sm" style={{ left: tipLeft }}>
+          <div className="text-ink-3">{fmtDate(dates[hi] ?? '')}</div>
+          <div className="font-semibold tabular-nums">
+            {normalized ? `${vals[hi] > 0 ? '+' : ''}${vals[hi].toFixed(1)}%` : prices[hi]?.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

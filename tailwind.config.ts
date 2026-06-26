@@ -71,12 +71,17 @@ const config: Config = {
           from: { opacity: '0', transform: 'translateY(10px)' },
           to: { opacity: '1', transform: 'translateY(0)' },
         },
+        'draw-line': {
+          from: { strokeDashoffset: '1' },
+          to: { strokeDashoffset: '0' },
+        },
       },
       animation: {
         shimmer: 'shimmer 1.4s ease-in-out infinite',
         'overlay-in': 'overlay-in .18s ease-out',
         'modal-in': 'modal-in .22s cubic-bezier(.16,1,.3,1)',
         'toast-in': 'toast-in .22s cubic-bezier(.16,1,.3,1)',
+        'draw-line': 'draw-line .6s ease-out forwards',
       },
     },
   },
