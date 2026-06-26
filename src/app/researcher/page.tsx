@@ -119,10 +119,10 @@ export default function Researcher() {
       <th title="Hit-rate: доля сделок с положительным форвардным возвратом">Доля +</th>
       <th title={`Средний форвардный возврат за ${horizon}д`}>Ср. return</th>
       <th title="Медианный форвардный возврат">Медиана</th>
-      <th title="Средняя макс. просадка пути после входа (peak-to-trough)">Просадка</th>
-      <th title="Средняя макс. неблагоприятная экскурсия (MAE)">MAE</th>
-      <th title="Средняя макс. благоприятная экскурсия (MFE)">MFE</th>
-      <th title="Среднее превышение бенчмарка (SPY) за горизонт">vs SPY</th>
+      <th title="Средняя макс. просадка пути peak-to-trough (от локального пика; может быть глубже MAE)">Просадка</th>
+      <th title="Средняя макс. неблагоприятная экскурсия от входа (MAE ≤ 0; 0, если позиция не уходила в минус)">MAE</th>
+      <th title="Средняя макс. благоприятная экскурсия от входа (MFE ≥ 0; 0, если прибыли не было)">MFE</th>
+      <th title="Среднее превышение бенчмарка SPY за горизонт (сырое, без винзоризации)">vs SPY</th>
     </>
   );
   const outCells = (s: { hitPct: number; avgRet: number; medRet: number; avgMdd: number; avgMae: number; avgMfe: number; avgExc: number }) => (

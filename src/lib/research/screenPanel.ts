@@ -15,9 +15,10 @@ export { assembleUniverse, splitEngineResult };
 export type { TickerObs, TickerPanel };
 
 const TTL_MS = 24 * 3600 * 1000;
-// Версия раскладки наблюдения (obs). v2 добавила форвардные исходы [ret,exc,mfe,mae,mdd]; старые v1-строки
-// несовместимы по форме → игнорируются на чтении и пересчитываются.
-const SCHEMA_VERSION = 'v2';
+// Версия раскладки/семантики наблюдения (obs). v2 добавила форвардные исходы [ret,exc,mfe,mae,mdd];
+// v3 обрезала MFE/MAE по 0 (MFE≥0, MAE≤0) и сделала exc СЫРЫМ (без винзоризации хвостов).
+// Несовместимые старые строки игнорируются на чтении и пересчитываются.
+const SCHEMA_VERSION = 'v3';
 
 let ensured = false;
 export async function ensureScreenPanelTable(): Promise<void> {
