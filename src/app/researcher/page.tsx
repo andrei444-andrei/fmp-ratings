@@ -69,25 +69,13 @@ export default function Researcher() {
     if (uni.length < 1) { setPanel(null); return; }
     setLoading(true); setErr('');
     try {
-      const res = await fetch('/api/signals/study', {
+      // Подготовленная панель: кэш-первым с бэка (мгновенно), Pyodide — только на новые тикеры.
+      const res = await fetch('/api/researcher/panel', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ mode: 'screen', universe: uni, benchmark: 'SPY', horizon: hz }),
+        body: JSON.stringify({ universe: uni, horizon: hz }),
       });
-      if (!res.body) throw new Error('Нет потока ответа');
-      const reader = res.body.getReader(); const dec = new TextDecoder();
-      let buf = '', out: any = null, e = '';
-      for (;;) {
-        const { done, value } = await reader.read(); if (done) break;
-        buf += dec.decode(value, { stream: true });
-        let nl: number;
-        while ((nl = buf.indexOf('\n')) >= 0) {
-          const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
-          if (!line) continue;
-          let ev: any; try { ev = JSON.parse(line); } catch { continue; }
-          if (ev.type === 'result') out = ev.data; else if (ev.type === 'error') e = ev.text || 'ошибка';
-        }
-      }
-      if (e) throw new Error(e);
+      const out = await res.json().catch(() => ({}));
+      if (out?.error) throw new Error(out.error);
       setPanel(out && out.mode === 'screen' ? out : null);
     } catch (ex: any) { setErr(ex?.message || 'ошибка'); setPanel(null); } finally { setLoading(false); }
   }, []);
