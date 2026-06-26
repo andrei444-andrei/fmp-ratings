@@ -577,6 +577,8 @@ function PriceChart({ prices, dates, normalized }: { prices: number[]; dates: st
   const gid = `pc-${up ? 'u' : 'd'}`;
   const line = vals.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`).join(' ');
   const area = `${line} L${X(n - 1).toFixed(1)} ${H} L0 ${H} Z`;
+  // ключ анимации: меняется при смене режима/горизонта/инструмента → линия «рисуется» заново
+  const animKey = `${normalized ? 'n' : 'p'}-${n}-${Math.round((prices[0] || 0) * 100)}`;
   const fmtDate = (d: string) => {
     const t = new Date(d + 'T00:00:00');
     return isNaN(t.getTime()) ? d : t.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: '2-digit' });
@@ -598,8 +600,19 @@ function PriceChart({ prices, dates, normalized }: { prices: number[]; dates: st
             </linearGradient>
           </defs>
           {normalized && <line x1="0" x2={w} y1={Y(0).toFixed(1)} y2={Y(0).toFixed(1)} stroke="var(--fk-line-strong)" strokeDasharray="3 3" />}
-          <path d={area} fill={`url(#${gid})`} />
-          <path d={line} fill="none" stroke={color} strokeWidth={1.8} strokeLinejoin="round" strokeLinecap="round" />
+          <path key={`area-${animKey}`} d={area} fill={`url(#${gid})`} className="animate-overlay-in" />
+          <path
+            key={`line-${animKey}`}
+            d={line}
+            pathLength={1}
+            fill="none"
+            stroke={color}
+            strokeWidth={1.8}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            className="animate-draw-line"
+            style={{ strokeDasharray: 1, strokeDashoffset: 1 }}
+          />
           {hi != null && (
             <>
               <line x1={X(hi)} x2={X(hi)} y1={0} y2={H} stroke="var(--fk-line-strong)" />
