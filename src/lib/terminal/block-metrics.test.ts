@@ -6,7 +6,7 @@ function mk(p: Partial<InstrumentMetrics>): InstrumentMetrics {
   return {
     symbol: 'X', last: 100, asOf: '2025-01-01', returns: { 1: 0, 5: 0, 21: 0, 63: 0, 126: 0, 252: 0 },
     mtd: null, qtd: null, ytd: null, vol21: null, vol63: null, volRatio: null, z63: null,
-    pct52w: null, aboveMA50: null, aboveMA200: null, excess63: null, spark: [],
+    pct52w: null, aboveMA50: null, aboveMA200: null, excess63: null, spark: [], sparkT: [],
     ...p,
   };
 }

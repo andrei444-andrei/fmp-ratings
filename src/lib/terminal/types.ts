@@ -54,6 +54,7 @@ export type InstrumentMetrics = {
   /** Excess vs бенчмарк блока за 63д — заполняется на уровне блока. */
   excess63: number | null;
   spark: number[]; // даунсэмпл ряда цен (~80 точек) для спарклайна
+  sparkT: string[]; // даты, выровненные со spark (для тултипа дата→цена в drawer)
   synthetic?: boolean; // true — данные синтетические (нет ключей), не рыночная картина
 };
 
