@@ -4,13 +4,11 @@ import { usePathname } from 'next/navigation';
 import ThemeToggle from './ThemeToggle';
 
 const LINKS = [
-  { href: '/research', label: 'Исследование трендов' },
   { href: '/researcher', label: 'Скринер' },
   { href: '/signals', label: 'Модель сигналов' },
   { href: '/switch', label: 'Переключение A/B' },
   { href: '/backtest', label: 'Тестирование стратегий' },
   { href: '/quant', label: 'Аналитика алгоритмов' },
-  { href: '/forecasts', label: 'Прогнозы vs факт' },
   { href: '/polymarket', label: 'Polymarket' },
   { href: '/admin', label: 'Admin' },
 ];
@@ -23,7 +21,7 @@ export default function Nav() {
   return (
     <header className="app-nav">
       <div className="app-nav-in">
-        <a href="/research" className="app-brand" aria-label="Market Lab">
+        <a href="/signals" className="app-brand" aria-label="Market Lab">
           <span className="app-brand-dot" />
         </a>
         <nav className="app-nav-links">

@@ -2,8 +2,8 @@ import { loadPyodide } from 'pyodide';
 
 // Изолированный Pyodide-раннер для модуля сигналов: исполняет детерминированный Python-стат-код
 // и ВОЗВРАЩАЕТ СТРУКТУРИРОВАННЫЙ JSON (через глобал __OUT__), а не HTML — клиент рисует
-// интерактив сам. Свой инстанс Pyodide (на serverless функция /api/signals/* изолирована от
-// /api/research/execute, поэтому второй интерпретатор в том же процессе не возникает).
+// интерактив сам. Свой инстанс Pyodide (на serverless функция /api/signals/* изолирована,
+// поэтому второй интерпретатор в том же процессе не возникает).
 
 type Pyodide = Awaited<ReturnType<typeof loadPyodide>>;
 
