@@ -184,6 +184,45 @@ def build_fval(px, bench, fid, param, step, skip=0):
     if not frames: return pd.DataFrame()
     return pd.concat(frames, ignore_index=True)
 
+def forward_extras(px, bench, h):
+    # Форвардные метрики ПУТИ от входа за h торг. дней (на каждую сэмпл-дату, шаг=h — как в build_targets):
+    #   ret — сырой форвардный возврат к концу окна; mfe/mae — макс. благоприятная/неблагоприятная экскурсия;
+    #   mdd — макс. просадка пути (peak-to-trough, база — цена входа). Всё в %.
+    px = px.sort_index()
+    keep_pos = list(range(0, len(px.index), max(1, h)))
+    idx = px.index
+    out = []
+    for s in [c for c in px.columns if c != bench]:
+        c = px[s]
+        if c.notna().sum() < 260:
+            continue
+        a = c.values.astype('float64')
+        n = len(a)
+        recs = []
+        for i in keep_pos:
+            p0 = a[i]
+            if not (p0 == p0) or p0 <= 0:
+                continue
+            hi = min(i + h, n - 1)
+            if hi <= i:
+                continue
+            win = a[i + 1:hi + 1]
+            win = win[~np.isnan(win)]
+            if win.size == 0:
+                continue
+            rel = win / p0
+            eq = np.empty(rel.size + 1); eq[0] = 1.0; eq[1:] = rel
+            dd = eq / np.maximum.accumulate(eq) - 1.0
+            recs.append((idx[i], (rel[-1] - 1.0) * 100.0, (rel.max() - 1.0) * 100.0,
+                         (rel.min() - 1.0) * 100.0, dd.min() * 100.0))
+        if recs:
+            df = pd.DataFrame(recs, columns=['date', 'ret', 'mfe', 'mae', 'mdd'])
+            df['symbol'] = s
+            out.append(df)
+    if not out:
+        return pd.DataFrame(columns=['symbol', 'date', 'ret', 'mfe', 'mae', 'mdd'])
+    return pd.concat(out, ignore_index=True)
+
 def region_mask(series, sig):
     side = sig.get('side')
     if side == 'band':
@@ -835,9 +874,10 @@ async def main():
                 'perAsset': per_asset, 'basket': basket, 'meta': meta}
 
     if mode == 'screen':
-        # Скринер: ПАНЕЛЬ СДЕЛОК (наблюдений) — на каждую (тикер, дата) набор факторов на входе + форвардный
-        # результат (excess vs бенч за H). Условия (блоки ИЛИ / И-НЕ), разрезы и провал в сделки клиент
-        # считает МГНОВЕННО на стороне фронта (без перепрогона). Здесь — только данные.
+        # Скринер: ПАНЕЛЬ СДЕЛОК (наблюдений) — на каждую (тикер, дата) набор факторов на входе + ФОРВАРДНЫЕ
+        # МЕТРИКИ ОЦЕНКИ за H дней: ret (сырой возврат), exc (превышение бенча), mfe/mae (макс. благоприятная/
+        # неблагоприятная экскурсия), mdd (макс. просадка пути). Условия (блоки ИЛИ / И-НЕ), разрезы (тикеры/годы),
+        # окно лет, hit-rate / средний / медиана и провал в сделки клиент считает МГНОВЕННО. Здесь — только данные.
         tgt = build_targets(px, bench, [H], H, 'excess')
         if tgt.empty or tgt['symbol'].nunique() < 1:
             return {'error': 'Недостаточно истории для скрин-панели — расширьте окно лет/вселенную.'}
@@ -845,27 +885,37 @@ async def main():
         METR = [('momentum', 21), ('momentum', 63), ('momentum', 126), ('momentum', 252),
                 ('vol', 21), ('vol', 63), ('dist_ath', 0), ('xbench', 63), ('sma_dist', 50), ('sma_dist', 200), ('rsi', 14)]
         cols = [f + '_' + str(p) for f, p in METR]
-        m = tgt[['symbol', 'date', 't_' + str(H)]].rename(columns={'t_' + str(H): 'fwd'})
+        m = tgt[['symbol', 'date', 't_' + str(H)]].rename(columns={'t_' + str(H): 'exc'})
+        ext = forward_extras(px, bench, H)  # symbol,date,ret,mfe,mae,mdd
+        m = m.merge(ext, on=['symbol', 'date'], how='left')
         for (f, p), cn in zip(METR, cols):
             fv = build_fval(px, bench, f, p, H, 0).rename(columns={'fval': cn})
             m = m.merge(fv, on=['symbol', 'date'], how='left')
-        m = m.dropna(subset=['fwd'])
+        m = m.dropna(subset=['exc'])
         if m.empty:
             return {'error': 'Нет сделок в окне — расширьте годы.'}
         gdates = [pd.Timestamp(x) for x in sorted(pd.to_datetime(m['date']).unique())]
         didx = {d: i for i, d in enumerate(gdates)}
         syms = sorted(m['symbol'].unique())
         sidx = {s: i for i, s in enumerate(syms)}
+        def rr(v):
+            try:
+                return round(float(v), 3) if (v is not None and v == v) else None
+            except Exception:
+                return None
+        # Порядок исходов в строке (после symIdx,dateIdx): ret, exc, mfe, mae, mdd — затем факторы cols.
+        OUTC = ['ret', 'exc', 'mfe', 'mae', 'mdd']
         rows = []
         for r in m.to_dict('records'):
-            row = [int(sidx[r['symbol']]), int(didx[pd.Timestamp(r['date'])]), round(float(r['fwd']), 3)]
+            row = [int(sidx[r['symbol']]), int(didx[pd.Timestamp(r['date'])])]
+            for o in OUTC:
+                row.append(rr(r.get(o)))
             for cn in cols:
-                v = r.get(cn)
-                row.append(round(float(v), 3) if (v is not None and v == v) else None)
+                row.append(rr(r.get(cn)))
             rows.append(row)
         meta = {'symbols': len(syms), 'obs': len(rows),
                 'first': str(gdates[0].date()) if gdates else '', 'last': str(gdates[-1].date()) if gdates else '',
-                'benchmark': bench, 'horizon': H}
+                'benchmark': bench, 'horizon': H, 'outcomes': OUTC}
         return {'mode': 'screen', 'symbols': syms, 'dates': [str(d.date()) for d in gdates],
                 'cols': cols, 'rows': rows, 'horizon': H, 'meta': meta}
 

@@ -1,9 +1,18 @@
-// Клиентский движок скринера: по ПАНЕЛИ СДЕЛОК (наблюдений с факторами на входе + форвард) считает
-// условия мгновенно, без перепрогона. Конструктор как в Google Analytics: блоки соединяются ИЛИ,
-// внутри блока условия по И, у каждого — инверсия НЕ. Разрезы по тикерам/годам + провал в сделки.
+// Клиентский движок скринера: по ПАНЕЛИ СДЕЛОК (наблюдений с факторами на входе + форвардными исходами)
+// считает условия и метрики оценки мгновенно, без перепрогона. Конструктор как в Google Analytics:
+// блоки соединяются ИЛИ, внутри блока условия по И, у каждого — инверсия НЕ. Разрезы по тикерам/годам,
+// окно лет, hit-rate / средний / медиана + провал в сделки.
 //
-// Панель: rows[i] = [symIdx, dateIdx, fwd, v0, v1, ...] (факторы по cols, смещение 3). Всё пересчитывается
-// на клиенте — сервер отдаёт панель один раз (на смену вселенной/горизонта).
+// Панель: rows[i] = [symIdx, dateIdx, ret, exc, mfe, mae, mdd, v0, v1, ...] — сперва OUTN форвардных исходов
+// (за горизонт H), затем факторы по cols. Всё пересчитывается на клиенте — сервер отдаёт панель один раз.
+
+// Форвардные исходы строки (в %): порядок и смещения.
+export const OUTCOMES = ['ret', 'exc', 'mfe', 'mae', 'mdd'] as const;
+export type Outcome = (typeof OUTCOMES)[number];
+export const OUTN = OUTCOMES.length; // 5
+const OUT_OFF = 2; // ret=2, exc=3, mfe=4, mae=5, mdd=6
+const FAC_OFF = OUT_OFF + OUTN; // факторы начинаются с индекса 7
+const RET = OUT_OFF + 0, EXC = OUT_OFF + 1, MFE = OUT_OFF + 2, MAE = OUT_OFF + 3, MDD = OUT_OFF + 4;
 
 export type ScreenPanel = { symbols: string[]; dates: string[]; cols: string[]; rows: (number | null)[][]; horizon?: number; meta?: Record<string, any> };
 export type Cmp = 'ge' | 'le';
@@ -26,69 +35,114 @@ function evalCond(v: number | null | undefined, c: Cond): boolean {
 export function matchRow(row: (number | null)[], blocks: Block[], ci: Record<string, number>): boolean {
   const active = blocks.filter((b) => b.conds.length);
   if (!active.length) return true; // нет условий → все сделки
-  return active.some((b) => b.conds.every((c) => evalCond(row[3 + (ci[c.col] ?? -1e9)] as number, c)));
+  return active.some((b) => b.conds.every((c) => evalCond(row[FAC_OFF + (ci[c.col] ?? -1e9)] as number, c)));
 }
 
 export function totalConds(blocks: Block[]): number {
   return blocks.reduce((a, b) => a + b.conds.length, 0);
 }
 
-export type TickerRow = { symbol: string; n: number; avgFwd: number; hitPct: number; disp: (number | null)[] };
+function median(arr: number[]): number {
+  if (!arr.length) return 0;
+  const s = [...arr].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
 
-// Разрез ПО ТИКЕРАМ: на каждый тикер — число матч-сделок, ср. форвард, доля плюс, средние «отображаемых» метрик.
-export function screenByTicker(panel: ScreenPanel, blocks: Block[], displayCols: string[]): TickerRow[] {
+// Год строки (для разреза/фильтра окна лет).
+const rowYear = (panel: ScreenPanel, row: (number | null)[]) => +panel.dates[row[1] as number].slice(0, 4);
+// Пропустить строку, если она вне окна лет (minYear включительно).
+const outOfWindow = (panel: ScreenPanel, row: (number | null)[], minYear?: number) => minYear != null && rowYear(panel, row) < minYear;
+
+// Агрегатор форвардных исходов матч-сделок.
+type Agg = { ret: number[]; sumExc: number; sumMfe: number; sumMae: number; sumMdd: number; nExc: number };
+const newAgg = (): Agg => ({ ret: [], sumExc: 0, sumMfe: 0, sumMae: 0, sumMdd: 0, nExc: 0 });
+function pushOut(a: Agg, row: (number | null)[]) {
+  const r = row[RET] as number | null; if (r != null && Number.isFinite(r)) a.ret.push(r);
+  const e = row[EXC] as number | null; if (e != null && Number.isFinite(e)) { a.sumExc += e; a.nExc++; }
+  const f = row[MFE] as number | null; if (f != null && Number.isFinite(f)) a.sumMfe += f;
+  const v = row[MAE] as number | null; if (v != null && Number.isFinite(v)) a.sumMae += v;
+  const d = row[MDD] as number | null; if (d != null && Number.isFinite(d)) a.sumMdd += d;
+}
+export type OutStats = { avgRet: number; medRet: number; hitPct: number; avgExc: number; avgMfe: number; avgMae: number; avgMdd: number };
+function statsOf(a: Agg, n: number): OutStats {
+  const nr = a.ret.length || 1;
+  return {
+    avgRet: a.ret.reduce((x, y) => x + y, 0) / nr,
+    medRet: median(a.ret),
+    hitPct: (a.ret.filter((x) => x > 0).length / nr) * 100,
+    avgExc: a.sumExc / (a.nExc || 1),
+    avgMfe: a.sumMfe / n, avgMae: a.sumMae / n, avgMdd: a.sumMdd / n,
+  };
+}
+
+export type TickerRow = { symbol: string; n: number; disp: (number | null)[] } & OutStats;
+
+// Разрез ПО ТИКЕРАМ: на каждый тикер — число матч-сделок, метрики оценки (return/hit/медиана/MFE/MAE/MaxDD/vs SPY)
+// и средние «отображаемых» факторов. minYear — нижняя граница окна лет (включительно).
+export function screenByTicker(panel: ScreenPanel, blocks: Block[], displayCols: string[], minYear?: number): TickerRow[] {
   const ci = colIndex(panel);
-  const acc = new Map<number, { n: number; sumFwd: number; pos: number; disp: number[]; dispN: number[] }>();
+  const acc = new Map<number, { a: Agg; n: number; disp: number[]; dispN: number[] }>();
   for (const row of panel.rows) {
-    if (!matchRow(row, blocks, ci)) continue;
+    if (outOfWindow(panel, row, minYear) || !matchRow(row, blocks, ci)) continue;
     const si = row[0] as number;
-    const fwd = row[2] as number;
-    let a = acc.get(si);
-    if (!a) { a = { n: 0, sumFwd: 0, pos: 0, disp: displayCols.map(() => 0), dispN: displayCols.map(() => 0) }; acc.set(si, a); }
-    a.n++; a.sumFwd += fwd; if (fwd > 0) a.pos++;
+    let g = acc.get(si);
+    if (!g) { g = { a: newAgg(), n: 0, disp: displayCols.map(() => 0), dispN: displayCols.map(() => 0) }; acc.set(si, g); }
+    g.n++; pushOut(g.a, row);
     displayCols.forEach((col, k) => {
-      const v = row[3 + (ci[col] ?? -1e9)] as number;
-      if (v != null && Number.isFinite(v)) { a.disp[k] += v; a.dispN[k]++; }
+      const v = row[FAC_OFF + (ci[col] ?? -1e9)] as number;
+      if (v != null && Number.isFinite(v)) { g.disp[k] += v; g.dispN[k]++; }
     });
   }
   return [...acc.entries()]
-    .map(([si, a]) => ({ symbol: panel.symbols[si], n: a.n, avgFwd: a.sumFwd / a.n, hitPct: (a.pos / a.n) * 100,
-      disp: displayCols.map((_, k) => (a.dispN[k] ? a.disp[k] / a.dispN[k] : null)) }))
-    .sort((x, y) => y.avgFwd - x.avgFwd);
+    .map(([si, g]) => ({ symbol: panel.symbols[si], n: g.n, ...statsOf(g.a, g.n),
+      disp: displayCols.map((_, k) => (g.dispN[k] ? g.disp[k] / g.dispN[k] : null)) }))
+    .sort((x, y) => y.avgRet - x.avgRet);
 }
 
-export type YearRow = { year: number; n: number; tickers: number; avgFwd: number; hitPct: number };
+export type YearRow = { year: number; n: number; tickers: number } & OutStats;
 
-// Разрез ПО ГОДАМ: агрегат матч-сделок по календарному году.
-export function screenByYear(panel: ScreenPanel, blocks: Block[]): YearRow[] {
+// Разрез ПО ГОДАМ: агрегат матч-сделок по календарному году (в окне лет).
+export function screenByYear(panel: ScreenPanel, blocks: Block[], minYear?: number): YearRow[] {
   const ci = colIndex(panel);
-  const acc = new Map<number, { n: number; sumFwd: number; pos: number; syms: Set<number> }>();
+  const acc = new Map<number, { a: Agg; n: number; syms: Set<number> }>();
   for (const row of panel.rows) {
-    if (!matchRow(row, blocks, ci)) continue;
-    const y = +panel.dates[row[1] as number].slice(0, 4);
-    let a = acc.get(y);
-    if (!a) { a = { n: 0, sumFwd: 0, pos: 0, syms: new Set() }; acc.set(y, a); }
-    a.n++; a.sumFwd += row[2] as number; if ((row[2] as number) > 0) a.pos++; a.syms.add(row[0] as number);
+    if (outOfWindow(panel, row, minYear) || !matchRow(row, blocks, ci)) continue;
+    const y = rowYear(panel, row);
+    let g = acc.get(y);
+    if (!g) { g = { a: newAgg(), n: 0, syms: new Set() }; acc.set(y, g); }
+    g.n++; pushOut(g.a, row); g.syms.add(row[0] as number);
   }
   return [...acc.entries()]
-    .map(([year, a]) => ({ year, n: a.n, tickers: a.syms.size, avgFwd: a.sumFwd / a.n, hitPct: (a.pos / a.n) * 100 }))
+    .map(([year, g]) => ({ year, n: g.n, tickers: g.syms.size, ...statsOf(g.a, g.n) }))
     .sort((x, y) => x.year - y.year);
 }
 
-export type Deal = { date: string; symbol: string; fwd: number; vals: Record<string, number | null> };
+export type Deal = { date: string; symbol: string; ret: number; exc: number; mfe: number; mae: number; mdd: number; vals: Record<string, number | null> };
 
-// Провал в сделки: матч-сделки по одному тикеру ('t') или по году ('y').
-export function screenDeals(panel: ScreenPanel, blocks: Block[], kind: 't' | 'y', kv: string): Deal[] {
+// Провал в сделки: матч-сделки по одному тикеру ('t') или по году ('y'), в окне лет.
+export function screenDeals(panel: ScreenPanel, blocks: Block[], kind: 't' | 'y', kv: string, minYear?: number): Deal[] {
   const ci = colIndex(panel);
   const out: Deal[] = [];
   for (const row of panel.rows) {
-    if (!matchRow(row, blocks, ci)) continue;
+    if (outOfWindow(panel, row, minYear) || !matchRow(row, blocks, ci)) continue;
     const sym = panel.symbols[row[0] as number];
     const date = panel.dates[row[1] as number];
     if (kind === 't' ? sym !== kv : date.slice(0, 4) !== kv) continue;
     const vals: Record<string, number | null> = {};
-    panel.cols.forEach((c, i) => (vals[c] = row[3 + i] as number | null));
-    out.push({ date, symbol: sym, fwd: row[2] as number, vals });
+    panel.cols.forEach((c, i) => (vals[c] = row[FAC_OFF + i] as number | null));
+    out.push({
+      date, symbol: sym,
+      ret: row[RET] as number, exc: row[EXC] as number, mfe: row[MFE] as number, mae: row[MAE] as number, mdd: row[MDD] as number,
+      vals,
+    });
   }
   return out.sort((a, b) => (a.date < b.date ? -1 : 1));
+}
+
+// Сводка по списку сделок (для drawer). Собирает синтетические строки в формате панели и считает те же метрики.
+export function dealStats(deals: Deal[]): OutStats & { n: number; tickers: number } {
+  const a = newAgg();
+  for (const d of deals) pushOut(a, [0, 0, d.ret, d.exc, d.mfe, d.mae, d.mdd]);
+  return { n: deals.length, tickers: new Set(deals.map((d) => d.symbol)).size, ...statsOf(a, deals.length || 1) };
 }

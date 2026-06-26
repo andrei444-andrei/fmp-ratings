@@ -15,6 +15,9 @@ export { assembleUniverse, splitEngineResult };
 export type { TickerObs, TickerPanel };
 
 const TTL_MS = 24 * 3600 * 1000;
+// Версия раскладки наблюдения (obs). v2 добавила форвардные исходы [ret,exc,mfe,mae,mdd]; старые v1-строки
+// несовместимы по форме → игнорируются на чтении и пересчитываются.
+const SCHEMA_VERSION = 'v2';
 
 let ensured = false;
 export async function ensureScreenPanelTable(): Promise<void> {
@@ -25,9 +28,12 @@ export async function ensureScreenPanelTable(): Promise<void> {
     cols TEXT NOT NULL,
     payload TEXT NOT NULL,
     first TEXT, last TEXT,
+    ver TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (symbol, horizon)
   )`);
+  // Миграция для таблиц, созданных до появления колонки ver (ошибку «duplicate column» игнорируем).
+  await libsqlClient.execute(`ALTER TABLE screen_panel ADD COLUMN ver TEXT`).catch(() => {});
   ensured = true;
 }
 
@@ -46,8 +52,8 @@ export async function getCachedTickers(symbols: string[], horizon: number): Prom
   if (!symbols.length) return out;
   const ph = symbols.map(() => '?').join(',');
   const r = await libsqlClient.execute({
-    sql: `SELECT symbol, cols, payload, first, last, created_at FROM screen_panel WHERE horizon=? AND symbol IN (${ph})`,
-    args: [horizon, ...symbols],
+    sql: `SELECT symbol, cols, payload, first, last, created_at FROM screen_panel WHERE horizon=? AND ver=? AND symbol IN (${ph})`,
+    args: [horizon, SCHEMA_VERSION, ...symbols],
   });
   const now = Date.now();
   for (const row of r.rows as any[]) {
@@ -66,9 +72,9 @@ export async function saveTickerPanels(horizon: number, cols: string[], perTicke
   const now = new Date().toISOString();
   const colsJson = JSON.stringify(cols);
   const stmts = [...perTicker.entries()].map(([symbol, obs]) => ({
-    sql: `INSERT INTO screen_panel (symbol,horizon,cols,payload,first,last,created_at) VALUES (?,?,?,?,?,?,?)
-          ON CONFLICT(symbol,horizon) DO UPDATE SET cols=excluded.cols, payload=excluded.payload, first=excluded.first, last=excluded.last, created_at=excluded.created_at`,
-    args: [symbol, horizon, colsJson, pack(obs), String(obs[0]?.[0] ?? ''), String(obs[obs.length - 1]?.[0] ?? ''), now] as (string | number)[],
+    sql: `INSERT INTO screen_panel (symbol,horizon,cols,payload,first,last,ver,created_at) VALUES (?,?,?,?,?,?,?,?)
+          ON CONFLICT(symbol,horizon) DO UPDATE SET cols=excluded.cols, payload=excluded.payload, first=excluded.first, last=excluded.last, ver=excluded.ver, created_at=excluded.created_at`,
+    args: [symbol, horizon, colsJson, pack(obs), String(obs[0]?.[0] ?? ''), String(obs[obs.length - 1]?.[0] ?? ''), SCHEMA_VERSION, now] as (string | number)[],
   }));
   for (let i = 0; i < stmts.length; i += 200) await libsqlClient.batch(stmts.slice(i, i + 200));
 }
