@@ -1,12 +1,12 @@
 'use client';
 
 // Скринер (боевая версия). Дизайн 1:1 с утверждённым прототипом (researcher.css, токены --fk-*).
-// Сервер отдаёт ПАНЕЛЬ СДЕЛОК один раз; условия/разрезы/провал считаются мгновенно на клиенте (screen.ts).
+// Сервер отдаёт ПАНЕЛЬ СДЕЛОК один раз; условия/разрезы/метрики оценки/провал считаются мгновенно на клиенте.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './researcher.css';
 import {
-  screenByTicker, screenByYear, screenDeals, totalConds,
+  screenByTicker, screenByYear, screenDeals, dealStats, totalConds,
   type ScreenPanel, type Block, type Cmp,
 } from '@/lib/signals/screen';
 
@@ -48,11 +48,14 @@ function FwdBar({ v }: { v: number }) {
     </span>
   );
 }
+// Колонка-число с цветом (без бара) — компактно для дополнительных метрик оценки.
+const Num = ({ v, d = 1 }: { v: number | null; d?: number }) => <span className={cls(v)}>{fnum(v, d)}</span>;
 
 export default function Researcher() {
   const [group, setGroup] = useState('Сырьё');
   const [uniText, setUniText] = useState(GROUPS['Сырьё'].join(', '));
   const [horizon, setHorizon] = useState(21);
+  const [years, setYears] = useState(10); // окно статистики, лет (по умолчанию последние 10)
   const [blocks, setBlocks] = useState<UBlock[]>([
     { conds: [{ id: 'momentum', p: 63, cmp: 'ge', val: 10, not: false }, { id: 'vol', p: 21, cmp: 'le', val: 30, not: false }] },
   ]);
@@ -87,19 +90,50 @@ export default function Researcher() {
     return () => clearTimeout(t.current);
   }, [universe.join(','), horizon, fetchPanel]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Границы окна лет по панели.
+  const lastYear = panel ? +String(panel.meta?.last || panel.dates[panel.dates.length - 1] || '').slice(0, 4) || null : null;
+  const firstYear = panel ? +String(panel.meta?.first || panel.dates[0] || '').slice(0, 4) || null : null;
+  const spanYears = lastYear && firstYear ? lastYear - firstYear + 1 : null;
+  const minYear = lastYear != null ? lastYear - years + 1 : undefined;
+
   const blk = toBlocks(blocks);
   const displayCols = display.map((d) => colOf(d.id, d.p));
-  const byT = useMemo(() => (panel ? screenByTicker(panel, blk, displayCols) : []), [panel, blocks, display]); // eslint-disable-line react-hooks/exhaustive-deps
-  const byY = useMemo(() => (panel ? screenByYear(panel, blk) : []), [panel, blocks]); // eslint-disable-line react-hooks/exhaustive-deps
+  const byT = useMemo(() => (panel ? screenByTicker(panel, blk, displayCols, minYear) : []), [panel, blocks, display, minYear]); // eslint-disable-line react-hooks/exhaustive-deps
+  const byY = useMemo(() => (panel ? screenByYear(panel, blk, minYear) : []), [panel, blocks, minYear]); // eslint-disable-line react-hooks/exhaustive-deps
   const matchedN = byY.reduce((a, y) => a + y.n, 0);
   const setB = (f: (b: UBlock[]) => UBlock[]) => setBlocks((prev) => f(structuredClone(prev)));
+  const tColSpan = 9 + display.length;
+
+  // Шапка форвард-метрик оценки (общая для тикеров/годов): Доля + · Ср.return · Медиана · Просадка · MAE · MFE · vs SPY.
+  const outHead = (
+    <>
+      <th title="Hit-rate: доля сделок с положительным форвардным возвратом">Доля +</th>
+      <th title={`Средний форвардный возврат за ${horizon}д`}>Ср. return</th>
+      <th title="Медианный форвардный возврат">Медиана</th>
+      <th title="Средняя макс. просадка пути после входа (peak-to-trough)">Просадка</th>
+      <th title="Средняя макс. неблагоприятная экскурсия (MAE)">MAE</th>
+      <th title="Средняя макс. благоприятная экскурсия (MFE)">MFE</th>
+      <th title="Среднее превышение бенчмарка (SPY) за горизонт">vs SPY</th>
+    </>
+  );
+  const outCells = (s: { hitPct: number; avgRet: number; medRet: number; avgMdd: number; avgMae: number; avgMfe: number; avgExc: number }) => (
+    <>
+      <td className="num">{s.hitPct.toFixed(0)}%</td>
+      <td className="num"><Num v={s.avgRet} /></td>
+      <td className="num"><Num v={s.medRet} /></td>
+      <td className="num down">{fnum(s.avgMdd)}</td>
+      <td className="num down">{fnum(s.avgMae)}</td>
+      <td className="num up">{fnum(s.avgMfe)}</td>
+      <td><FwdBar v={s.avgExc} /></td>
+    </>
+  );
 
   return (
     <main className="rsx" style={{ maxWidth: 1320, margin: '0 auto', padding: '20px 20px 90px' }}>
       <div className="top">
         <h1>Скринер</h1>
         <span className="badge brand">боевая версия</span>
-        <span className="sub">Вселенная → условия (блоки ИЛИ, внутри И/НЕ) → таблица (тикеры/годы) → провал в сделки. Пересчёт мгновенный на клиенте.</span>
+        <span className="sub">Вселенная → условия (блоки ИЛИ, внутри И/НЕ) → метрики оценки за горизонт (return / hit-rate / просадка / MAE·MFE) в окне лет → провал в сделки. Пересчёт мгновенный на клиенте.</span>
       </div>
 
       {/* 1. Вселенная */}
@@ -117,10 +151,16 @@ export default function Researcher() {
             ))}
           </div>
           <textarea className="uni" value={uniText} spellCheck={false} onChange={(e) => { setUniText(e.target.value); setGroup(''); }} />
-          <p className="sub" style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 12 }}>
+          <p className="sub" style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <span>Пресет — стартовый набор; список правится свободно (до 40).</span>
-            <span className="hz">Горизонт:{HORIZONS.map((h) => <button key={h} type="button" className={horizon === h ? 'on' : ''} onClick={() => setHorizon(h)}>{h}д</button>)}</span>
+            <span className="hz">Горизонт (X дней):{HORIZONS.map((h) => <button key={h} type="button" className={horizon === h ? 'on' : ''} onClick={() => setHorizon(h)}>{h}д</button>)}</span>
           </p>
+          <div className="yrs">
+            <span className="lbl">Окно статистики:</span>
+            <input type="range" min={1} max={Math.max(spanYears || 25, 10)} value={years} onChange={(e) => setYears(+e.target.value)} />
+            <span className="val num">последние {years} {years === 1 ? 'год' : years < 5 ? 'года' : 'лет'}{minYear ? ` (с ${minYear})` : ''}</span>
+            {spanYears && <span className="sub">из {spanYears} доступных</span>}
+          </div>
           {err && <p className="sub" style={{ color: 'var(--fk-down-text,#c81e3c)', fontWeight: 600, marginTop: 6 }}>Ошибка: {err}</p>}
         </div>
       </div>
@@ -170,7 +210,7 @@ export default function Researcher() {
       <div className="card">
         <div className="card-b">
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-            <span className="card-t">3 · Метрики в таблице</span><span className="sub">любые для показа, даже если не в условиях</span>
+            <span className="card-t">3 · Факторы на входе (для показа)</span><span className="sub">любые столбцы-факторы, даже если не в условиях · метрики оценки показываются всегда</span>
           </div>
           <div className="dchips">
             {MID.flatMap((id) => METRICS[id].periods.map((p) => ({ id, p }))).map((o) => {
@@ -198,73 +238,87 @@ export default function Researcher() {
               <p className="sub" style={{ textAlign: 'center', padding: '36px 0' }}>{loading ? 'Загружаю панель сделок…' : 'Выберите вселенную.'}</p>
             ) : view === 'tickers' ? (
               <table>
-                <thead><tr><th className="l">Тикер</th><th>Сделок</th>{display.map((o) => <th key={`${o.id}_${o.p}`}>{mlabel(o.id, o.p)}</th>)}<th>Доля +</th><th>Ср. форвард</th></tr></thead>
+                <thead><tr><th className="l">Тикер</th><th>Сделок</th>{display.map((o) => <th key={`${o.id}_${o.p}`}>{mlabel(o.id, o.p)}</th>)}{outHead}</tr></thead>
                 <tbody>
                   {byT.map((r) => (
                     <tr key={r.symbol} className="click" onClick={() => setDrill({ kind: 't', kv: r.symbol })}>
                       <td className="l"><span className="sy">{r.symbol}</span></td><td className="num">{r.n}</td>
                       {r.disp.map((v, i) => <td key={i} className={`num ${cls(v)}`}>{v == null ? '—' : display[i].id === 'rsi' ? v.toFixed(0) : fnum(v)}</td>)}
-                      <td className="num">{r.hitPct.toFixed(0)}%</td><td><FwdBar v={r.avgFwd} /></td>
+                      {outCells(r)}
                     </tr>
                   ))}
-                  {!byT.length && <tr><td className="l sub" colSpan={9} style={{ padding: 20 }}>Ничего не прошло условия — ослабьте блоки.</td></tr>}
+                  {!byT.length && <tr><td className="l sub" colSpan={tColSpan} style={{ padding: 20 }}>Ничего не прошло условия — ослабьте блоки или расширьте окно лет.</td></tr>}
                 </tbody>
               </table>
             ) : (
               <table>
-                <thead><tr><th className="l">Год</th><th>Сделок</th><th>Тикеров</th><th>Доля +</th><th>Ср. форвард</th></tr></thead>
+                <thead><tr><th className="l">Год</th><th>Сделок</th><th>Тикеров</th>{outHead}</tr></thead>
                 <tbody>
                   {byY.map((y) => (
                     <tr key={y.year} className="click" onClick={() => setDrill({ kind: 'y', kv: String(y.year) })}>
-                      <td className="l"><span className="sy">{y.year}</span></td><td className="num">{y.n}</td><td className="num">{y.tickers}</td><td className="num">{y.hitPct.toFixed(0)}%</td><td><FwdBar v={y.avgFwd} /></td>
+                      <td className="l"><span className="sy">{y.year}</span></td><td className="num">{y.n}</td><td className="num">{y.tickers}</td>
+                      {outCells(y)}
                     </tr>
                   ))}
-                  {!byY.length && <tr><td className="l sub" colSpan={5} style={{ padding: 20 }}>Нет сделок.</td></tr>}
+                  {!byY.length && <tr><td className="l sub" colSpan={10} style={{ padding: 20 }}>Нет сделок в окне лет.</td></tr>}
                 </tbody>
               </table>
             )}
           </div>
-          {panel && <p className="foot">Клик по строке → провал внутрь сделок. Панель: {panel.meta?.obs} сделок, {panel.symbols.length} тикеров, {panel.meta?.first} … {panel.meta?.last} (форвард {panel.horizon}д vs SPY).</p>}
+          {panel && <p className="foot">Клик по строке → провал внутрь сделок. Панель: {panel.meta?.obs} сделок, {panel.symbols.length} тикеров, {panel.meta?.first} … {panel.meta?.last} · форвард {panel.horizon}д · окно {years} лет{minYear ? ` (с ${minYear})` : ''}.</p>}
         </div>
       </div>
 
-      {drill && panel && <Drawer panel={panel} blocks={blk} drill={drill} onClose={() => setDrill(null)} />}
+      {drill && panel && <Drawer panel={panel} blocks={blk} drill={drill} horizon={panel.horizon || horizon} minYear={minYear} onClose={() => setDrill(null)} />}
     </main>
   );
 }
 
-function Drawer({ panel, blocks, drill, onClose }: { panel: ScreenPanel; blocks: Block[]; drill: { kind: 't' | 'y'; kv: string }; onClose: () => void }) {
-  const deals = screenDeals(panel, blocks, drill.kind, drill.kv);
-  const avg = deals.length ? deals.reduce((a, d) => a + d.fwd, 0) / deals.length : 0;
-  const hit = deals.length ? (deals.filter((d) => d.fwd > 0).length / deals.length) * 100 : 0;
-  const tickers = new Set(deals.map((d) => d.symbol)).size;
+function Drawer({ panel, blocks, drill, horizon, minYear, onClose }: { panel: ScreenPanel; blocks: Block[]; drill: { kind: 't' | 'y'; kv: string }; horizon: number; minYear?: number; onClose: () => void }) {
+  const deals = screenDeals(panel, blocks, drill.kind, drill.kv, minYear);
+  const st = dealStats(deals);
+  const stats: [string, string, string][] = [
+    ['Сделок', String(st.n), ''],
+    ['Доля +', st.hitPct.toFixed(0) + '%', ''],
+    ['Ср. return', fnum(st.avgRet) + '%', cls(st.avgRet)],
+    ['Медиана', fnum(st.medRet) + '%', cls(st.medRet)],
+    ['Просадка', fnum(st.avgMdd) + '%', 'down'],
+    ['MAE', fnum(st.avgMae) + '%', 'down'],
+    ['MFE', fnum(st.avgMfe) + '%', 'up'],
+    ['vs SPY', fnum(st.avgExc) + '%', cls(st.avgExc)],
+  ];
   return (
     <div className="rsx">
       <div className="rsx-scrim" onClick={onClose} />
       <div className="rsx-drawer">
         <div className="dr-h">
-          <div><div style={{ fontSize: 15, fontWeight: 700 }}>{drill.kind === 't' ? `${drill.kv} · сделки` : `Год ${drill.kv} · сделки`}</div><div className="sub" style={{ marginTop: 3 }}>матч-сделки по текущим условиям</div></div>
+          <div><div style={{ fontSize: 15, fontWeight: 700 }}>{drill.kind === 't' ? `${drill.kv} · сделки` : `Год ${drill.kv} · сделки`}</div><div className="sub" style={{ marginTop: 3 }}>матч-сделки по текущим условиям · форвард {horizon}д{drill.kind === 'y' ? '' : minYear ? ` · с ${minYear}` : ''} · {st.tickers} тикеров</div></div>
           <span className="x" onClick={onClose}>✕</span>
         </div>
         <div className="dr-b">
           <div className="statgrid">
-            {[['Сделок', String(deals.length)], ['Ср. форвард', fnum(avg) + '%'], ['Доля +', hit.toFixed(0) + '%'], ['Тикеров', String(tickers)]].map(([k, v]) => (
-              <div className="stat" key={k}><div className="k">{k}</div><div className={`v ${k === 'Ср. форвард' ? cls(avg) : ''}`}>{v}</div></div>
+            {stats.map(([k, v, tone]) => (
+              <div className="stat" key={k}><div className="k">{k}</div><div className={`v ${tone}`}>{v}</div></div>
             ))}
           </div>
-          <table>
-            <thead><tr><th className="l">Дата</th>{drill.kind === 'y' && <th className="l">Тикер</th>}<th>Момент. 63</th><th>Вола 21</th><th>RSI</th><th>Форвард</th></tr></thead>
-            <tbody>
-              {deals.map((d, i) => (
-                <tr key={i}>
-                  <td className="l num">{d.date}</td>{drill.kind === 'y' && <td className="l sy">{d.symbol}</td>}
-                  <td className={`num ${cls(d.vals.momentum_63)}`}>{fnum(d.vals.momentum_63)}</td>
-                  <td className="num">{d.vals.vol_21 ?? '—'}</td><td className="num">{d.vals.rsi_14 ?? '—'}</td>
-                  <td><FwdBar v={d.fwd} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div style={{ overflowX: 'auto' }}>
+            <table>
+              <thead><tr><th className="l">Дата</th>{drill.kind === 'y' && <th className="l">Тикер</th>}<th>Момент. 63</th><th>Вола 21</th><th>RSI</th><th>Return</th><th>MFE</th><th>MAE</th><th>Просадка</th><th>vs SPY</th></tr></thead>
+              <tbody>
+                {deals.map((d, i) => (
+                  <tr key={i}>
+                    <td className="l num">{d.date}</td>{drill.kind === 'y' && <td className="l sy">{d.symbol}</td>}
+                    <td className={`num ${cls(d.vals.momentum_63)}`}>{fnum(d.vals.momentum_63)}</td>
+                    <td className="num">{d.vals.vol_21 ?? '—'}</td><td className="num">{d.vals.rsi_14 ?? '—'}</td>
+                    <td><FwdBar v={d.ret} /></td>
+                    <td className="num up">{fnum(d.mfe)}</td><td className="num down">{fnum(d.mae)}</td><td className="num down">{fnum(d.mdd)}</td>
+                    <td className="num"><Num v={d.exc} /></td>
+                  </tr>
+                ))}
+                {!deals.length && <tr><td className="l sub" colSpan={drill.kind === 'y' ? 10 : 9} style={{ padding: 16 }}>Нет сделок в окне лет.</td></tr>}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
