@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Delta, Sparkline, SegmentedControl, Badge, Skeleton } from '@/components/ui';
-import type { InstrumentMetrics, MarketOverview, OverviewBlock } from '@/lib/terminal/types';
+import type { CorrelationMatrix, InstrumentMetrics, MarketOverview, OverviewBlock } from '@/lib/terminal/types';
 
 const PCOLS: { key: number | 'ytd'; label: string }[] = [
   { key: 1, label: '1D' },
@@ -21,7 +21,7 @@ function num(m: InstrumentMetrics | null, key: number | 'ytd'): number | null {
 
 function Pct({ v, dim }: { v: number | null; dim?: boolean }) {
   if (v == null) return <span className="text-ink-3">—</span>;
-  if (dim && Math.abs(v) < 0.05) return <span className="text-ink-3 tabular-nums">0.0</span>;
+  if (dim && Math.abs(v) < 0.05) return <span className="tabular-nums text-ink-3">0.0</span>;
   return <Delta value={v} percent={false} decimals={1} showArrow={false} size="sm" />;
 }
 
@@ -29,7 +29,7 @@ function RangeBar({ v }: { v: number | null }) {
   if (v == null) return <span className="text-ink-3">—</span>;
   return (
     <span className="inline-flex items-center gap-1.5">
-      <span className="relative h-[7px] w-[54px] overflow-hidden rounded-fk-pill bg-surface-2">
+      <span className="relative h-[7px] w-[44px] overflow-hidden rounded-fk-pill bg-surface-2">
         <i className="absolute inset-y-0 left-0 rounded-fk-pill" style={{ width: `${Math.max(2, Math.min(100, v))}%`, background: 'linear-gradient(90deg,#cdd6e6,var(--fk-brand))' }} />
       </span>
       <span className="w-7 text-right text-[11px] tabular-nums text-ink-2">{Math.round(v)}%</span>
@@ -41,10 +41,17 @@ function flags(m: InstrumentMetrics | null) {
   if (!m) return null;
   return (
     <>
-      {m.z63 != null && Math.abs(m.z63) > 2 && <span className="ml-1 text-warn-strong" title="аномалия |z|>2">⚡</span>}
-      {m.volRatio != null && m.volRatio > 1.5 && <span className="ml-1 font-extrabold text-down-strong" title="vol_ratio>1.5">!</span>}
+      {m.z63 != null && Math.abs(m.z63) > 2 && <span className="ml-0.5 text-warn-strong" title="аномалия |z|>2">⚡</span>}
+      {m.volRatio != null && m.volRatio > 1.5 && <span className="ml-0.5 font-extrabold text-down-strong" title="vol_ratio>1.5">!</span>}
     </>
   );
+}
+
+function corrColor(v: number | null): { bg: string; fg: string } {
+  if (v == null) return { bg: 'transparent', fg: 'var(--fk-text-3)' };
+  if (v >= 0.999) return { bg: '#eef0f7', fg: 'var(--fk-text-3)' };
+  const a = Math.pow(Math.abs(v), 0.85) * 0.82;
+  return { bg: v > 0 ? `rgba(244,63,94,${a.toFixed(3)})` : `rgba(16,185,129,${a.toFixed(3)})`, fg: Math.abs(v) > 0.6 ? '#fff' : 'var(--fk-text)' };
 }
 
 export default function TerminalPage() {
@@ -64,7 +71,6 @@ export default function TerminalPage() {
     };
   }, []);
 
-  // SPY-метрики (бенч для относительной силы и режима «Превышение SPY»)
   const spy = useMemo(() => {
     if (!data) return null;
     for (const b of data.blocks) for (const c of b.instruments) if (c.def.symbol === 'SPY') return c.metrics;
@@ -82,17 +88,17 @@ export default function TerminalPage() {
     return v;
   };
 
-  // Лидеры / аутсайдеры / аномалии дня по всей вселенной
   const movers = useMemo(() => {
-    if (!data) return { up: [], down: [], anom: [] as { sym: string; z: number; vr: number | null }[] };
+    if (!data) return { up: [] as any[], down: [] as any[], anom: [] as { sym: string; z: number; vr: number | null }[] };
     const all: { sym: string; m: InstrumentMetrics }[] = [];
     const seen = new Set<string>();
     for (const b of data.blocks)
-      for (const c of b.instruments) if (c.metrics && !seen.has(c.def.symbol)) {
-        seen.add(c.def.symbol);
-        all.push({ sym: c.def.symbol, m: c.metrics });
-      }
-    const byR1 = all.filter((x) => x.m.returns[1] != null).sort((a, b) => (b.m.returns[1]! - a.m.returns[1]!));
+      for (const c of b.instruments)
+        if (c.metrics && !seen.has(c.def.symbol)) {
+          seen.add(c.def.symbol);
+          all.push({ sym: c.def.symbol, m: c.metrics });
+        }
+    const byR1 = all.filter((x) => x.m.returns[1] != null).sort((a, b) => b.m.returns[1]! - a.m.returns[1]!);
     const anom = all
       .filter((x) => x.m.z63 != null)
       .map((x) => ({ sym: x.sym, z: x.m.z63!, vr: x.m.volRatio }))
@@ -109,8 +115,7 @@ export default function TerminalPage() {
     );
 
   return (
-    <div className="mx-auto max-w-[1320px] px-5 pb-24 pt-5">
-      {/* Шапка */}
+    <div className="mx-auto max-w-[1320px] px-4 pb-24 pt-5 sm:px-5">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <h1 className="text-lg font-bold text-ink">Рыночный терминал</h1>
@@ -133,11 +138,12 @@ export default function TerminalPage() {
       ) : (
         <>
           <RegimePulse data={data} movers={movers} />
-          <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
             {data.blocks.map((b) => (
               <BlockCard key={b.def.id} block={b} mode={mode} cell={cell} spy={spy} onPick={(m, title) => setSel({ block: b, m, title })} />
             ))}
           </div>
+          {data.correlation && <CorrelationCard corr={data.correlation} />}
         </>
       )}
 
@@ -150,7 +156,7 @@ function LoadingState() {
   return (
     <div className="space-y-3.5">
       <Skeleton className="h-40 w-full rounded-fk" />
-      <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
         {Array.from({ length: 4 }).map((_, i) => (
           <Skeleton key={i} className="h-72 w-full rounded-fk" />
         ))}
@@ -196,14 +202,10 @@ function RegimePulse({ data, movers }: { data: MarketOverview; movers: { up: any
         </div>
         <div className="grid grid-cols-1 gap-3 px-4 py-3.5 sm:grid-cols-3">
           <Col title="▲ Лидеры дня" color="var(--fk-up-text)">
-            {movers.up.map((x) => (
-              <Row3 key={x.sym} sym={x.sym} v={x.m.returns[1]} spark={x.m.spark} />
-            ))}
+            {movers.up.map((x) => <Row3 key={x.sym} sym={x.sym} v={x.m.returns[1]} spark={x.m.spark} />)}
           </Col>
           <Col title="▼ Аутсайдеры" color="var(--fk-down-text)">
-            {movers.down.map((x) => (
-              <Row3 key={x.sym} sym={x.sym} v={x.m.returns[1]} spark={x.m.spark} />
-            ))}
+            {movers.down.map((x) => <Row3 key={x.sym} sym={x.sym} v={x.m.returns[1]} spark={x.m.spark} />)}
           </Col>
           <Col title="⚠ Аномалии vol/z" color="var(--fk-warn-text)">
             {movers.anom.map((x) => (
@@ -229,6 +231,12 @@ function Row3({ sym, v, spark }: { sym: string; v: number | null; spark: number[
   );
 }
 
+function blockBreadth(bm: OverviewBlock['metrics']) {
+  return bm.breadthMA200 != null
+    ? `${Math.round(bm.breadthMA200)}% >MA200 · ${bm.advancers}↑/${bm.decliners}↓`
+    : `${bm.advancers}↑/${bm.decliners}↓`;
+}
+
 function BlockCard({
   block,
   mode,
@@ -243,11 +251,6 @@ function BlockCard({
   onPick: (m: InstrumentMetrics, title: string) => void;
 }) {
   const spy63 = spy?.returns[63] ?? null;
-  const bm = block.metrics;
-  const breadth =
-    bm.breadthMA200 != null
-      ? `${Math.round(bm.breadthMA200)}% >MA200 · ${bm.advancers}↑/${bm.decliners}↓`
-      : `${bm.advancers}↑/${bm.decliners}↓`;
   return (
     <div className="rounded-fk border border-line bg-surface-elev shadow-fk-sm">
       <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-line px-3.5 py-3">
@@ -255,62 +258,170 @@ function BlockCard({
           <span className="text-[13px] font-bold text-ink">{block.def.title}</span>
           {block.def.benchmark && <Badge variant="brand">бенч {block.def.benchmark}</Badge>}
         </div>
-        <span className="text-[11px] text-ink-3">{breadth}</span>
+        <span className="text-[11px] text-ink-3">{blockBreadth(block.metrics)}</span>
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full border-collapse">
+
+      {/* desktop: компактная таблица без горизонтального скролла */}
+      <table className="hidden w-full border-collapse md:table">
+        <thead>
+          <tr className="text-[9.5px] uppercase tracking-wide text-ink-3">
+            <th className="py-1.5 pl-3.5 pr-1 text-left font-semibold">Инстр.</th>
+            <th className="px-1 py-1.5 text-left font-semibold">тренд</th>
+            {PCOLS.map((p) => (
+              <th key={p.label} className="px-1 py-1.5 text-right font-semibold">{p.label}</th>
+            ))}
+            <th className="px-1 py-1.5 text-right font-semibold">vsSPY</th>
+            <th className="px-1 py-1.5 text-right font-semibold">vol</th>
+            <th className="py-1.5 pl-1 pr-3.5 text-right font-semibold">52w</th>
+          </tr>
+        </thead>
+        <tbody>
+          {block.instruments.map((c) => {
+            const m = c.metrics;
+            const rs = m && m.returns[63] != null && spy63 != null ? m.returns[63]! - spy63 : null;
+            return (
+              <tr
+                key={c.def.symbol}
+                className="cursor-pointer border-b border-line text-[12px] last:border-0 hover:bg-surface-2"
+                onClick={() => m && onPick(m, `${c.def.symbol} · ${c.def.title}`)}
+              >
+                <td className="py-1.5 pl-3.5 pr-1 text-left">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="w-9 shrink-0 font-semibold">{c.def.symbol}</span>
+                    <span className="max-w-[74px] truncate text-[11px] text-ink-3" title={c.def.title}>{c.def.title}</span>
+                  </div>
+                </td>
+                <td className="px-1 py-1.5">{m ? <Sparkline data={m.spark} width={42} height={16} strokeWidth={1.4} /> : <span className="text-ink-3">—</span>}</td>
+                {PCOLS.map((p) => (
+                  <td key={p.label} className="px-1 py-1.5 text-right tabular-nums"><Pct v={cell(m, p.key)} dim={mode === 'excess'} /></td>
+                ))}
+                <td className="px-1 py-1.5 text-right tabular-nums"><Pct v={rs} /></td>
+                <td className="px-1 py-1.5 text-right tabular-nums">{m?.vol21 != null ? m.vol21.toFixed(0) : '—'}{flags(m)}</td>
+                <td className="py-1.5 pl-1 pr-3.5 text-right"><RangeBar v={m?.pct52w ?? null} /></td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      {/* mobile: карточки инструментов */}
+      <div className="md:hidden">
+        {block.instruments.map((c) => {
+          const m = c.metrics;
+          const rs = m && m.returns[63] != null && spy63 != null ? m.returns[63]! - spy63 : null;
+          const chip = (label: string, key: number | 'ytd') => (
+            <span className="inline-flex items-baseline gap-1">
+              <span className="text-[10px] uppercase text-ink-3">{label}</span>
+              <span className="tabular-nums"><Pct v={cell(m, key)} dim={mode === 'excess'} /></span>
+            </span>
+          );
+          return (
+            <div key={c.def.symbol} className="cursor-pointer border-b border-line px-3.5 py-3 last:border-0 active:bg-surface-2" onClick={() => m && onPick(m, `${c.def.symbol} · ${c.def.title}`)}>
+              <div className="flex items-center justify-between gap-2.5">
+                <div className="flex min-w-0 items-baseline gap-2">
+                  <span className="text-[14px] font-bold">{c.def.symbol}</span>
+                  <span className="truncate text-[12px] text-ink-3">{c.def.title}</span>
+                </div>
+                <div className="flex flex-none items-center gap-2.5">
+                  {m && <Sparkline data={m.spark} width={50} height={16} strokeWidth={1.4} />}
+                  {m?.returns[1] != null && <Delta value={cell(m, 1)!} decimals={1} size="sm" />}
+                </div>
+              </div>
+              <div className="mt-2.5 flex flex-wrap gap-x-3.5 gap-y-1.5 text-[12px]">
+                {chip('5D', 5)}
+                {chip('21D', 21)}
+                {chip('63D', 63)}
+                {chip('YTD', 'ytd')}
+                <span className="inline-flex items-baseline gap-1"><span className="text-[10px] uppercase text-ink-3">vs SPY</span><span className="tabular-nums"><Pct v={rs} /></span></span>
+                <span className="inline-flex items-baseline gap-1"><span className="text-[10px] uppercase text-ink-3">vol</span><span className="tabular-nums">{m?.vol21 != null ? m.vol21.toFixed(0) : '—'}</span>{flags(m)}</span>
+                <span className="inline-flex items-center gap-1"><span className="text-[10px] uppercase text-ink-3">52w</span><RangeBar v={m?.pct52w ?? null} /></span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function CorrelationCard({ corr }: { corr: CorrelationMatrix }) {
+  return (
+    <div className="mt-5 rounded-fk border border-line bg-surface-elev shadow-fk-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-3.5 py-3">
+        <div className="flex items-center gap-2.5">
+          <span className="text-[13px] font-bold text-ink">Корреляционная матрица</span>
+          <Badge>кросс-ассет · {corr.window}д</Badge>
+        </div>
+        <span className="text-[11px] text-ink-3">красный — движутся вместе (риск концентрации) · зелёный — диверсификатор</span>
+      </div>
+      <div className="overflow-x-auto px-3.5 py-3">
+        <table className="border-separate" style={{ borderSpacing: 4 }}>
           <thead>
-            <tr className="text-[10px] uppercase tracking-wide text-ink-3">
-              <th className="px-2.5 py-1.5 text-left font-semibold">Инстр.</th>
-              <th className="px-1.5 py-1.5 text-left font-semibold">тренд</th>
-              {PCOLS.map((p) => (
-                <th key={p.label} className="px-1.5 py-1.5 text-right font-semibold">{p.label}</th>
+            <tr>
+              <th />
+              {corr.symbols.map((s) => (
+                <th key={s} className="px-1 pb-1 text-center text-[10.5px] font-semibold text-ink-2">{s}</th>
               ))}
-              <th className="px-1.5 py-1.5 text-right font-semibold">vs&nbsp;SPY</th>
-              <th className="px-1.5 py-1.5 text-right font-semibold">vol21</th>
-              <th className="px-1.5 py-1.5 text-right font-semibold">52w</th>
             </tr>
           </thead>
           <tbody>
-            {block.instruments.map((c) => {
-              const m = c.metrics;
-              const rs = m && m.returns[63] != null && spy63 != null ? m.returns[63]! - spy63 : null;
-              return (
-                <tr
-                  key={c.def.symbol}
-                  className="cursor-pointer border-b border-line text-[12px] last:border-0 hover:bg-surface-2"
-                  onClick={() => m && onPick(m, `${c.def.symbol} · ${c.def.title}`)}
-                >
-                  <td className="px-2.5 py-1.5 text-left">
-                    <span className="flex items-center gap-2">
-                      <span className="w-10 font-semibold">{c.def.symbol}</span>
-                      <span className="text-[11px] text-ink-3">{c.def.title}</span>
-                    </span>
-                  </td>
-                  <td className="px-1.5 py-1.5">
-                    {m ? <Sparkline data={m.spark} width={46} height={16} strokeWidth={1.4} /> : <span className="text-ink-3">—</span>}
-                  </td>
-                  {PCOLS.map((p) => (
-                    <td key={p.label} className="px-1.5 py-1.5 text-right tabular-nums">
-                      <Pct v={cell(m, p.key)} dim={mode === 'excess'} />
+            {corr.matrix.map((row, i) => (
+              <tr key={corr.symbols[i]}>
+                <td className="whitespace-nowrap pr-2 text-right text-[11.5px] font-semibold text-ink" title={corr.titles[i]}>{corr.symbols[i]}</td>
+                {row.map((v, j) => {
+                  const { bg, fg } = corrColor(v);
+                  return (
+                    <td key={j}>
+                      <div className="flex h-9 w-[50px] items-center justify-center rounded-fk-sm border border-line text-[11.5px] font-semibold tabular-nums" style={{ background: bg, color: fg }}>
+                        {v == null ? '—' : i === j ? '1.00' : v.toFixed(2)}
+                      </div>
                     </td>
-                  ))}
-                  <td className="px-1.5 py-1.5 text-right tabular-nums">
-                    <Pct v={rs} />
-                  </td>
-                  <td className="px-1.5 py-1.5 text-right tabular-nums">
-                    {m?.vol21 != null ? m.vol21.toFixed(1) : '—'}
-                    {flags(m)}
-                  </td>
-                  <td className="px-1.5 py-1.5 text-right">
-                    <RangeBar v={m?.pct52w ?? null} />
-                  </td>
-                </tr>
-              );
-            })}
+                  );
+                })}
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ───────────────────────── Drawer (насыщенный drill-down) ─────────────────────────
+
+const HORIZONS: { label: string; pts: number }[] = [
+  { label: '1м', pts: 8 },
+  { label: '3м', pts: 20 },
+  { label: '6м', pts: 40 },
+  { label: '1г', pts: 72 },
+  { label: 'макс', pts: 999 },
+];
+
+function BarRow({ label, value, max, suffix = '' }: { label: string; value: number | null; max: number; suffix?: string }) {
+  const pos = value != null && value >= 0;
+  const w = value == null ? 0 : Math.min(50, (Math.abs(value) / max) * 50);
+  return (
+    <div className="flex items-center gap-2 text-[12px]">
+      <span className="w-9 shrink-0 text-ink-3">{label}</span>
+      <div className="relative h-3.5 flex-1 rounded bg-surface-2">
+        <div className="absolute inset-y-0 left-1/2 w-px bg-line-strong" />
+        {value != null && (
+          <div className="absolute inset-y-[2px] rounded-[3px]" style={{ [pos ? 'left' : 'right']: '50%', width: `${w}%`, background: pos ? 'var(--fk-up)' : 'var(--fk-down)' } as any} />
+        )}
+      </div>
+      <span className={`w-12 shrink-0 text-right font-semibold tabular-nums ${value == null ? 'text-ink-3' : pos ? 'text-up-strong' : 'text-down-strong'}`}>
+        {value == null ? '—' : (value > 0 ? '+' : '') + value.toFixed(1) + suffix}
+      </span>
+    </div>
+  );
+}
+
+function Chip({ k, v, tone }: { k: string; v: string; tone?: 'up' | 'down' | 'warn' }) {
+  const cls = tone === 'up' ? 'text-up-strong' : tone === 'down' ? 'text-down-strong' : tone === 'warn' ? 'text-warn-strong' : 'text-ink';
+  return (
+    <div className="rounded-fk-sm bg-surface-2 px-2.5 py-1.5">
+      <div className="text-[10px] uppercase tracking-wide text-ink-3">{k}</div>
+      <div className={`mt-0.5 text-[14px] font-bold tabular-nums ${cls}`}>{v}</div>
     </div>
   );
 }
@@ -325,60 +436,124 @@ function DetailDrawer({
   onClose: () => void;
 }) {
   const m = sel.m;
-  const stat = (k: string, v: string, tone?: 'up' | 'down') => (
-    <div className="rounded-fk-sm bg-surface-2 px-2.5 py-2">
-      <div className="text-[10px] uppercase tracking-wide text-ink-3">{k}</div>
-      <div className={`mt-0.5 text-[15px] font-bold tabular-nums ${tone === 'up' ? 'text-up-strong' : tone === 'down' ? 'text-down-strong' : ''}`}>{v}</div>
-    </div>
-  );
-  const r = (key: number | 'ytd') => {
-    const v = key === 'ytd' ? m.ytd : m.returns[key] ?? null;
-    return v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(1);
-  };
-  const tone = (key: number | 'ytd') => {
-    const v = key === 'ytd' ? m.ytd : m.returns[key] ?? null;
-    return v == null ? undefined : v >= 0 ? 'up' : 'down';
-  };
-  const vsSpy = spy && m.returns[63] != null && spy.returns[63] != null ? m.returns[63]! - spy.returns[63]! : null;
+  const [hz, setHz] = useState('1г');
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const pts = HORIZONS.find((h) => h.label === hz)?.pts ?? 999;
+  const spark = m.spark.slice(-Math.min(pts, m.spark.length));
+
+  const retItems: { label: string; v: number | null }[] = [
+    { label: '1D', v: m.returns[1] },
+    { label: '1н', v: m.returns[5] },
+    { label: '1м', v: m.returns[21] },
+    { label: '3м', v: m.returns[63] },
+    { label: '6м', v: m.returns[126] },
+    { label: '1г', v: m.returns[252] },
+  ];
+  const retMax = Math.max(1, ...retItems.map((i) => (i.v == null ? 0 : Math.abs(i.v))));
+
+  const rsItems: { label: string; v: number | null }[] = [21, 63, 126, 252].map((w) => ({
+    label: w === 21 ? '1м' : w === 63 ? '3м' : w === 126 ? '6м' : '1г',
+    v: spy && m.returns[w] != null && spy.returns[w] != null ? m.returns[w]! - spy.returns[w]! : null,
+  }));
+  const rsMax = Math.max(1, ...rsItems.map((i) => (i.v == null ? 0 : Math.abs(i.v))));
+  const rs63 = rsItems[1].v;
+  const rsTag = rs63 == null ? null : rs63 > 1 ? { t: 'Лидирует', c: 'up' as const } : rs63 < -1 ? { t: 'Отстаёт', c: 'down' as const } : { t: 'В рынке', c: undefined };
+
+  const last1d = m.returns[1];
+  const big = m.last != null ? m.last.toLocaleString('en-US', { maximumFractionDigits: 2 }) : '—';
+
   return (
     <>
-      <div className="fixed inset-0 z-50 bg-[rgba(15,23,41,0.28)] animate-overlay-in" onClick={onClose} />
-      <div className="fixed inset-y-0 right-0 z-[51] flex w-[440px] max-w-[92vw] flex-col border-l border-line bg-surface-elev shadow-fk-lg animate-modal-in">
-        <div className="flex items-start justify-between border-b border-line px-5 py-4">
-          <div>
-            <div className="text-[15px] font-bold">{sel.title}</div>
-            <div className="mt-1.5 flex items-center gap-2">
-              {m.returns[1] != null && <Delta value={m.returns[1]!} percent decimals={2} />}
+      <div className="fixed inset-0 z-50 bg-[rgba(15,23,41,0.32)] animate-overlay-in" onClick={onClose} />
+      <div className="fixed inset-y-0 right-0 z-[51] flex w-[460px] max-w-[94vw] flex-col border-l border-line bg-surface-elev shadow-fk-lg animate-modal-in">
+        {/* header */}
+        <div className="flex items-start justify-between gap-3 border-b border-line px-5 py-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-[17px] font-extrabold">{m.symbol}</span>
+              {flags(m)}
+            </div>
+            <div className="truncate text-[12.5px] text-ink-3">{sel.title.split(' · ')[1] ?? ''}</div>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="text-[20px] font-bold tabular-nums">{big}</span>
+              {last1d != null && <Delta value={last1d} percent decimals={2} variant="pill" />}
               <Badge variant="brand">{sel.block.def.title.replace('Корзина: ', '')}</Badge>
+              {sel.block.def.benchmark && <Badge>бенч {sel.block.def.benchmark}</Badge>}
             </div>
           </div>
-          <button className="text-lg leading-none text-ink-3" onClick={onClose}>✕</button>
+          <button className="rounded-fk-sm px-1.5 text-lg leading-none text-ink-3 hover:bg-surface-2" onClick={onClose} aria-label="Закрыть">✕</button>
         </div>
+
         <div className="overflow-auto px-5 py-4">
-          <div className="mb-3 flex h-28 items-center justify-center rounded-fk bg-surface-2">
-            <Sparkline data={m.spark} width={380} height={96} strokeWidth={1.8} />
+          {/* график + горизонт */}
+          <div className="mb-2.5 flex items-center justify-between">
+            <span className="text-[10.5px] font-bold uppercase tracking-wide text-ink-3">Динамика цены</span>
+            <SegmentedControl size="sm" value={hz} onChange={setHz} options={HORIZONS.map((h) => ({ label: h.label, value: h.label }))} />
           </div>
-          <div className="mb-2 text-[10.5px] font-bold uppercase tracking-wide text-ink-3">Доходность</div>
-          <div className="mb-4 grid grid-cols-3 gap-2.5">
-            {stat('1D', r(1), tone(1))}
-            {stat('5D', r(5), tone(5))}
-            {stat('21D', r(21), tone(21))}
-            {stat('63D', r(63), tone(63))}
-            {stat('YTD', r('ytd'), tone('ytd'))}
-            {stat('vs SPY 63D', vsSpy == null ? '—' : (vsSpy > 0 ? '+' : '') + vsSpy.toFixed(1), vsSpy == null ? undefined : vsSpy >= 0 ? 'up' : 'down')}
+          <div className="mb-4 flex h-32 items-center justify-center rounded-fk bg-surface-2 px-2">
+            <Sparkline data={spark.length >= 2 ? spark : m.spark} width={400} height={108} strokeWidth={2} />
           </div>
-          <div className="mb-2 text-[10.5px] font-bold uppercase tracking-wide text-ink-3">Риск / диапазон</div>
-          <div className="grid grid-cols-3 gap-2.5">
-            {stat('vol21', m.vol21 != null ? m.vol21.toFixed(1) : '—')}
-            {stat('vol63', m.vol63 != null ? m.vol63.toFixed(1) : '—')}
-            {stat('%52w', m.pct52w != null ? Math.round(m.pct52w) + '%' : '—')}
-            {stat('z-score', m.z63 != null ? (m.z63 > 0 ? '+' : '') + m.z63.toFixed(1) : '—')}
-            {stat('MTD', m.mtd != null ? (m.mtd > 0 ? '+' : '') + m.mtd.toFixed(1) : '—', m.mtd == null ? undefined : m.mtd >= 0 ? 'up' : 'down')}
-            {stat('QTD', m.qtd != null ? (m.qtd > 0 ? '+' : '') + m.qtd.toFixed(1) : '—', m.qtd == null ? undefined : m.qtd >= 0 ? 'up' : 'down')}
+
+          {/* доходность — term structure */}
+          <div className="mb-2 text-[10.5px] font-bold uppercase tracking-wide text-ink-3">Доходность · структура по срокам</div>
+          <div className="mb-2 space-y-1">
+            {retItems.map((it) => <BarRow key={it.label} label={it.label} value={it.v} max={retMax} suffix="%" />)}
           </div>
-          <div className="mt-4 text-[12px] text-ink-2">MA200: {m.aboveMA200 == null ? '—' : m.aboveMA200 ? 'выше' : 'ниже'} · MA50: {m.aboveMA50 == null ? '—' : m.aboveMA50 ? 'выше' : 'ниже'}</div>
+          <div className="mb-4 grid grid-cols-3 gap-2">
+            <Chip k="MTD" v={fmt(m.mtd)} tone={toneOf(m.mtd)} />
+            <Chip k="QTD" v={fmt(m.qtd)} tone={toneOf(m.qtd)} />
+            <Chip k="YTD" v={fmt(m.ytd)} tone={toneOf(m.ytd)} />
+          </div>
+
+          {/* относительная сила */}
+          <div className="mb-2 flex items-center gap-2">
+            <span className="text-[10.5px] font-bold uppercase tracking-wide text-ink-3">Относительная сила vs SPY</span>
+            {rsTag && <Badge variant={rsTag.c === 'up' ? 'up' : rsTag.c === 'down' ? 'down' : 'neutral'}>{rsTag.t}</Badge>}
+          </div>
+          <div className="mb-4 space-y-1">
+            {rsItems.map((it) => <BarRow key={it.label} label={it.label} value={it.v} max={rsMax} suffix="%" />)}
+          </div>
+
+          {/* риск и диапазон */}
+          <div className="mb-2 text-[10.5px] font-bold uppercase tracking-wide text-ink-3">Риск и диапазон</div>
+          {m.pct52w != null && (
+            <div className="mb-3 flex items-center gap-2">
+              <span className="text-[10px] text-ink-3">52н низ</span>
+              <div className="relative h-2 flex-1 rounded-fk-pill bg-surface-2">
+                <div className="absolute -top-[5px] h-[18px] w-[18px] -translate-x-1/2 rounded-fk-pill border-[3px] border-brand bg-white shadow-fk-sm" style={{ left: `${Math.max(0, Math.min(100, m.pct52w))}%` }} />
+              </div>
+              <span className="text-[10px] text-ink-3">верх</span>
+              <span className="w-9 text-right text-[11px] font-semibold tabular-nums text-ink-2">{Math.round(m.pct52w)}%</span>
+            </div>
+          )}
+          <div className="grid grid-cols-3 gap-2">
+            <Chip k="vol21" v={m.vol21 != null ? m.vol21.toFixed(1) : '—'} />
+            <Chip k="vol63" v={m.vol63 != null ? m.vol63.toFixed(1) : '—'} />
+            <Chip k="vol21/63" v={m.volRatio != null ? '×' + m.volRatio.toFixed(2) : '—'} tone={m.volRatio != null && m.volRatio > 1.5 ? 'warn' : undefined} />
+            <Chip k="z-score" v={m.z63 != null ? (m.z63 > 0 ? '+' : '') + m.z63.toFixed(1) : '—'} tone={m.z63 != null && Math.abs(m.z63) > 2 ? 'warn' : undefined} />
+            <Chip k="MA50" v={m.aboveMA50 == null ? '—' : m.aboveMA50 ? 'выше' : 'ниже'} tone={m.aboveMA50 == null ? undefined : m.aboveMA50 ? 'up' : 'down'} />
+            <Chip k="MA200" v={m.aboveMA200 == null ? '—' : m.aboveMA200 ? 'выше' : 'ниже'} tone={m.aboveMA200 == null ? undefined : m.aboveMA200 ? 'up' : 'down'} />
+          </div>
+
+          <div className="mt-5 flex flex-wrap gap-2">
+            <button className="rounded-fk-sm border border-line-strong bg-surface-elev px-3 py-1.5 text-[12px] font-semibold text-ink hover:bg-surface-2">＋ в сравнение</button>
+            <button className="rounded-fk-sm border border-line-strong bg-surface-elev px-3 py-1.5 text-[12px] font-semibold text-ink hover:bg-surface-2">📌 в watchlist</button>
+          </div>
+          {m.synthetic && <div className="mt-3 text-[11px] text-warn-strong">демо-данные (нет ключей провайдеров) — не рыночная картина</div>}
         </div>
       </div>
     </>
   );
+}
+
+function fmt(v: number | null): string {
+  return v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(1);
+}
+function toneOf(v: number | null): 'up' | 'down' | undefined {
+  return v == null ? undefined : v >= 0 ? 'up' : 'down';
 }
