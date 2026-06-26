@@ -185,13 +185,16 @@ def build_fval(px, bench, fid, param, step, skip=0):
     return pd.concat(frames, ignore_index=True)
 
 def forward_extras(px, bench, h):
-    # Форвардные метрики ПУТИ от входа за h торг. дней (на каждую сэмпл-дату, шаг=h — как в build_targets):
-    #   ret — сырой форвардный возврат к концу окна; mfe/mae — макс. благоприятная/неблагоприятная экскурсия
-    #   ОТНОСИТЕЛЬНО ВХОДА, обрезанные по 0 (MFE ≥ 0 — лучшая прибыль; MAE ≤ 0 — худший убыток; 0, если не было);
-    #   mdd — макс. просадка пути peak-to-trough (от локального пика, база — цена входа), может быть глубже MAE. Всё в %.
+    # Форвардные метрики ПУТИ от входа за ПОЛНОЕ окно h торг. дней (на каждую сэмпл-дату, шаг=h):
+    #   ret — сырой форвардный возврат к концу окна; exc — СЫРОЕ превышение бенча (ret − ret_bench за то же
+    #   окно, БЕЗ винзоризации); mfe/mae — макс. благоприятная/неблагоприятная экскурсия ОТНОСИТЕЛЬНО ВХОДА,
+    #   обрезанные по 0 (MFE ≥ 0; MAE ≤ 0; 0, если не было); mdd — макс. просадка пути peak-to-trough
+    #   (от локального пика, база — цена входа), может быть глубже MAE. Всё в %.
     px = px.sort_index()
     keep_pos = list(range(0, len(px.index), max(1, h)))
     idx = px.index
+    has_b = bench in px.columns
+    b = px[bench].values.astype('float64') if has_b else None
     out = []
     for s in [c for c in px.columns if c != bench]:
         c = px[s]
@@ -201,27 +204,33 @@ def forward_extras(px, bench, h):
         n = len(a)
         recs = []
         for i in keep_pos:
+            he = i + h
+            if he > n - 1:  # только ПОЛНОЕ окно h дней (как dropna по форвард-таргету раньше)
+                continue
             p0 = a[i]
             if not (p0 == p0) or p0 <= 0:
                 continue
-            hi = min(i + h, n - 1)
-            if hi <= i:
-                continue
-            win = a[i + 1:hi + 1]
+            win = a[i + 1:he + 1]
             win = win[~np.isnan(win)]
             if win.size == 0:
                 continue
             rel = win / p0
             eq = np.empty(rel.size + 1); eq[0] = 1.0; eq[1:] = rel
             dd = eq / np.maximum.accumulate(eq) - 1.0
-            recs.append((idx[i], (rel[-1] - 1.0) * 100.0, max(0.0, float(rel.max()) - 1.0) * 100.0,
+            ret = (rel[-1] - 1.0) * 100.0
+            exc = None
+            if has_b:
+                bp0 = b[i]; bhe = b[he]
+                if bp0 == bp0 and bhe == bhe and bp0 > 0:
+                    exc = ret - (bhe / bp0 - 1.0) * 100.0
+            recs.append((idx[i], ret, exc, max(0.0, float(rel.max()) - 1.0) * 100.0,
                          min(0.0, float(rel.min()) - 1.0) * 100.0, dd.min() * 100.0))
         if recs:
-            df = pd.DataFrame(recs, columns=['date', 'ret', 'mfe', 'mae', 'mdd'])
+            df = pd.DataFrame(recs, columns=['date', 'ret', 'exc', 'mfe', 'mae', 'mdd'])
             df['symbol'] = s
             out.append(df)
     if not out:
-        return pd.DataFrame(columns=['symbol', 'date', 'ret', 'mfe', 'mae', 'mdd'])
+        return pd.DataFrame(columns=['symbol', 'date', 'ret', 'exc', 'mfe', 'mae', 'mdd'])
     return pd.concat(out, ignore_index=True)
 
 def region_mask(series, sig):
@@ -879,20 +888,19 @@ async def main():
         # МЕТРИКИ ОЦЕНКИ за H дней: ret (сырой возврат), exc (превышение бенча), mfe/mae (макс. благоприятная/
         # неблагоприятная экскурсия), mdd (макс. просадка пути). Условия (блоки ИЛИ / И-НЕ), разрезы (тикеры/годы),
         # окно лет, hit-rate / средний / медиана и провал в сделки клиент считает МГНОВЕННО. Здесь — только данные.
-        tgt = build_targets(px, bench, [H], H, 'excess')
-        if tgt.empty or tgt['symbol'].nunique() < 1:
+        # Набор наблюдений и ВСЕ форвардные исходы (ret/exc/mfe/mae/mdd) — из forward_extras: сырые, БЕЗ
+        # винзоризации (excess не зажимается на хвостах, в отличие от build_targets для исследовательских мод).
+        m = forward_extras(px, bench, H)  # symbol,date,ret,exc,mfe,mae,mdd
+        if m.empty or m['symbol'].nunique() < 1:
             return {'error': 'Недостаточно истории для скрин-панели — расширьте окно лет/вселенную.'}
         # Фиксированный набор метрик-столбцов (клиент берёт любые в условия/показ без перезагрузки).
         METR = [('momentum', 21), ('momentum', 63), ('momentum', 126), ('momentum', 252),
                 ('vol', 21), ('vol', 63), ('dist_ath', 0), ('xbench', 63), ('sma_dist', 50), ('sma_dist', 200), ('rsi', 14)]
         cols = [f + '_' + str(p) for f, p in METR]
-        m = tgt[['symbol', 'date', 't_' + str(H)]].rename(columns={'t_' + str(H): 'exc'})
-        ext = forward_extras(px, bench, H)  # symbol,date,ret,mfe,mae,mdd
-        m = m.merge(ext, on=['symbol', 'date'], how='left')
         for (f, p), cn in zip(METR, cols):
             fv = build_fval(px, bench, f, p, H, 0).rename(columns={'fval': cn})
             m = m.merge(fv, on=['symbol', 'date'], how='left')
-        m = m.dropna(subset=['exc'])
+        m = m.dropna(subset=['ret'])
         if m.empty:
             return {'error': 'Нет сделок в окне — расширьте годы.'}
         gdates = [pd.Timestamp(x) for x in sorted(pd.to_datetime(m['date']).unique())]
