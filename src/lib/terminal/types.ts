@@ -79,9 +79,17 @@ export type MarketRegime = {
   label: 'risk-on' | 'neutral' | 'risk-off';
 };
 
+export type CorrelationMatrix = {
+  symbols: string[];
+  titles: string[];
+  matrix: (number | null)[][]; // попарная корреляция дневных доходностей (63д), диагональ = 1
+  window: number;
+};
+
 export type MarketOverview = {
   asOf: string;
   blocks: OverviewBlock[];
   regime: MarketRegime;
+  correlation: CorrelationMatrix | null;
   synthetic: boolean; // в снапшоте есть синтетика → не показывать как рыночную картину
 };

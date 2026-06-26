@@ -4,7 +4,7 @@
 import { getPrices } from '@/lib/research/prices';
 import { syntheticSeries } from '@/lib/research/metrics';
 import { logAppError } from '@/lib/app-errors';
-import { computeInstrumentMetrics, dailyLogReturns, annualizedVol, type Bar } from './metrics';
+import { computeInstrumentMetrics, dailyLogReturns, annualizedVol, correlation, type Bar } from './metrics';
 import { computeBlockMetrics, averagePairwiseCorrelation, computeRegime } from './block-metrics';
 import { SEED_BLOCKS, SEED_INSTRUMENTS, instrumentDef, allSymbols } from './registry';
 import { readSnapshot, writeSnapshot, isFresh } from './store';
@@ -97,7 +97,23 @@ export async function computeOverview(blocks: BlockDef[] = SEED_BLOCKS): Promise
   const regime = computeRegime({ avgCorr, volRegime, breadth });
 
   const asOf = maxAsOf(metricsMap);
-  return { asOf, blocks: outBlocks, regime, synthetic: anySynthetic };
+  const correlationMx = buildCorrelation(retsMap);
+  return { asOf, blocks: outBlocks, regime, correlation: correlationMx, synthetic: anySynthetic };
+}
+
+// Кросс-ассет корреляции (63д) по курируемому набору — для матрицы на главной.
+const CORR_SET = ['SPY', 'MCHI', 'EWG', 'EWJ', 'GLD', 'SLV', 'URA', 'XLK', 'XLE', 'XLF'];
+function buildCorrelation(retsMap: Map<string, number[]>): MarketOverview['correlation'] {
+  const symbols = CORR_SET.filter((s) => (retsMap.get(s)?.length ?? 0) >= 20);
+  if (symbols.length < 2) return null;
+  const win = 63;
+  const matrix = symbols.map((a) =>
+    symbols.map((b) => {
+      if (a === b) return 1;
+      return correlation((retsMap.get(a) ?? []).slice(-win), (retsMap.get(b) ?? []).slice(-win));
+    }),
+  );
+  return { symbols, titles: symbols.map((s) => instrumentDef(s)?.title ?? s), matrix, window: win };
 }
 
 function pctAboveMA200(ms: (InstrumentMetrics | null)[]): number | null {
