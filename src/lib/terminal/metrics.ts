@@ -142,6 +142,7 @@ export function computeInstrumentMetrics(bars: Bar[]): InstrumentMetrics | null 
 
   const vol21 = annualizedVol(closes, 21);
   const vol63 = annualizedVol(closes, 63);
+  const ma50 = sma(closes, 50);
   const ma200 = sma(closes, 200);
 
   return {
@@ -157,6 +158,7 @@ export function computeInstrumentMetrics(bars: Bar[]): InstrumentMetrics | null 
     volRatio: vol21 != null && vol63 != null && vol63 !== 0 ? vol21 / vol63 : null,
     z63: zScoreOfDailyReturn(closes, 63),
     pct52w: pct52wRange(closes),
+    aboveMA50: ma50 == null ? null : last > ma50,
     aboveMA200: ma200 == null ? null : last > ma200,
     excess63: null,
     spark: downsample(closes, 80),

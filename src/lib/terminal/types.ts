@@ -49,6 +49,7 @@ export type InstrumentMetrics = {
   volRatio: number | null; // vol21/vol63 — ускорение волатильности
   z63: number | null; // z-score дневной доходности (lookback 63д)
   pct52w: number | null; // положение в 52-нед диапазоне, %
+  aboveMA50: boolean | null;
   aboveMA200: boolean | null;
   /** Excess vs бенчмарк блока за 63д — заполняется на уровне блока. */
   excess63: number | null;
