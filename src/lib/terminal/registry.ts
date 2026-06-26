@@ -10,6 +10,10 @@ export const SEED_INSTRUMENTS: InstrumentDef[] = [
   // Бенчмарки / широкий рынок
   { symbol: 'SPY', title: 'США (S&P 500)', kind: 'etf', currency: 'USD' },
   { symbol: 'ACWI', title: 'Мир (MSCI ACWI)', kind: 'etf', currency: 'USD' },
+  // Индексы США
+  { symbol: 'QQQ', title: 'Nasdaq 100', kind: 'etf', currency: 'USD' },
+  { symbol: 'DIA', title: 'Dow Jones 30', kind: 'etf', currency: 'USD' },
+  { symbol: 'IWM', title: 'Russell 2000', kind: 'etf', currency: 'USD' },
   // Страны (US-листинги iShares single-country, USD)
   { symbol: 'MCHI', title: 'Китай', kind: 'etf', currency: 'USD' },
   { symbol: 'EWG', title: 'Германия', kind: 'etf', currency: 'USD' },
@@ -55,6 +59,14 @@ export const SEED_INSTRUMENTS: InstrumentDef[] = [
 ];
 
 export const SEED_BLOCKS: BlockDef[] = [
+  {
+    id: 'indices_us',
+    title: 'Индексы США',
+    type: 'market',
+    benchmark: 'SPY',
+    members: ['SPY', 'QQQ', 'DIA', 'IWM'],
+    layout: 'table',
+  },
   {
     id: 'countries',
     title: 'Страны / ключевые рынки',
