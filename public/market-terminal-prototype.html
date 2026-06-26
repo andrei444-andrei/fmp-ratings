@@ -145,6 +145,23 @@
   .legend{display:flex;gap:16px;align-items:center;font-size:11px;color:var(--fk-text-2);margin-top:10px;flex-wrap:wrap}
   .legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:5px;vertical-align:-1px}
 
+  /* нормализованный перформанс / сравнение выбранных активов */
+  .npf-legend{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:4px 0 8px}
+  .npf-chip{display:inline-flex;align-items:center;gap:7px;background:var(--fk-surface-2);border:1px solid var(--fk-line);border-radius:999px;padding:4px 5px 4px 10px;font-size:12px;font-weight:650;font-variant-numeric:tabular-nums}
+  .npf-chip .dot{width:9px;height:9px;border-radius:999px;flex:none}
+  .npf-chip .pct{font-weight:700}
+  .npf-chip .x{cursor:pointer;color:var(--fk-text-3);font-size:12px;line-height:1;padding:1px 4px;border-radius:6px}
+  .npf-chip .x:hover{background:var(--fk-line);color:var(--fk-down-text)}
+  .npf-add{position:relative}
+  .npf-add-menu{position:absolute;top:calc(100% + 6px);left:0;z-index:25;background:#fff;border:1px solid var(--fk-line-strong);border-radius:12px;box-shadow:var(--fk-shadow);padding:6px;width:280px;max-height:320px;overflow:auto;display:none}
+  .npf-add-menu.open{display:block}
+  .npf-add-menu .grp{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--fk-text-3);margin:8px 6px 3px}
+  .npf-add-menu button{display:flex;width:100%;align-items:center;gap:9px;border:0;background:transparent;padding:6px 8px;border-radius:8px;font-size:12.5px;cursor:pointer;text-align:left;color:var(--fk-text)}
+  .npf-add-menu button:hover{background:var(--fk-surface-2)}
+  .npf-add-menu .sy{font-weight:650;width:58px;flex:none}
+  .npf-chart{width:100%;height:auto;display:block}
+  .npf-empty{padding:34px;text-align:center;color:var(--fk-text-3);font-size:13px}
+
   .scrim{position:fixed;inset:0;background:rgba(15,23,41,.28);z-index:50}
   .drawer{position:fixed;top:0;right:0;bottom:0;width:430px;max-width:92vw;background:var(--fk-surface-elev);
     z-index:51;box-shadow:var(--fk-shadow);border-left:1px solid var(--fk-line);display:flex;flex-direction:column}
@@ -243,6 +260,20 @@
           <div><div class="mini-t" style="color:var(--fk-down-text)">▼ Аутсайдеры</div><div id="losers"></div></div>
           <div><div class="mini-t" style="color:var(--fk-warn-text)">⚠ Аномалии vol/z</div><div id="anoms"></div></div>
         </div></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:14px">
+      <div class="block-h">
+        <div class="left"><span class="ttl">Нормализованный перформанс</span><span class="badge">выбранные активы · ребейз к 0%</span></div>
+        <div class="right">
+          <div class="seg" id="npfSeg"></div>
+          <button class="ed" onclick="resetCompare()" title="к набору по умолчанию">сброс</button>
+        </div>
+      </div>
+      <div class="card-b">
+        <div class="npf-legend" id="npfLegend"></div>
+        <div id="npfChart"></div>
       </div>
     </div>
 
@@ -403,7 +434,7 @@ let universe=[
 let editing=new Set();
 
 function renderTicker(){
-  const items=[['SPY','548.2',0.6],['ACWI','118.4',0.4],['GLD','214.0',1.2],['WTI','71.3',-0.8],['VIX','13.4',-2.1],['DXY','104.2',0.3],['UST10Y','4.28%',0.0],['BTC','67.9k',1.6]];
+  const items=[['SPX','5482',0.6],['NDX','19640',1.1],['GLD','214.0',1.2],['BTC','67.9k',1.6],['VIX','13.4',-2.1],['EUR/USD','1.0843',-0.2],['DXY','104.2',0.3],['UST10Y','4.28%',0.0],['WTI','71.3',-0.8]];
   document.getElementById('ticker').innerHTML=items.map(x=>'<span class="tk"><span class="s">'+x[0]+'</span><span class="p num">'+x[1]+'</span>'+delta(x[2])+'</span>').join('');
 }
 function renderPulse(){
@@ -582,7 +613,83 @@ function closeDrawer(){document.getElementById('scrim').style.display='none';doc
 let toastT;
 function toast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>el.classList.remove('show'),2200)}
 
-renderTicker();renderPulse();renderBlocks();renderCorr();
+// ── Нормализованный перформанс (сравнение выбранных активов; список сохраняется) ──
+const NPF_PERIODS=[['1M',21],['3M',63],['6M',126],['YTD',124],['1Y',252],['3Y',252]];
+const NPF_COLORS={SPX:'#3b82f6',NDX:'#7c3aed',INDU:'#f59e0b',GLD:'#d4a017',BTC:'#f7931a',VIX:'#ef4444',EURUSD:'#10b981',DXY:'#0ea5e9',US10Y:'#64748b'};
+const NPF_PALETTE=['#3b82f6','#7c3aed','#f59e0b','#12b981','#ef4444','#0ea5e9','#d4a017','#ec4899','#14b8a6','#8b5cf6'];
+const MACRO={
+  SPX:{name:'S&P 500',drift:.0007,vol:.011}, NDX:{name:'Nasdaq 100',drift:.0011,vol:.015}, INDU:{name:'Dow Jones',drift:.0006,vol:.010},
+  GLD:{name:'Золото',drift:.0008,vol:.009}, BTC:{name:'Bitcoin',drift:.0016,vol:.035}, VIX:{name:'VIX',drift:0,vol:.05,mr:true},
+  EURUSD:{name:'EUR/USD',drift:.00015,vol:.004}, DXY:{name:'Доллар (DXY)',drift:-.0001,vol:.004}, US10Y:{name:'UST 10Y',drift:0,vol:.02,mr:true},
+};
+function hashSeed(s){let h=7;for(const c of s)h=(h*31+c.charCodeAt(0))%2147483647;return h||7}
+function compareAsset(sym){
+  if(MACRO[sym])return Object.assign({sym},MACRO[sym]);
+  for(const b of universe){const row=b.rows.find(r=>r.sy===sym);if(row)return {sym,name:row.nm,seed:row.seed,drift:(row.r[3]>0?.0008:-.0004),vol:Math.max(.004,row.vol/100/15.87)};}
+  return {sym,name:sym,drift:.0005,vol:.012};
+}
+function genSeries(asset,n){
+  const r=rng(asset.seed||hashSeed(asset.sym));let v=100;const a=[];
+  for(let i=0;i<n;i++){
+    if(asset.mr){const noise=(r()-0.5)*asset.vol*2;v=v+(100-v)*0.04+v*noise;v=Math.max(5,v);}
+    else{v=Math.max(1,v*(1+asset.drift+(r()-0.5)*asset.vol*2));}
+    a.push(v);
+  }
+  return a;
+}
+function colorFor(sym){return NPF_COLORS[sym]||NPF_PALETTE[hashSeed(sym)%NPF_PALETTE.length]}
+function blockSyms(id){const b=universe.find(x=>x.id===id);return b?b.rows.map(r=>r.sy):[]}
+
+let compareState={period:'1Y',sel:['SPX','NDX','GLD','BTC','VIX']};
+function loadCompare(){try{const s=JSON.parse(localStorage.getItem('terminal.compare')||'null');if(s&&Array.isArray(s.sel)&&s.sel.length)compareState={period:s.period||'1Y',sel:s.sel};}catch(e){}}
+function saveCompare(){try{localStorage.setItem('terminal.compare',JSON.stringify(compareState))}catch(e){}}
+function resetCompare(){compareState={period:'1Y',sel:['SPX','NDX','GLD','BTC','VIX']};saveCompare();renderCompare();toast('Сброшено к набору по умолчанию')}
+function addCompare(sym){if(!compareState.sel.includes(sym)){compareState.sel.push(sym);saveCompare();renderCompare();}toggleNpfMenu(false)}
+function removeCompare(sym){compareState.sel=compareState.sel.filter(s=>s!==sym);saveCompare();renderCompare()}
+function setNpfPeriod(p){compareState.period=p;saveCompare();renderCompare()}
+function toggleNpfMenu(force){const m=document.getElementById('npfMenu');if(!m)return;m.classList.toggle('open',force===undefined?!m.classList.contains('open'):force)}
+
+function npfChart(series){
+  const W=860,H=320,padL=10,padR=82,padT=14,padB=24;
+  const plotW=W-padL-padR,plotH=H-padT-padB;
+  let lo=Infinity,hi=-Infinity;for(const s of series)for(const v of s.pct){if(v<lo)lo=v;if(v>hi)hi=v;}
+  if(!isFinite(lo)){lo=-1;hi=1;} if(lo===hi){lo-=1;hi+=1;}
+  const m=(hi-lo)*0.08;lo-=m;hi+=m;
+  const N=series[0]?series[0].pct.length:0;
+  const X=i=>padL+(N<=1?0:i/(N-1)*plotW);
+  const Y=v=>padT+(hi-v)/(hi-lo)*plotH;
+  const niceStep=r=>{const raw=r/5,mag=Math.pow(10,Math.floor(Math.log10(raw))),nn=raw/mag,s=nn>=5?5:nn>=2?2:1;return s*mag;};
+  const step=niceStep(hi-lo);let grid='';
+  for(let g=Math.ceil(lo/step)*step;g<=hi;g+=step){const y=Y(g).toFixed(1),z=Math.abs(g)<1e-9;
+    grid+='<line x1="'+padL+'" y1="'+y+'" x2="'+(padL+plotW)+'" y2="'+y+'" stroke="'+(z?'#c7cfdd':'#eef1f6')+'" stroke-width="1"'+(z?' stroke-dasharray="3 3"':'')+'/>'+
+      '<text x="'+(padL+plotW+6)+'" y="'+(Y(g)+3).toFixed(1)+'" font-size="9.5" fill="#8b95a7">'+(g>0?'+':'')+g.toFixed(0)+'%</text>';}
+  let xlab='';const today=new Date(),ticks=Math.min(6,N);
+  for(let t=0;t<ticks;t++){const idx=Math.round(t/(ticks-1)*(N-1));const d=new Date(today);d.setDate(d.getDate()-(N-1-idx));
+    xlab+='<text x="'+X(idx).toFixed(1)+'" y="'+(H-7)+'" font-size="9.5" fill="#8b95a7" text-anchor="middle">'+d.toLocaleDateString('ru-RU',{month:'short'})+'</text>';}
+  let paths='';const ends=[];
+  for(const s of series){let d='';s.pct.forEach((v,i)=>{d+=(i?'L':'M')+X(i).toFixed(1)+' '+Y(v).toFixed(1)+' ';});
+    paths+='<path d="'+d+'" fill="none" stroke="'+s.color+'" stroke-width="1.7"/>';
+    ends.push({sym:s.sym,color:s.color,v:s.pct[s.pct.length-1],y:Y(s.pct[s.pct.length-1])});}
+  ends.sort((a,b)=>a.y-b.y);for(let i=1;i<ends.length;i++)if(ends[i].y-ends[i-1].y<15)ends[i].y=ends[i-1].y+15;
+  let endlab='';for(const e of ends)endlab+='<rect x="'+(padL+plotW+2)+'" y="'+(e.y-8).toFixed(1)+'" width="76" height="16" rx="4" fill="'+e.color+'"/>'+
+    '<text x="'+(padL+plotW+7)+'" y="'+(e.y+3.5).toFixed(1)+'" font-size="9.5" font-weight="700" fill="#fff">'+e.sym+' '+(e.v>0?'+':'')+e.v.toFixed(1)+'%</text>';
+  return '<svg class="npf-chart" viewBox="0 0 '+W+' '+H+'">'+grid+xlab+paths+endlab+'</svg>';
+}
+
+function renderCompare(){
+  document.getElementById('npfSeg').innerHTML=NPF_PERIODS.map(p=>'<button class="'+(p[0]===compareState.period?'on':'')+'" onclick="setNpfPeriod(\''+p[0]+'\')">'+p[0]+'</button>').join('');
+  const N=(NPF_PERIODS.find(p=>p[0]===compareState.period)||['1Y',252])[1];
+  const series=compareState.sel.map(sym=>{const a=compareAsset(sym);const win=genSeries(a,260).slice(-(N+1));const base=win[0];return {sym,name:a.name,color:colorFor(sym),pct:win.map(v=>(v/base-1)*100)};});
+  const used=new Set(compareState.sel);
+  const groups=[['Макро',Object.keys(MACRO)],['Страны',blockSyms('countries')],['Секторы',blockSyms('sectors')],['Металлы',blockSyms('metals')]];
+  const menu='<div class="npf-add-menu" id="npfMenu">'+groups.map(g=>{const opts=g[1].filter(s=>!used.has(s));return opts.length?'<div class="grp">'+g[0]+'</div>'+opts.map(s=>{const a=compareAsset(s);return '<button onclick="addCompare(\''+s+'\')"><span class="sy">'+s+'</span><span style="color:var(--fk-text-3)">'+a.name+'</span></button>';}).join(''):'';}).join('')+'</div>';
+  const chips=series.map(s=>{const last=s.pct[s.pct.length-1];return '<span class="npf-chip"><span class="dot" style="background:'+s.color+'"></span>'+s.sym+' <span class="pct '+(last>=0?'up':'down')+'">'+(last>0?'+':'')+last.toFixed(1)+'%</span><span class="x" title="убрать" onclick="removeCompare(\''+s.sym+'\')">✕</span></span>';}).join('');
+  document.getElementById('npfLegend').innerHTML=chips+'<span class="npf-add"><button class="btn sm" onclick="toggleNpfMenu()">＋ актив</button>'+menu+'</span>';
+  document.getElementById('npfChart').innerHTML=series.length?npfChart(series):'<div class="npf-empty">Добавьте активы для сравнения через «＋ актив»</div>';
+}
+document.addEventListener('click',e=>{const m=document.getElementById('npfMenu');if(m&&m.classList.contains('open')&&!e.target.closest('.npf-add'))m.classList.remove('open')});
+
+renderTicker();renderPulse();renderBlocks();renderCorr();loadCompare();renderCompare();
 
 // перерисовываем сетки/матрицу при пересечении мобильного брейкпоинта (таблица ↔ карточки)
 let lastMobile=isMobile();
