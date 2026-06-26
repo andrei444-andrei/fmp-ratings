@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation';
 import ThemeToggle from './ThemeToggle';
 
 const LINKS = [
+  { href: '/terminal', label: 'Рыночный терминал' },
   { href: '/researcher', label: 'Скринер' },
   { href: '/signals', label: 'Модель сигналов' },
   { href: '/switch', label: 'Переключение A/B' },
@@ -21,7 +22,7 @@ export default function Nav() {
   return (
     <header className="app-nav">
       <div className="app-nav-in">
-        <a href="/signals" className="app-brand" aria-label="Market Lab">
+        <a href="/terminal" className="app-brand" aria-label="Market Lab">
           <span className="app-brand-dot" />
         </a>
         <nav className="app-nav-links">

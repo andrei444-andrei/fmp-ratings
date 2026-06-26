@@ -1,0 +1,133 @@
+// Слой overview рыночного терминала. Фичи ходят ТОЛЬКО сюда (§6), не в провайдера.
+// Кэш-первым через getPrices; per-symbol try/catch + синтетика → ошибка одного тикера
+// не валит экран (graceful, §5). Snapshot-first: getOverview отдаёт тёплый снапшот мгновенно.
+import { getPrices } from '@/lib/research/prices';
+import { syntheticSeries } from '@/lib/research/metrics';
+import { logAppError } from '@/lib/app-errors';
+import { computeInstrumentMetrics, dailyLogReturns, annualizedVol, type Bar } from './metrics';
+import { computeBlockMetrics, averagePairwiseCorrelation, computeRegime } from './block-metrics';
+import { SEED_BLOCKS, SEED_INSTRUMENTS, instrumentDef, allSymbols } from './registry';
+import { readSnapshot, writeSnapshot, isFresh } from './store';
+import type { BlockDef, InstrumentMetrics, MarketOverview, OverviewBlock } from './types';
+
+const OVERVIEW_KEY = 'overview';
+const LOOKBACK_DAYS = 400; // ~252 торговых + запас на праздники/MA200
+
+function isoDaysAgo(n: number): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - n);
+  return d.toISOString().slice(0, 10);
+}
+
+async function loadBars(sym: string, from: string, to: string): Promise<{ bars: Bar[]; synthetic: boolean }> {
+  try {
+    const rows = await getPrices(sym, from, to);
+    if (rows && rows.length >= 5) return { bars: rows.map((r) => ({ date: r.date, close: r.close })), synthetic: false };
+  } catch (e: any) {
+    // нет ключей/БД или сбой провайдера — падать нельзя, уходим в синтетику
+  }
+  const syn = syntheticSeries(sym, 420).map((r) => ({ date: r.date, close: r.close }));
+  return { bars: syn, synthetic: true };
+}
+
+async function inChunks<T, R>(items: T[], size: number, fn: (x: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = [];
+  for (let i = 0; i < items.length; i += size) {
+    const slice = items.slice(i, i + size);
+    out.push(...(await Promise.all(slice.map(fn))));
+  }
+  return out;
+}
+
+/** Полный расчёт overview по конфигу блоков. Тяжёлая операция — кэшируется снапшотом. */
+export async function computeOverview(blocks: BlockDef[] = SEED_BLOCKS): Promise<MarketOverview> {
+  const symbols = allSymbols(blocks);
+  const from = isoDaysAgo(LOOKBACK_DAYS);
+  const to = isoDaysAgo(0);
+
+  const metricsMap = new Map<string, InstrumentMetrics | null>();
+  const retsMap = new Map<string, number[]>();
+  const closesMap = new Map<string, number[]>();
+  let anySynthetic = false;
+
+  await inChunks(symbols, 6, async (sym) => {
+    try {
+      const { bars, synthetic } = await loadBars(sym, from, to);
+      if (synthetic) anySynthetic = true;
+      const m = computeInstrumentMetrics(bars);
+      if (m) {
+        m.symbol = sym;
+        m.synthetic = synthetic;
+      }
+      metricsMap.set(sym, m);
+      const closes = bars.map((b) => b.close);
+      closesMap.set(sym, closes);
+      retsMap.set(sym, dailyLogReturns(closes));
+    } catch (e: any) {
+      await logAppError({ route: '/api/market/overview', message: `metrics failed for ${sym}: ${e?.message || e}`, meta: { sym } });
+      metricsMap.set(sym, null);
+    }
+  });
+
+  // Сборка блоков
+  const outBlocks: OverviewBlock[] = blocks.map((b) => {
+    const benchM = b.benchmark ? metricsMap.get(b.benchmark) ?? null : null;
+    const bench63 = benchM?.returns[63] ?? null;
+    const cells = b.members.map((sym) => {
+      const def = instrumentDef(sym) ?? { symbol: sym, title: sym, kind: 'etf' as const, currency: 'USD' };
+      const metrics = metricsMap.get(sym) ?? null;
+      if (metrics && bench63 != null && metrics.returns[63] != null) {
+        metrics.excess63 = metrics.returns[63]! - bench63;
+      }
+      return { def, metrics };
+    });
+    const bm = computeBlockMetrics(cells.map((c) => c.metrics));
+    // avgCorr по членам блока (optional без истории отсеются по длине рядов)
+    bm.avgCorr = averagePairwiseCorrelation(b.members.map((s) => retsMap.get(s) ?? []));
+    return { def: b, metrics: bm, instruments: cells };
+  });
+
+  // Глобальный режим
+  const uniqMembers = [...new Set(blocks.flatMap((b) => b.members))];
+  const universeRets = uniqMembers.map((s) => retsMap.get(s) ?? []);
+  const avgCorr = averagePairwiseCorrelation(universeRets, 63);
+  const breadth = pctAboveMA200(uniqMembers.map((s) => metricsMap.get(s) ?? null));
+  const spyCloses = closesMap.get('SPY') ?? [];
+  const volRegime = volRatio(spyCloses);
+  const regime = computeRegime({ avgCorr, volRegime, breadth });
+
+  const asOf = maxAsOf(metricsMap);
+  return { asOf, blocks: outBlocks, regime, synthetic: anySynthetic };
+}
+
+function pctAboveMA200(ms: (InstrumentMetrics | null)[]): number | null {
+  const flags = ms.map((m) => m?.aboveMA200 ?? null).filter((f): f is boolean => f != null);
+  if (!flags.length) return null;
+  return (flags.filter(Boolean).length / flags.length) * 100;
+}
+function volRatio(closes: number[]): number | null {
+  const v21 = annualizedVol(closes, 21);
+  const v252 = annualizedVol(closes, 252);
+  return v21 != null && v252 != null && v252 !== 0 ? v21 / v252 : null;
+}
+function maxAsOf(m: Map<string, InstrumentMetrics | null>): string {
+  let mx = '';
+  for (const v of m.values()) if (v && v.asOf > mx) mx = v.asOf;
+  return mx || isoDaysAgo(0);
+}
+
+/** Snapshot-first: тёплый снапшот мгновенно; иначе считаем, кэшируем и отдаём. */
+export async function getOverview(): Promise<MarketOverview> {
+  const cached = await readSnapshot<MarketOverview>(OVERVIEW_KEY);
+  if (cached && isFresh(cached.refreshedAt)) return cached.payload;
+  try {
+    const fresh = await computeOverview();
+    await writeSnapshot(OVERVIEW_KEY, fresh, fresh.asOf);
+    return fresh;
+  } catch (e: any) {
+    if (cached) return cached.payload; // протухший лучше пустого
+    throw e;
+  }
+}
+
+export { SEED_INSTRUMENTS };
