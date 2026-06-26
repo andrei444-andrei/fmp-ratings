@@ -5,6 +5,7 @@ import ThemeToggle from './ThemeToggle';
 
 const LINKS = [
   { href: '/research', label: 'Исследование трендов' },
+  { href: '/researcher', label: 'Скринер' },
   { href: '/signals', label: 'Модель сигналов' },
   { href: '/switch', label: 'Переключение A/B' },
   { href: '/backtest', label: 'Тестирование стратегий' },
