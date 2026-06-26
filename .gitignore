@@ -40,6 +40,8 @@ next-env.d.ts
 # local sqlite (dev only)
 local.db
 local.db-journal
+e2e.db
+e2e.db-journal
 *.db-shm
 *.db-wal
 

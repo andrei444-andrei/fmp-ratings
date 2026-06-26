@@ -124,10 +124,10 @@ test.describe('Аналитика алгоритмов /quant', () => {
     await expect(page.getByRole('button', { name: /Добавить стратегию/ })).toBeDisabled();
   });
 
-  test('навигация содержит ссылки на оба раздела', async ({ page }) => {
+  test('навигация содержит ссылки на разделы', async ({ page }) => {
     await page.goto('/quant');
     await expect(page.getByRole('link', { name: 'Аналитика алгоритмов' })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Исследование трендов' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Тестирование стратегий' })).toBeVisible();
   });
 
   test('страница всегда светлая, даже при глобальной тёмной теме', async ({ page }) => {
