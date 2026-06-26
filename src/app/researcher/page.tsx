@@ -1,11 +1,10 @@
 'use client';
 
-// Скринер (боевая версия, MVP): вселенная → конструктор условий (блоки ИЛИ, внутри И/НЕ) → таблица
-// по тикерам/годам → провал в сделки. Сервер отдаёт ПАНЕЛЬ СДЕЛОК один раз (на смену вселенной/горизонта),
-// условия/разрезы/провал считаются МГНОВЕННО на клиенте (src/lib/signals/screen.ts).
+// Скринер (боевая версия). Дизайн 1:1 с утверждённым прототипом (researcher.css, токены --fk-*).
+// Сервер отдаёт ПАНЕЛЬ СДЕЛОК один раз; условия/разрезы/провал считаются мгновенно на клиенте (screen.ts).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Badge, Button, Card, CardContent, Textarea } from '@/components/ui';
+import './researcher.css';
 import {
   screenByTicker, screenByYear, screenDeals, totalConds,
   type ScreenPanel, type Block, type Cmp,
@@ -19,7 +18,6 @@ const GROUPS: Record<string, string[]> = {
   'Темы': ['SMH', 'SOXX', 'ARKK', 'ICLN', 'TAN', 'LIT', 'URA', 'BOTZ', 'HACK', 'SKYY'],
   'Крупные акции': ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'TSLA', 'JPM', 'XOM'],
 };
-
 const METRICS: Record<string, { label: string; periods: number[]; unit: string }> = {
   momentum: { label: 'Моментум', periods: [21, 63, 126, 252], unit: '%' },
   vol: { label: 'Волатильность', periods: [21, 63], unit: '%' },
@@ -31,18 +29,25 @@ const METRICS: Record<string, { label: string; periods: number[]; unit: string }
 const MID = Object.keys(METRICS);
 const colOf = (id: string, p: number) => `${id}_${p}`;
 const mlabel = (id: string, p: number) => METRICS[id].label + (METRICS[id].periods.length > 1 ? ` ${p}` : '');
+const HORIZONS = [5, 10, 21, 63];
 
 type UCond = { id: string; p: number; cmp: Cmp; val: number; not: boolean };
 type UBlock = { conds: UCond[] };
 type Disp = { id: string; p: number };
 
-const HORIZONS = [5, 10, 21, 63];
-
-function toBlocks(blocks: UBlock[]): Block[] {
-  return blocks.map((b) => ({ conds: b.conds.map((c) => ({ col: colOf(c.id, c.p), cmp: c.cmp, val: c.val, not: c.not })) }));
-}
-const cls = (v: number | null) => (v == null ? 'text-ink-3' : v > 0 ? 'text-up-strong' : v < 0 ? 'text-down-strong' : 'text-ink-3');
+const toBlocks = (bs: UBlock[]): Block[] => bs.map((b) => ({ conds: b.conds.map((c) => ({ col: colOf(c.id, c.p), cmp: c.cmp, val: c.val, not: c.not })) }));
+const cls = (v: number | null) => (v == null ? 'flat' : v > 0 ? 'up' : v < 0 ? 'down' : 'flat');
 const fnum = (v: number | null, d = 1) => (v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(d));
+
+function FwdBar({ v }: { v: number }) {
+  const w = Math.min(50, Math.abs(v) * 2.2);
+  return (
+    <span className="barpos">
+      <span className={cls(v)}>{fnum(v)}</span>
+      <span className="bar"><i style={{ [v >= 0 ? 'left' : 'right']: '50%', width: `${w}%`, background: v >= 0 ? 'var(--fk-up,#12b981)' : 'var(--fk-down,#f43f5e)' } as any} /></span>
+    </span>
+  );
+}
 
 export default function Researcher() {
   const [group, setGroup] = useState('Сырьё');
@@ -58,10 +63,7 @@ export default function Researcher() {
   const [err, setErr] = useState('');
   const [drill, setDrill] = useState<{ kind: 't' | 'y'; kv: string } | null>(null);
 
-  const universe = useMemo(
-    () => [...new Set(uniText.toUpperCase().split(/[^A-Z0-9.\-]+/).filter(Boolean))].slice(0, 40),
-    [uniText],
-  );
+  const universe = useMemo(() => [...new Set(uniText.toUpperCase().split(/[^A-Z0-9.\-]+/).filter(Boolean))].slice(0, 40), [uniText]);
 
   const fetchPanel = useCallback(async (uni: string[], hz: number) => {
     if (uni.length < 1) { setPanel(null); return; }
@@ -72,12 +74,10 @@ export default function Researcher() {
         body: JSON.stringify({ mode: 'screen', universe: uni, benchmark: 'SPY', horizon: hz }),
       });
       if (!res.body) throw new Error('Нет потока ответа');
-      const reader = res.body.getReader();
-      const dec = new TextDecoder();
+      const reader = res.body.getReader(); const dec = new TextDecoder();
       let buf = '', out: any = null, e = '';
       for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
+        const { done, value } = await reader.read(); if (done) break;
         buf += dec.decode(value, { stream: true });
         let nl: number;
         while ((nl = buf.indexOf('\n')) >= 0) {
@@ -89,12 +89,9 @@ export default function Researcher() {
       }
       if (e) throw new Error(e);
       setPanel(out && out.mode === 'screen' ? out : null);
-    } catch (ex: any) {
-      setErr(ex?.message || 'ошибка'); setPanel(null);
-    } finally { setLoading(false); }
+    } catch (ex: any) { setErr(ex?.message || 'ошибка'); setPanel(null); } finally { setLoading(false); }
   }, []);
 
-  // авто-загрузка панели на смену вселенной/горизонта (с дебаунсом)
   const t = useRef<any>(null);
   useEffect(() => {
     clearTimeout(t.current);
@@ -107,232 +104,181 @@ export default function Researcher() {
   const byT = useMemo(() => (panel ? screenByTicker(panel, blk, displayCols) : []), [panel, blocks, display]); // eslint-disable-line react-hooks/exhaustive-deps
   const byY = useMemo(() => (panel ? screenByYear(panel, blk) : []), [panel, blocks]); // eslint-disable-line react-hooks/exhaustive-deps
   const matchedN = byY.reduce((a, y) => a + y.n, 0);
-
-  // ── helpers UI ──
-  const setBlocks2 = (f: (b: UBlock[]) => UBlock[]) => setBlocks((prev) => f(structuredClone(prev)));
+  const setB = (f: (b: UBlock[]) => UBlock[]) => setBlocks((prev) => f(structuredClone(prev)));
 
   return (
-    <main className="mx-auto max-w-[1320px] px-4 py-6">
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <h1 className="text-lg font-bold text-ink">Скринер</h1>
-        <Badge variant="brand">боевая версия · MVP</Badge>
-        <span className="text-[12px] text-ink-3">Вселенная → условия (блоки ИЛИ, внутри И/НЕ) → таблица (тикеры/годы) → провал в сделки. Пересчёт мгновенный на клиенте.</span>
+    <main className="rsx" style={{ maxWidth: 1320, margin: '0 auto', padding: '20px 20px 90px' }}>
+      <div className="top">
+        <h1>Скринер</h1>
+        <span className="badge brand">боевая версия</span>
+        <span className="sub">Вселенная → условия (блоки ИЛИ, внутри И/НЕ) → таблица (тикеры/годы) → провал в сделки. Пересчёт мгновенный на клиенте.</span>
       </div>
 
       {/* 1. Вселенная */}
-      <Card className="mb-3.5">
-        <CardContent className="p-4">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-wide text-ink-3">1 · Вселенная</span>
-            <span className="text-[12px] text-ink-3">{universe.length} тикеров{loading ? ' · загрузка…' : ''}</span>
+      <div className="card">
+        <div className="card-b">
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+            <span className="card-t">1 · Вселенная</span>
+            <span className="sub">{universe.length} тикеров{loading ? ' · загрузка…' : ''}</span>
           </div>
-          <div className="mb-2.5 flex flex-wrap gap-2">
+          <div className="grp">
             {Object.keys(GROUPS).map((g) => (
-              <button
-                key={g}
-                type="button"
-                onClick={() => { setGroup(g); setUniText(GROUPS[g].join(', ')); }}
-                className={`rounded-fk-pill border px-3 py-1.5 text-[12px] font-semibold transition-colors ${group === g ? 'border-brand-100 bg-brand-50 text-brand-700' : 'border-line-strong text-ink-2 hover:bg-surface-2'}`}
-              >
-                {g}<span className="ml-1.5 text-[10.5px] font-normal text-ink-3">{GROUPS[g].length}</span>
+              <button key={g} type="button" className={`chip${group === g ? ' on' : ''}`} onClick={() => { setGroup(g); setUniText(GROUPS[g].join(', ')); }}>
+                {g}<span className="n">{GROUPS[g].length}</span>
               </button>
             ))}
           </div>
-          <Textarea value={uniText} onChange={(e: any) => { setUniText(e.target.value); setGroup(''); }} rows={2} className="font-mono text-[12.5px]" spellCheck={false} />
-          <p className="mt-1.5 flex items-center gap-3 text-[11px] text-ink-3">
+          <textarea className="uni" value={uniText} spellCheck={false} onChange={(e) => { setUniText(e.target.value); setGroup(''); }} />
+          <p className="sub" style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 12 }}>
             <span>Пресет — стартовый набор; список правится свободно (до 40).</span>
-            <span className="ml-auto flex items-center gap-1.5">Горизонт форварда:
-              {HORIZONS.map((h) => (
-                <button key={h} type="button" onClick={() => setHorizon(h)} className={`rounded-fk-sm px-2 py-0.5 text-[11px] font-semibold ${horizon === h ? 'bg-brand-50 text-brand-700' : 'bg-surface-2 text-ink-3'}`}>{h}д</button>
-              ))}
-            </span>
+            <span className="hz">Горизонт:{HORIZONS.map((h) => <button key={h} type="button" className={horizon === h ? 'on' : ''} onClick={() => setHorizon(h)}>{h}д</button>)}</span>
           </p>
-          {err && <p className="mt-1.5 text-[12px] font-medium text-down-strong">Ошибка: {err}</p>}
-        </CardContent>
-      </Card>
+          {err && <p className="sub" style={{ color: 'var(--fk-down-text,#c81e3c)', fontWeight: 600, marginTop: 6 }}>Ошибка: {err}</p>}
+        </div>
+      </div>
 
       {/* 2. Условия */}
-      <Card className="mb-3.5">
-        <CardContent className="p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-wide text-ink-3">2 · Условия отбора</span>
-            <span className="text-[12px] text-ink-3">блоки = <b className="text-brand-700">ИЛИ</b> · внутри блока — <b>И</b> / <b className="text-down-strong">НЕ</b></span>
+      <div className="card">
+        <div className="card-b">
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
+            <span className="card-t">2 · Условия отбора</span>
+            <span className="sub">блоки = <b style={{ color: 'var(--fk-brand-700)' }}>ИЛИ</b> · внутри блока — <b>И</b> / <b style={{ color: 'var(--fk-down-text,#c81e3c)' }}>НЕ</b></span>
           </div>
-          <div className="flex flex-col">
+          <div className="blocks">
             {blocks.map((b, bi) => (
               <div key={bi}>
-                {bi > 0 && (
-                  <div className="my-2.5 flex items-center gap-2.5">
-                    <span className="h-px flex-1 bg-line" />
-                    <span className="rounded-fk-pill border border-brand-100 bg-brand-50 px-3 py-0.5 text-[11px] font-bold text-brand-700">ИЛИ</span>
-                    <span className="h-px flex-1 bg-line" />
-                  </div>
-                )}
-                <div className="rounded-fk border border-line-strong bg-surface-2 p-3">
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="text-[11px] font-bold uppercase tracking-wide text-ink-2">Блок {bi + 1}</span>
-                    <button type="button" className="text-[12px] text-ink-3 hover:text-down-strong" onClick={() => setBlocks2((bb) => { bb.splice(bi, 1); if (!bb.length) bb.push({ conds: [] }); return bb; })}>удалить блок</button>
+                {bi > 0 && <div className="or-div"><span className="ln" /><span className="pill">ИЛИ</span><span className="ln" /></div>}
+                <div className="block">
+                  <div className="block-h">
+                    <span className="lbl">Блок {bi + 1}</span>
+                    <span className="x" onClick={() => setB((bb) => { bb.splice(bi, 1); if (!bb.length) bb.push({ conds: [] }); return bb; })}>удалить блок</span>
                   </div>
                   {b.conds.map((c, ci) => (
-                    <div key={ci} className="mt-1.5 grid grid-cols-[56px_1.3fr_78px_62px_76px_24px] items-center gap-2 rounded-fk-sm border border-line bg-surface-elev px-2 py-1.5">
-                      <button type="button" onClick={() => setBlocks2((bb) => { bb[bi].conds[ci].not = !bb[bi].conds[ci].not; return bb; })}
-                        className={`rounded-fk-sm border py-1 text-[11px] font-bold ${c.not ? 'border-transparent bg-down-soft text-down-strong' : 'border-line-strong bg-surface-elev text-ink-3'}`}>{c.not ? 'НЕ' : 'И'}</button>
-                      <select className="w-full rounded-fk-sm border border-line-strong bg-white px-1.5 py-1 text-[12px]" value={c.id}
-                        onChange={(e) => setBlocks2((bb) => { const id = e.target.value; bb[bi].conds[ci].id = id; if (!METRICS[id].periods.includes(bb[bi].conds[ci].p)) bb[bi].conds[ci].p = METRICS[id].periods[0]; return bb; })}>
+                    <div className="cond" key={ci}>
+                      <button className={`nott${c.not ? ' on' : ''}`} onClick={() => setB((bb) => { bb[bi].conds[ci].not = !bb[bi].conds[ci].not; return bb; })}>{c.not ? 'НЕ' : 'И'}</button>
+                      <select value={c.id} onChange={(e) => setB((bb) => { const id = e.target.value; bb[bi].conds[ci].id = id; if (!METRICS[id].periods.includes(bb[bi].conds[ci].p)) bb[bi].conds[ci].p = METRICS[id].periods[0]; return bb; })}>
                         {MID.map((id) => <option key={id} value={id}>{METRICS[id].label}</option>)}
                       </select>
-                      <select className="w-full rounded-fk-sm border border-line-strong bg-white px-1.5 py-1 text-[12px] disabled:opacity-50" value={c.p} disabled={METRICS[c.id].periods.length < 2}
-                        onChange={(e) => setBlocks2((bb) => { bb[bi].conds[ci].p = +e.target.value; return bb; })}>
+                      <select value={c.p} disabled={METRICS[c.id].periods.length < 2} onChange={(e) => setB((bb) => { bb[bi].conds[ci].p = +e.target.value; return bb; })}>
                         {METRICS[c.id].periods.map((p) => <option key={p} value={p}>{p === 0 ? 'всё' : `${p}д`}</option>)}
                       </select>
-                      <div className="flex gap-0.5 rounded-fk-sm bg-surface-2 p-0.5">
-                        {(['ge', 'le'] as Cmp[]).map((cm) => (
-                          <button key={cm} type="button" onClick={() => setBlocks2((bb) => { bb[bi].conds[ci].cmp = cm; return bb; })}
-                            className={`flex-1 rounded-fk-sm py-1 text-[12px] font-semibold ${c.cmp === cm ? 'bg-white text-ink shadow-fk-sm' : 'text-ink-3'}`}>{cm === 'ge' ? '≥' : '≤'}</button>
-                        ))}
+                      <div className="seg">
+                        {(['ge', 'le'] as Cmp[]).map((cm) => <button key={cm} className={c.cmp === cm ? 'on' : ''} onClick={() => setB((bb) => { bb[bi].conds[ci].cmp = cm; return bb; })}>{cm === 'ge' ? '≥' : '≤'}</button>)}
                       </div>
-                      <input className="w-full rounded-fk-sm border border-line-strong bg-white px-1.5 py-1 text-right text-[12px] tabular-nums" defaultValue={c.val} inputMode="decimal"
-                        onChange={(e) => { const n = parseFloat(e.target.value); if (!isNaN(n)) setBlocks2((bb) => { bb[bi].conds[ci].val = n; return bb; }); }} />
-                      <button type="button" className="text-ink-3 hover:text-down-strong" onClick={() => setBlocks2((bb) => { bb[bi].conds.splice(ci, 1); return bb; })}>✕</button>
+                      <input className="val" defaultValue={c.val} inputMode="decimal" onChange={(e) => { const n = parseFloat(e.target.value); if (!isNaN(n)) setB((bb) => { bb[bi].conds[ci].val = n; return bb; }); }} />
+                      <span className="x" onClick={() => setB((bb) => { bb[bi].conds.splice(ci, 1); return bb; })}>✕</span>
                     </div>
                   ))}
-                  <button type="button" className="mt-2 rounded-fk-sm border border-dashed border-line-strong px-2.5 py-1 text-[11.5px] font-semibold text-ink-2 hover:bg-surface-2"
-                    onClick={() => setBlocks2((bb) => { bb[bi].conds.push({ id: 'momentum', p: 63, cmp: 'ge', val: 10, not: false }); return bb; })}>+ И условие</button>
+                  <button className="btn sm ghost" style={{ marginTop: 8 }} onClick={() => setB((bb) => { bb[bi].conds.push({ id: 'momentum', p: 63, cmp: 'ge', val: 10, not: false }); return bb; })}>+ И условие</button>
                 </div>
               </div>
             ))}
           </div>
-          <button type="button" className="mt-3 rounded-fk border border-dashed border-line-strong px-3 py-1.5 text-[12px] font-semibold text-ink-2 hover:bg-surface-2"
-            onClick={() => setBlocks((p) => [...p, { conds: [{ id: 'rsi', p: 14, cmp: 'le', val: 35, not: false }] }])}>+ ИЛИ — новый блок</button>
-        </CardContent>
-      </Card>
+          <button className="btn ghost" style={{ marginTop: 12 }} onClick={() => setBlocks((p) => [...p, { conds: [{ id: 'rsi', p: 14, cmp: 'le', val: 35, not: false }] }])}>+ ИЛИ — новый блок</button>
+        </div>
+      </div>
 
       {/* 3. Метрики в таблице */}
-      <Card className="mb-3.5">
-        <CardContent className="p-4">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-wide text-ink-3">3 · Метрики в таблице</span>
-            <span className="text-[12px] text-ink-3">любые для показа, даже если не в условиях</span>
+      <div className="card">
+        <div className="card-b">
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+            <span className="card-t">3 · Метрики в таблице</span><span className="sub">любые для показа, даже если не в условиях</span>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="dchips">
             {MID.flatMap((id) => METRICS[id].periods.map((p) => ({ id, p }))).map((o) => {
               const on = display.some((d) => d.id === o.id && d.p === o.p);
-              return (
-                <button key={`${o.id}_${o.p}`} type="button"
-                  onClick={() => setDisplay((d) => on ? d.filter((x) => !(x.id === o.id && x.p === o.p)) : [...d, o])}
-                  className={`rounded-fk-pill border px-3 py-1 text-[11.5px] font-semibold ${on ? 'border-line bg-surface-2 text-ink' : 'border-dashed border-line-strong text-ink-3'}`}>
-                  {mlabel(o.id, o.p)}
-                </button>
-              );
+              return <button key={`${o.id}_${o.p}`} className={`dc${on ? ' on' : ''}`} onClick={() => setDisplay((d) => on ? d.filter((x) => !(x.id === o.id && x.p === o.p)) : [...d, o])}>{mlabel(o.id, o.p)}</button>;
             })}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
       {/* 4. Результаты */}
-      <Card>
-        <CardContent className="p-4">
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <span className="text-[11px] font-bold uppercase tracking-wide text-ink-3">4 · Результаты</span>
-            <div className="flex items-center gap-3">
-              <span className="text-[12px] text-ink-2">{!panel ? '' : totalConds(blk) ? `${matchedN} сделок прошли · ${byT.length} тикеров` : `все сделки (${matchedN})`}</span>
-              <div className="flex gap-0.5 rounded-fk bg-surface-2 p-0.5">
-                {(['tickers', 'years'] as const).map((v) => (
-                  <button key={v} type="button" onClick={() => setView(v)} className={`rounded-fk-sm px-3 py-1 text-[12px] font-semibold ${view === v ? 'bg-surface-elev text-ink shadow-fk-sm' : 'text-ink-3'}`}>{v === 'tickers' ? 'По тикерам' : 'По годам'}</button>
-                ))}
+      <div className="card">
+        <div className="card-b">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+            <span className="card-t">4 · Результаты</span>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              <span className="sub">{!panel ? '' : totalConds(blk) ? `${matchedN} сделок прошли · ${byT.length} тикеров` : `все сделки (${matchedN})`}</span>
+              <div className="seg" style={{ width: 'auto' }}>
+                {(['tickers', 'years'] as const).map((v) => <button key={v} className={view === v ? 'on' : ''} onClick={() => setView(v)} style={{ padding: '4px 10px' }}>{v === 'tickers' ? 'По тикерам' : 'По годам'}</button>)}
               </div>
             </div>
           </div>
-          <div className="overflow-x-auto">
+          <div style={{ overflowX: 'auto' }}>
             {!panel ? (
-              <p className="py-10 text-center text-[13px] text-ink-3">{loading ? 'Загружаю панель сделок…' : 'Выберите вселенную.'}</p>
+              <p className="sub" style={{ textAlign: 'center', padding: '36px 0' }}>{loading ? 'Загружаю панель сделок…' : 'Выберите вселенную.'}</p>
             ) : view === 'tickers' ? (
-              <table className="w-full text-[12.5px]">
-                <thead>
-                  <tr className="text-[10px] uppercase text-ink-3">
-                    <th className="p-2 text-left">Тикер</th><th className="p-2 text-right">Сделок</th>
-                    {display.map((o) => <th key={`${o.id}_${o.p}`} className="p-2 text-right">{mlabel(o.id, o.p)}</th>)}
-                    <th className="p-2 text-right">Доля +</th><th className="p-2 text-right">Ср. форвард</th>
-                  </tr>
-                </thead>
+              <table>
+                <thead><tr><th className="l">Тикер</th><th>Сделок</th>{display.map((o) => <th key={`${o.id}_${o.p}`}>{mlabel(o.id, o.p)}</th>)}<th>Доля +</th><th>Ср. форвард</th></tr></thead>
                 <tbody>
                   {byT.map((r) => (
-                    <tr key={r.symbol} className="cursor-pointer border-t border-line hover:bg-surface-2" onClick={() => setDrill({ kind: 't', kv: r.symbol })}>
-                      <td className="p-2 text-left font-bold text-ink">{r.symbol}</td>
-                      <td className="p-2 text-right tabular-nums">{r.n}</td>
-                      {r.disp.map((v, i) => <td key={i} className={`p-2 text-right tabular-nums ${cls(v)}`}>{v == null ? '—' : display[i].id === 'rsi' ? v.toFixed(0) : fnum(v)}</td>)}
-                      <td className="p-2 text-right tabular-nums">{r.hitPct.toFixed(0)}%</td>
-                      <td className={`p-2 text-right font-semibold tabular-nums ${cls(r.avgFwd)}`}>{fnum(r.avgFwd)}</td>
+                    <tr key={r.symbol} className="click" onClick={() => setDrill({ kind: 't', kv: r.symbol })}>
+                      <td className="l"><span className="sy">{r.symbol}</span></td><td className="num">{r.n}</td>
+                      {r.disp.map((v, i) => <td key={i} className={`num ${cls(v)}`}>{v == null ? '—' : display[i].id === 'rsi' ? v.toFixed(0) : fnum(v)}</td>)}
+                      <td className="num">{r.hitPct.toFixed(0)}%</td><td><FwdBar v={r.avgFwd} /></td>
                     </tr>
                   ))}
-                  {!byT.length && <tr><td colSpan={9} className="p-5 text-center text-ink-3">Ничего не прошло условия — ослабьте блоки.</td></tr>}
+                  {!byT.length && <tr><td className="l sub" colSpan={9} style={{ padding: 20 }}>Ничего не прошло условия — ослабьте блоки.</td></tr>}
                 </tbody>
               </table>
             ) : (
-              <table className="w-full text-[12.5px]">
-                <thead><tr className="text-[10px] uppercase text-ink-3"><th className="p-2 text-left">Год</th><th className="p-2 text-right">Сделок</th><th className="p-2 text-right">Тикеров</th><th className="p-2 text-right">Доля +</th><th className="p-2 text-right">Ср. форвард</th></tr></thead>
+              <table>
+                <thead><tr><th className="l">Год</th><th>Сделок</th><th>Тикеров</th><th>Доля +</th><th>Ср. форвард</th></tr></thead>
                 <tbody>
                   {byY.map((y) => (
-                    <tr key={y.year} className="cursor-pointer border-t border-line hover:bg-surface-2" onClick={() => setDrill({ kind: 'y', kv: String(y.year) })}>
-                      <td className="p-2 text-left font-bold text-ink">{y.year}</td>
-                      <td className="p-2 text-right tabular-nums">{y.n}</td><td className="p-2 text-right tabular-nums">{y.tickers}</td>
-                      <td className="p-2 text-right tabular-nums">{y.hitPct.toFixed(0)}%</td>
-                      <td className={`p-2 text-right font-semibold tabular-nums ${cls(y.avgFwd)}`}>{fnum(y.avgFwd)}</td>
+                    <tr key={y.year} className="click" onClick={() => setDrill({ kind: 'y', kv: String(y.year) })}>
+                      <td className="l"><span className="sy">{y.year}</span></td><td className="num">{y.n}</td><td className="num">{y.tickers}</td><td className="num">{y.hitPct.toFixed(0)}%</td><td><FwdBar v={y.avgFwd} /></td>
                     </tr>
                   ))}
-                  {!byY.length && <tr><td colSpan={5} className="p-5 text-center text-ink-3">Нет сделок.</td></tr>}
+                  {!byY.length && <tr><td className="l sub" colSpan={5} style={{ padding: 20 }}>Нет сделок.</td></tr>}
                 </tbody>
               </table>
             )}
           </div>
-          {panel && <p className="mt-2 text-[11px] text-ink-3">Клик по строке → провал внутрь сделок. Панель: {panel.meta?.obs} сделок, {panel.symbols.length} тикеров, {panel.meta?.first} … {panel.meta?.last} (форвард {panel.horizon}д vs SPY).</p>}
-        </CardContent>
-      </Card>
+          {panel && <p className="foot">Клик по строке → провал внутрь сделок. Панель: {panel.meta?.obs} сделок, {panel.symbols.length} тикеров, {panel.meta?.first} … {panel.meta?.last} (форвард {panel.horizon}д vs SPY).</p>}
+        </div>
+      </div>
 
-      {drill && panel && <DrillDrawer panel={panel} blocks={blk} drill={drill} onClose={() => setDrill(null)} />}
+      {drill && panel && <Drawer panel={panel} blocks={blk} drill={drill} onClose={() => setDrill(null)} />}
     </main>
   );
 }
 
-function DrillDrawer({ panel, blocks, drill, onClose }: { panel: ScreenPanel; blocks: Block[]; drill: { kind: 't' | 'y'; kv: string }; onClose: () => void }) {
+function Drawer({ panel, blocks, drill, onClose }: { panel: ScreenPanel; blocks: Block[]; drill: { kind: 't' | 'y'; kv: string }; onClose: () => void }) {
   const deals = screenDeals(panel, blocks, drill.kind, drill.kv);
   const avg = deals.length ? deals.reduce((a, d) => a + d.fwd, 0) / deals.length : 0;
   const hit = deals.length ? (deals.filter((d) => d.fwd > 0).length / deals.length) * 100 : 0;
   const tickers = new Set(deals.map((d) => d.symbol)).size;
   return (
-    <>
-      <div className="fixed inset-0 z-50 bg-[rgba(15,23,41,0.34)]" onClick={onClose} />
-      <div className="fixed inset-y-0 right-0 z-50 flex w-[min(640px,94vw)] flex-col bg-surface-elev shadow-fk-lg">
-        <div className="flex items-center justify-between border-b border-line px-5 py-3.5">
-          <div>
-            <div className="text-[15px] font-bold text-ink">{drill.kind === 't' ? `${drill.kv} · сделки` : `Год ${drill.kv} · сделки`}</div>
-            <div className="text-[11px] text-ink-3">матч-сделки по текущим условиям</div>
-          </div>
-          <button type="button" className="text-ink-3 hover:text-ink" onClick={onClose}>✕</button>
+    <div className="rsx">
+      <div className="rsx-scrim" onClick={onClose} />
+      <div className="rsx-drawer">
+        <div className="dr-h">
+          <div><div style={{ fontSize: 15, fontWeight: 700 }}>{drill.kind === 't' ? `${drill.kv} · сделки` : `Год ${drill.kv} · сделки`}</div><div className="sub" style={{ marginTop: 3 }}>матч-сделки по текущим условиям</div></div>
+          <span className="x" onClick={onClose}>✕</span>
         </div>
-        <div className="overflow-auto px-5 py-4">
-          <div className="mb-3 grid grid-cols-4 gap-2">
+        <div className="dr-b">
+          <div className="statgrid">
             {[['Сделок', String(deals.length)], ['Ср. форвард', fnum(avg) + '%'], ['Доля +', hit.toFixed(0) + '%'], ['Тикеров', String(tickers)]].map(([k, v]) => (
-              <div key={k} className="rounded-fk bg-surface-2 px-2.5 py-2"><div className="text-[10px] uppercase text-ink-3">{k}</div><div className="mt-0.5 text-[15px] font-bold text-ink">{v}</div></div>
+              <div className="stat" key={k}><div className="k">{k}</div><div className={`v ${k === 'Ср. форвард' ? cls(avg) : ''}`}>{v}</div></div>
             ))}
           </div>
-          <table className="w-full text-[12px]">
-            <thead><tr className="text-[10px] uppercase text-ink-3"><th className="p-1.5 text-left">Дата</th>{drill.kind === 'y' && <th className="p-1.5 text-left">Тикер</th>}<th className="p-1.5 text-right">Момент. 63</th><th className="p-1.5 text-right">Вола 21</th><th className="p-1.5 text-right">RSI</th><th className="p-1.5 text-right">Форвард</th></tr></thead>
+          <table>
+            <thead><tr><th className="l">Дата</th>{drill.kind === 'y' && <th className="l">Тикер</th>}<th>Момент. 63</th><th>Вола 21</th><th>RSI</th><th>Форвард</th></tr></thead>
             <tbody>
               {deals.map((d, i) => (
-                <tr key={i} className="border-t border-line">
-                  <td className="p-1.5 text-left tabular-nums">{d.date}</td>
-                  {drill.kind === 'y' && <td className="p-1.5 text-left font-bold">{d.symbol}</td>}
-                  <td className={`p-1.5 text-right tabular-nums ${cls(d.vals.momentum_63)}`}>{fnum(d.vals.momentum_63)}</td>
-                  <td className="p-1.5 text-right tabular-nums">{d.vals.vol_21 ?? '—'}</td>
-                  <td className="p-1.5 text-right tabular-nums">{d.vals.rsi_14 ?? '—'}</td>
-                  <td className={`p-1.5 text-right font-semibold tabular-nums ${cls(d.fwd)}`}>{fnum(d.fwd)}</td>
+                <tr key={i}>
+                  <td className="l num">{d.date}</td>{drill.kind === 'y' && <td className="l sy">{d.symbol}</td>}
+                  <td className={`num ${cls(d.vals.momentum_63)}`}>{fnum(d.vals.momentum_63)}</td>
+                  <td className="num">{d.vals.vol_21 ?? '—'}</td><td className="num">{d.vals.rsi_14 ?? '—'}</td>
+                  <td><FwdBar v={d.fwd} /></td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       </div>
-    </>
+    </div>
   );
 }

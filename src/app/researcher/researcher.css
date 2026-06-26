@@ -1,0 +1,86 @@
+@import '../../components/ui/tokens.css';
+/* Точный дизайн скринера (как в утверждённом прототипе/market-terminal). Всё scoped под .rsx,
+   токены --fk-* — из дизайн-кита (tokens.css). */
+.rsx { font-size: 13px; line-height: 1.4; color: var(--fk-text); }
+.rsx .num { font-variant-numeric: tabular-nums; }
+.rsx .top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+.rsx .top h1 { font-size: 18px; font-weight: 750; margin: 0; }
+.rsx .sub { font-size: 12px; color: var(--fk-text-3); }
+
+.rsx .card { background: var(--fk-surface-elev); border: 1px solid var(--fk-line); border-radius: var(--fk-radius); box-shadow: var(--fk-shadow-sm); margin-bottom: 14px; }
+.rsx .card-b { padding: 14px 16px; }
+.rsx .card-t { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--fk-text-3); }
+
+.rsx .badge { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--fk-surface-2); color: var(--fk-text-2); border: 1px solid var(--fk-line); }
+.rsx .badge.brand { background: var(--fk-brand-50); color: var(--fk-brand-700); border-color: var(--fk-brand-100); }
+.rsx .badge.warn { background: var(--fk-warn-bg, #fef2de); color: var(--fk-warn-text, #b5740a); border-color: transparent; }
+
+.rsx .btn { border: 1px solid var(--fk-line-strong); background: var(--fk-surface-elev); color: var(--fk-text-2); border-radius: 8px; font: inherit; font-size: 12px; font-weight: 600; padding: 6px 11px; cursor: pointer; }
+.rsx .btn:hover { background: var(--fk-surface-2); }
+.rsx .btn.ghost { border-style: dashed; }
+.rsx .btn.sm { padding: 4px 9px; font-size: 11.5px; }
+.rsx .x { cursor: pointer; color: var(--fk-text-3); font-size: 13px; padding: 2px 5px; border-radius: 6px; }
+.rsx .x:hover { background: var(--fk-surface-2); color: var(--fk-down-text, #c81e3c); }
+
+/* вселенная */
+.rsx .grp { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 10px; }
+.rsx .grp .chip { border: 1px solid var(--fk-line-strong); background: var(--fk-surface-elev); color: var(--fk-text-2); border-radius: 999px; padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.rsx .grp .chip:hover { background: var(--fk-surface-2); }
+.rsx .grp .chip.on { background: var(--fk-brand-50); border-color: var(--fk-brand-100); color: var(--fk-brand-700); }
+.rsx .grp .chip .n { color: var(--fk-text-3); font-weight: 500; margin-left: 5px; font-size: 10.5px; }
+.rsx textarea.uni { width: 100%; min-height: 52px; resize: vertical; font: inherit; font-size: 12.5px; border: 1px solid var(--fk-line-strong); border-radius: 10px; padding: 9px 11px; color: var(--fk-text); font-variant-numeric: tabular-nums; background: var(--fk-surface-elev); }
+.rsx .hz { margin-left: auto; display: inline-flex; gap: 6px; align-items: center; }
+.rsx .hz button { border: 0; background: var(--fk-surface-2); color: var(--fk-text-3); border-radius: 7px; font: inherit; font-size: 11px; font-weight: 700; padding: 3px 8px; cursor: pointer; }
+.rsx .hz button.on { background: var(--fk-brand-50); color: var(--fk-brand-700); }
+
+/* конструктор условий (GA-стиль) */
+.rsx .blocks { display: flex; flex-direction: column; }
+.rsx .or-div { display: flex; align-items: center; gap: 10px; margin: 10px 0; }
+.rsx .or-div .ln { flex: 1; height: 1px; background: var(--fk-line); }
+.rsx .or-div .pill { font-size: 11px; font-weight: 750; color: var(--fk-brand-700); background: var(--fk-brand-50); border: 1px solid var(--fk-brand-100); border-radius: 999px; padding: 3px 12px; }
+.rsx .block { border: 1px solid var(--fk-line-strong); border-radius: 12px; padding: 11px 12px; background: var(--fk-surface-2); }
+.rsx .block-h { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.rsx .block-h .lbl { font-size: 11px; font-weight: 700; color: var(--fk-text-2); letter-spacing: .03em; text-transform: uppercase; }
+.rsx .cond { display: grid; grid-template-columns: 56px 1.3fr 80px 66px 78px 26px; gap: 8px; align-items: center; background: var(--fk-surface-elev); border: 1px solid var(--fk-line); border-radius: 9px; padding: 6px 8px; }
+.rsx .cond + .cond { margin-top: 12px; position: relative; }
+.rsx .cond + .cond::before { content: 'И'; position: absolute; left: 6px; top: -11px; font-size: 9.5px; font-weight: 750; color: var(--fk-text-3); background: var(--fk-surface-2); padding: 0 4px; }
+.rsx select, .rsx input.val { font: inherit; font-size: 12px; border: 1px solid var(--fk-line-strong); border-radius: 8px; background: #fff; padding: 5px 6px; color: var(--fk-text); width: 100%; }
+.rsx input.val { text-align: right; font-variant-numeric: tabular-nums; }
+.rsx .seg { display: inline-flex; background: var(--fk-surface-2); border-radius: 8px; padding: 2px; width: 100%; }
+.rsx .seg button { flex: 1; border: 0; background: transparent; font: inherit; font-size: 11px; font-weight: 650; color: var(--fk-text-2); padding: 4px 0; border-radius: 6px; cursor: pointer; }
+.rsx .seg button.on { background: #fff; color: var(--fk-text); box-shadow: var(--fk-shadow-sm); }
+.rsx .nott { border: 1px solid var(--fk-line-strong); border-radius: 8px; background: #fff; font: inherit; font-size: 11px; font-weight: 700; color: var(--fk-text-3); padding: 5px 0; cursor: pointer; width: 100%; }
+.rsx .nott.on { background: var(--fk-down-bg, #fee7ec); color: var(--fk-down-text, #c81e3c); border-color: transparent; }
+
+/* отображаемые метрики */
+.rsx .dchips { display: flex; flex-wrap: wrap; gap: 7px; }
+.rsx .dchips .dc { border: 1px dashed var(--fk-line-strong); background: var(--fk-surface-elev); color: var(--fk-text-3); border-radius: 999px; padding: 4px 11px; font-size: 11.5px; font-weight: 600; cursor: pointer; }
+.rsx .dchips .dc.on { border-style: solid; background: var(--fk-surface-2); color: var(--fk-text); }
+
+/* таблица */
+.rsx table { width: 100%; border-collapse: collapse; }
+.rsx thead th { font-size: 10px; font-weight: 650; letter-spacing: .03em; text-transform: uppercase; color: var(--fk-text-3); padding: 8px 8px; text-align: right; border-bottom: 1px solid var(--fk-line); white-space: nowrap; }
+.rsx thead th.l { text-align: left; }
+.rsx tbody td { padding: 8px 8px; text-align: right; border-bottom: 1px solid var(--fk-line); font-variant-numeric: tabular-nums; font-size: 12.5px; }
+.rsx tbody td.l { text-align: left; }
+.rsx tbody tr:last-child td { border-bottom: 0; }
+.rsx tbody tr.click { cursor: pointer; }
+.rsx tbody tr.click:hover { background: var(--fk-surface-2); }
+.rsx .sy { font-weight: 700; }
+.rsx .up { color: var(--fk-up-text, #0a8a60); }
+.rsx .down { color: var(--fk-down-text, #c81e3c); }
+.rsx .flat { color: var(--fk-text-3); }
+.rsx .barpos { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; }
+.rsx .bar { width: 64px; height: 7px; border-radius: 999px; background: var(--fk-surface-2); overflow: hidden; position: relative; }
+.rsx .bar > i { position: absolute; top: 0; bottom: 0; border-radius: 999px; }
+.rsx .foot { margin-top: 14px; font-size: 11px; color: var(--fk-text-3); }
+
+/* drawer */
+.rsx-scrim { position: fixed; inset: 0; background: rgba(15,23,41,.34); z-index: 50; }
+.rsx-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(640px, 94vw); background: var(--fk-surface-elev); box-shadow: var(--fk-shadow, 0 12px 40px rgba(15,23,41,.16)); z-index: 51; display: flex; flex-direction: column; }
+.rsx-drawer .dr-h { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--fk-line); }
+.rsx-drawer .dr-b { padding: 14px 18px; overflow: auto; }
+.rsx-drawer .statgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 6px 0 14px; }
+.rsx-drawer .stat { background: var(--fk-surface-2); border-radius: 10px; padding: 8px 10px; }
+.rsx-drawer .stat .k { font-size: 10px; color: var(--fk-text-3); text-transform: uppercase; letter-spacing: .04em; }
+.rsx-drawer .stat .v { font-size: 15px; font-weight: 700; margin-top: 2px; }
