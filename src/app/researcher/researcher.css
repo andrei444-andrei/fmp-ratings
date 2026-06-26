@@ -37,6 +37,12 @@
 .rsx .yrs .lbl { font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: var(--fk-text-3); }
 .rsx .yrs input[type=range] { flex: 0 1 220px; min-width: 140px; accent-color: var(--fk-brand-700, #2563eb); cursor: pointer; }
 .rsx .yrs .val { font-size: 12px; font-weight: 650; color: var(--fk-text-2); }
+/* кнопка «Применить» — явный пересчёт данных с бэка */
+.rsx .applybar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
+.rsx .btn.apply { transition: background .12s, color .12s, border-color .12s; }
+.rsx .btn.apply.on { background: var(--fk-brand-700, #2563eb); color: #fff; border-color: transparent; box-shadow: var(--fk-shadow-sm); }
+.rsx .btn.apply.on:hover { filter: brightness(1.05); background: var(--fk-brand-700, #2563eb); }
+.rsx .btn.apply:disabled { opacity: .6; cursor: default; }
 
 /* конструктор условий (GA-стиль) */
 .rsx .blocks { display: flex; flex-direction: column; }

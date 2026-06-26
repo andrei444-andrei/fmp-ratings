@@ -3,7 +3,7 @@
 // Скринер (боевая версия). Дизайн 1:1 с утверждённым прототипом (researcher.css, токены --fk-*).
 // Сервер отдаёт ПАНЕЛЬ СДЕЛОК один раз; условия/разрезы/метрики оценки/провал считаются мгновенно на клиенте.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import './researcher.css';
 import {
   screenByTicker, screenByYear, screenDeals, dealStats, totalConds,
@@ -67,9 +67,12 @@ export default function Researcher() {
   const [drill, setDrill] = useState<{ kind: 't' | 'y'; kv: string } | null>(null);
 
   const universe = useMemo(() => [...new Set(uniText.toUpperCase().split(/[^A-Z0-9.\-]+/).filter(Boolean))].slice(0, 40), [uniText]);
+  // Снимок настроек ЗАПРОСА (вселенная + горизонт), отражённый в текущей панели. Меняются они → нужен пересчёт
+  // данных с бэка по кнопке «Применить» (условия/окно лет/столбцы считаются на клиенте мгновенно, без запроса).
+  const [applied, setApplied] = useState<{ uni: string; horizon: number } | null>(null);
 
-  const fetchPanel = useCallback(async (uni: string[], hz: number) => {
-    if (uni.length < 1) { setPanel(null); return; }
+  const fetchPanel = useCallback(async (uni: string[], hz: number): Promise<boolean> => {
+    if (uni.length < 1) { setPanel(null); return false; }
     setLoading(true); setErr('');
     try {
       // Подготовленная панель: кэш-первым с бэка (мгновенно), Pyodide — только на новые тикеры.
@@ -80,15 +83,21 @@ export default function Researcher() {
       const out = await res.json().catch(() => ({}));
       if (out?.error) throw new Error(out.error);
       setPanel(out && out.mode === 'screen' ? out : null);
-    } catch (ex: any) { setErr(ex?.message || 'ошибка'); setPanel(null); } finally { setLoading(false); }
+      return true;
+    } catch (ex: any) { setErr(ex?.message || 'ошибка'); setPanel(null); return false; } finally { setLoading(false); }
   }, []);
 
-  const t = useRef<any>(null);
-  useEffect(() => {
-    clearTimeout(t.current);
-    t.current = setTimeout(() => fetchPanel(universe, horizon), 350);
-    return () => clearTimeout(t.current);
-  }, [universe.join(','), horizon, fetchPanel]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Явный пересчёт данных: шлёт запрос и фиксирует снимок применённых настроек.
+  const apply = useCallback(async (uni: string[], hz: number) => {
+    const ok = await fetchPanel(uni, hz);
+    if (ok) setApplied({ uni: uni.join(','), horizon: hz });
+  }, [fetchPanel]);
+
+  // Первичная загрузка (дефолтная вселенная) — один раз на маунте; дальше только по «Применить».
+  useEffect(() => { apply(universe, horizon); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Есть несохранённые изменения запроса (вселенная/горизонт), которые ещё не отправлены на пересчёт.
+  const dirty = !applied || applied.uni !== universe.join(',') || applied.horizon !== horizon;
 
   // Границы окна лет по панели.
   const lastYear = panel ? +String(panel.meta?.last || panel.dates[panel.dates.length - 1] || '').slice(0, 4) || null : null;
@@ -140,8 +149,8 @@ export default function Researcher() {
       <div className="card">
         <div className="card-b">
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-            <span className="card-t">1 · Вселенная</span>
-            <span className="sub">{universe.length} тикеров{loading ? ' · загрузка…' : ''}</span>
+            <span className="card-t">1 · Вселенная и запрос данных</span>
+            <span className="sub">{universe.length} тикеров{loading ? ' · загрузка…' : dirty ? ' · изменения не применены' : ''}</span>
           </div>
           <div className="grp">
             {Object.keys(GROUPS).map((g) => (
@@ -159,7 +168,17 @@ export default function Researcher() {
             <span className="lbl">Окно статистики:</span>
             <input type="range" min={1} max={Math.max(spanYears || 25, 10)} value={years} onChange={(e) => setYears(+e.target.value)} />
             <span className="val num">последние {years} {years === 1 ? 'год' : years < 5 ? 'года' : 'лет'}{minYear ? ` (с ${minYear})` : ''}</span>
-            {spanYears && <span className="sub">из {spanYears} доступных</span>}
+            {spanYears && <span className="sub">из {spanYears} доступных · применяется мгновенно</span>}
+          </div>
+          <div className="applybar">
+            <button type="button" className={`btn apply${dirty ? ' on' : ''}`} disabled={loading || universe.length < 1} onClick={() => apply(universe, horizon)}>
+              {loading ? 'Пересчёт…' : dirty ? 'Применить — пересчитать данные' : 'Обновить данные'}
+            </button>
+            <span className="sub">
+              {loading ? 'запрос подготовленных данных с бэка…'
+                : dirty ? 'изменены вселенная или горизонт — нажмите «Применить», чтобы пересчитать'
+                : 'данные актуальны · условия, окно лет и столбцы пересчитываются на клиенте мгновенно'}
+            </span>
           </div>
           {err && <p className="sub" style={{ color: 'var(--fk-down-text,#c81e3c)', fontWeight: 600, marginTop: 6 }}>Ошибка: {err}</p>}
         </div>
