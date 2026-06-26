@@ -13,6 +13,21 @@ const PCOLS: { key: number | 'ytd'; label: string }[] = [
 ];
 
 type Mode = 'abs' | 'excess';
+type TermConfig = { compare: { symbols: string[]; period: string }; corr: { symbols: string[] } };
+
+const CPALETTE = ['#6d5bf0', '#3b82f6', '#f59e0b', '#12b981', '#ef4444', '#0ea5e9', '#ec4899', '#8b5cf6', '#14b8a6', '#d4a017', '#64748b', '#f97316'];
+function colorFor(sym: string): string {
+  let h = 7;
+  for (const c of sym) h = (h * 31 + c.charCodeAt(0)) % 100000;
+  return CPALETTE[h % CPALETTE.length];
+}
+const COMPARE_PERIODS: { label: string; days: number }[] = [
+  { label: '1М', days: 31 },
+  { label: '3М', days: 93 },
+  { label: '6М', days: 186 },
+  { label: 'YTD', days: -1 },
+  { label: '1Г', days: 370 },
+];
 
 function num(m: InstrumentMetrics | null, key: number | 'ytd'): number | null {
   if (!m) return null;
@@ -59,6 +74,8 @@ export default function TerminalPage() {
   const [err, setErr] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>('abs');
   const [sel, setSel] = useState<{ block: OverviewBlock; m: InstrumentMetrics; title: string } | null>(null);
+  const [cfg, setCfg] = useState<TermConfig | null>(null);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -66,10 +83,23 @@ export default function TerminalPage() {
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
       .then((d) => alive && setData(d))
       .catch((e) => alive && setErr(e.message || 'ошибка загрузки'));
+    fetch('/api/market/config')
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('config'))))
+      .then((c) => alive && setCfg(c))
+      .catch(() => alive && setCfg({ compare: { symbols: ['SPY', 'QQQ', 'DIA'], period: '1Г' }, corr: { symbols: [] } }));
     return () => {
       alive = false;
     };
   }, []);
+
+  // обновление конфига: мгновенно в UI + дебаунс-сохранение на сервер
+  const updateCfg = (next: TermConfig) => {
+    setCfg(next);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      fetch('/api/market/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(next) }).catch(() => {});
+    }, 600);
+  };
 
   const spy = useMemo(() => {
     if (!data) return null;
@@ -107,6 +137,17 @@ export default function TerminalPage() {
     return { up: byR1.slice(0, 4), down: byR1.slice(-4).reverse(), anom };
   }, [data]);
 
+  // карта symbol→{def,metrics} и списки тикеров по блокам (для графика и матрицы)
+  const instrMap = useMemo(() => {
+    const m = new Map<string, { title: string; metrics: InstrumentMetrics | null }>();
+    if (data) for (const b of data.blocks) for (const c of b.instruments) if (!m.has(c.def.symbol)) m.set(c.def.symbol, { title: c.def.title, metrics: c.metrics });
+    return m;
+  }, [data]);
+  const groups = useMemo(() => {
+    if (!data) return [] as { title: string; items: { sym: string; title: string }[] }[];
+    return data.blocks.map((b) => ({ title: b.def.title.replace('Корзина: ', ''), items: b.instruments.map((c) => ({ sym: c.def.symbol, title: c.def.title })) }));
+  }, [data]);
+
   if (err)
     return (
       <div className="mx-auto max-w-5xl px-5 py-10">
@@ -138,12 +179,28 @@ export default function TerminalPage() {
       ) : (
         <>
           <RegimePulse data={data} movers={movers} />
+          {cfg && (
+            <NormalizedPerformance
+              instrMap={instrMap}
+              groups={groups}
+              symbols={cfg.compare.symbols}
+              period={cfg.compare.period}
+              onChange={(symbols, period) => updateCfg({ ...cfg, compare: { symbols, period } })}
+            />
+          )}
           <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
             {data.blocks.map((b) => (
               <BlockCard key={b.def.id} block={b} mode={mode} cell={cell} spy={spy} onPick={(m, title) => setSel({ block: b, m, title })} />
             ))}
           </div>
-          {data.correlation && <CorrelationCard corr={data.correlation} />}
+          {data.correlation && cfg && (
+            <CorrelationCard
+              corr={data.correlation}
+              groups={groups}
+              selected={cfg.corr.symbols}
+              onChange={(symbols) => updateCfg({ ...cfg, corr: { symbols } })}
+            />
+          )}
         </>
       )}
 
@@ -344,7 +401,44 @@ function BlockCard({
   );
 }
 
-function CorrelationCard({ corr }: { corr: CorrelationMatrix }) {
+type Grp = { title: string; items: { sym: string; title: string }[] };
+
+function TickerPicker({ groups, selected, onToggle }: { groups: Grp[]; selected: Set<string>; onToggle: (sym: string) => void }) {
+  return (
+    <div className="border-b border-line bg-surface px-3.5 py-3">
+      <div className="grid grid-cols-2 gap-x-5 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
+        {groups.map((g) => (
+          <div key={g.title}>
+            <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-ink-3">{g.title}</div>
+            <div className="space-y-0.5">
+              {g.items.map((it) => {
+                const on = selected.has(it.sym);
+                return (
+                  <button key={it.sym} onClick={() => onToggle(it.sym)} className={`flex w-full items-center gap-2 rounded-fk-sm px-2 py-1 text-left text-[12px] ${on ? 'bg-brand-50 text-brand-700' : 'hover:bg-surface-2'}`}>
+                    <span className={`flex h-3.5 w-3.5 flex-none items-center justify-center rounded-[4px] border text-[9px] leading-none ${on ? 'border-brand bg-brand text-white' : 'border-line-strong'}`}>{on ? '✓' : ''}</span>
+                    <span className="font-semibold">{it.sym}</span>
+                    <span className="truncate text-ink-3">{it.title}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CorrelationCard({ corr, groups, selected, onChange }: { corr: CorrelationMatrix; groups: Grp[]; selected: string[]; onChange: (symbols: string[]) => void }) {
+  const [editing, setEditing] = useState(false);
+  const idx = new Map(corr.symbols.map((s, i) => [s, i] as const));
+  const shown = (selected.length ? selected : corr.symbols.slice(0, 10)).filter((s) => idx.has(s));
+  const toggle = (s: string) => {
+    const set = new Set(shown);
+    if (set.has(s)) set.delete(s);
+    else set.add(s);
+    onChange([...set]);
+  };
   return (
     <div className="mt-5 rounded-fk border border-line bg-surface-elev shadow-fk-sm">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-3.5 py-3">
@@ -352,36 +446,196 @@ function CorrelationCard({ corr }: { corr: CorrelationMatrix }) {
           <span className="text-[13px] font-bold text-ink">Корреляционная матрица</span>
           <Badge>кросс-ассет · {corr.window}д</Badge>
         </div>
-        <span className="text-[11px] text-ink-3">красный — движутся вместе (риск концентрации) · зелёный — диверсификатор</span>
+        <div className="flex items-center gap-2.5">
+          <span className="hidden text-[11px] text-ink-3 lg:inline">красный — вместе (риск) · зелёный — диверсификатор</span>
+          <button className={`rounded-fk-sm border px-2.5 py-1 text-[11px] font-semibold ${editing ? 'border-brand-100 bg-brand-50 text-brand-700' : 'border-line-strong text-ink-2'}`} onClick={() => setEditing((v) => !v)}>{editing ? '✓ готово' : '✎ настроить'}</button>
+        </div>
       </div>
+      {editing && <TickerPicker groups={groups} selected={new Set(shown)} onToggle={toggle} />}
       <div className="overflow-x-auto px-3.5 py-3">
-        <table className="border-separate" style={{ borderSpacing: 4 }}>
-          <thead>
-            <tr>
-              <th />
-              {corr.symbols.map((s) => (
-                <th key={s} className="px-1 pb-1 text-center text-[10.5px] font-semibold text-ink-2">{s}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {corr.matrix.map((row, i) => (
-              <tr key={corr.symbols[i]}>
-                <td className="whitespace-nowrap pr-2 text-right text-[11.5px] font-semibold text-ink" title={corr.titles[i]}>{corr.symbols[i]}</td>
-                {row.map((v, j) => {
-                  const { bg, fg } = corrColor(v);
-                  return (
-                    <td key={j}>
-                      <div className="flex h-9 w-[50px] items-center justify-center rounded-fk-sm border border-line text-[11.5px] font-semibold tabular-nums" style={{ background: bg, color: fg }}>
-                        {v == null ? '—' : i === j ? '1.00' : v.toFixed(2)}
-                      </div>
-                    </td>
-                  );
-                })}
+        {shown.length < 2 ? (
+          <div className="px-2 py-6 text-center text-[12px] text-ink-3">Выберите ≥2 тикера через «✎ настроить»</div>
+        ) : (
+          <table className="border-separate" style={{ borderSpacing: 4 }}>
+            <thead>
+              <tr>
+                <th />
+                {shown.map((s) => <th key={s} className="px-1 pb-1 text-center text-[10.5px] font-semibold text-ink-2">{s}</th>)}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {shown.map((rs) => (
+                <tr key={rs}>
+                  <td className="whitespace-nowrap pr-2 text-right text-[11.5px] font-semibold text-ink">{rs}</td>
+                  {shown.map((cs) => {
+                    const v = rs === cs ? 1 : corr.matrix[idx.get(rs)!][idx.get(cs)!];
+                    const { bg, fg } = corrColor(v);
+                    return (
+                      <td key={cs}>
+                        <div className="flex h-9 w-[50px] items-center justify-center rounded-fk-sm border border-line text-[11.5px] font-semibold tabular-nums" style={{ background: bg, color: fg }}>
+                          {v == null ? '—' : rs === cs ? '1.00' : v.toFixed(2)}
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+type CSeries = { sym: string; color: string; vals: number[] };
+
+function periodCutoffISO(period: string): string {
+  const days = COMPARE_PERIODS.find((p) => p.label === period)?.days ?? 370;
+  const d = new Date();
+  if (days < 0) return d.getUTCFullYear() + '-01-01';
+  d.setUTCDate(d.getUTCDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+
+function buildCompareSeries(symbols: string[], instrMap: Map<string, { title: string; metrics: InstrumentMetrics | null }>, period: string): { dates: string[]; series: CSeries[] } {
+  let refDates: string[] = [];
+  for (const s of symbols) {
+    const t = instrMap.get(s)?.metrics?.sparkT ?? [];
+    if (t.length > refDates.length) refDates = t;
+  }
+  if (refDates.length < 2) return { dates: [], series: [] };
+  const cutoff = periodCutoffISO(period);
+  let start = refDates.findIndex((d) => d >= cutoff);
+  if (start < 0) start = 0;
+  const visLen = Math.max(2, refDates.length - start);
+  const dates = refDates.slice(-visLen);
+  const series: CSeries[] = [];
+  for (const sym of symbols) {
+    const mtr = instrMap.get(sym)?.metrics;
+    if (!mtr || mtr.spark.length < 2) continue;
+    const sp = mtr.spark.slice(-visLen);
+    const base = sp[0] || 1;
+    series.push({ sym, color: colorFor(sym), vals: sp.map((p) => (p / base - 1) * 100) });
+  }
+  return { dates, series };
+}
+
+function MultiLineChart({ dates, series }: { dates: string[]; series: CSeries[] }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [w, setW] = useState(820);
+  const [hov, setHov] = useState<number | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const u = () => setW(el.clientWidth || 820);
+    u();
+    const ro = new ResizeObserver(u);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const H = 320, padL = 8, padR = 64, padT = 12, padB = 22;
+  const n = dates.length;
+  if (!series.length || n < 2) return <div ref={ref} className="flex h-[260px] items-center justify-center text-[12px] text-ink-3">Добавьте тикеры для сравнения</div>;
+  let lo = Infinity, mx = -Infinity;
+  for (const s of series) for (const v of s.vals) { if (v < lo) lo = v; if (v > mx) mx = v; }
+  if (!isFinite(lo)) { lo = -1; mx = 1; }
+  if (lo === mx) { lo -= 1; mx += 1; }
+  const pad = (mx - lo) * 0.08; lo -= pad; mx += pad;
+  const plotW = w - padL - padR, plotH = H - padT - padB;
+  const X = (i: number) => padL + (n <= 1 ? 0 : (i / (n - 1)) * plotW);
+  const Y = (v: number) => padT + plotH - ((v - lo) / (mx - lo)) * plotH;
+  const niceStep = (r: number) => { const raw = r / 5, mag = Math.pow(10, Math.floor(Math.log10(raw))), nn = raw / mag, s = nn >= 5 ? 5 : nn >= 2 ? 2 : 1; return s * mag; };
+  const step = niceStep(mx - lo);
+  const grid: number[] = [];
+  for (let g = Math.ceil(lo / step) * step; g <= mx; g += step) grid.push(g);
+  const onMove = (e: any) => setHov(Math.max(0, Math.min(n - 1, Math.round(((e.nativeEvent.offsetX - padL) / (plotW || 1)) * (n - 1)))));
+  const ends = series.map((s) => ({ sym: s.sym, color: s.color, v: s.vals[s.vals.length - 1], y: Y(s.vals[s.vals.length - 1]) })).sort((a, b) => a.y - b.y);
+  for (let i = 1; i < ends.length; i++) if (ends[i].y - ends[i - 1].y < 15) ends[i].y = ends[i - 1].y + 15;
+  const mon = (d: string) => { const t = new Date(d + 'T00:00:00'); return isNaN(t.getTime()) ? '' : t.toLocaleDateString('ru-RU', { month: 'short' }); };
+  const tk = Math.min(7, n);
+  const xticks: number[] = [];
+  for (let t = 0; t < tk; t++) xticks.push(Math.round((t / (tk - 1)) * (n - 1)));
+  const tipLeft = hov == null ? 0 : Math.max(4, Math.min(w - 150, X(hov) + 8));
+  return (
+    <div ref={ref} className="relative" onMouseMove={onMove} onMouseLeave={() => setHov(null)}>
+      <svg width={w} height={H} viewBox={`0 0 ${w} ${H}`} className="block">
+        {grid.map((g, k) => {
+          const zero = Math.abs(g) < 1e-9;
+          return (
+            <g key={k}>
+              <line x1={padL} x2={padL + plotW} y1={Y(g).toFixed(1)} y2={Y(g).toFixed(1)} stroke={zero ? '#c7cfdd' : '#eef1f6'} strokeDasharray={zero ? '3 3' : undefined} />
+              <text x={padL + plotW + 6} y={(Y(g) + 3).toFixed(1)} fontSize="9.5" fill="#8b95a7">{(g > 0 ? '+' : '') + g.toFixed(0)}%</text>
+            </g>
+          );
+        })}
+        {xticks.map((i, k) => <text key={k} x={X(i).toFixed(1)} y={H - 6} fontSize="9.5" fill="#8b95a7" textAnchor="middle">{mon(dates[i])}</text>)}
+        {series.map((s) => <path key={s.sym} d={s.vals.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`).join(' ')} fill="none" stroke={s.color} strokeWidth={1.6} strokeLinejoin="round" />)}
+        {hov != null && <line x1={X(hov).toFixed(1)} x2={X(hov).toFixed(1)} y1={padT} y2={padT + plotH} stroke="var(--fk-line-strong)" />}
+        {hov != null && series.map((s) => <circle key={s.sym} cx={X(hov).toFixed(1)} cy={Y(s.vals[hov]).toFixed(1)} r={3} fill={s.color} stroke="#fff" strokeWidth={1.3} />)}
+        {ends.map((e) => (
+          <g key={e.sym}>
+            <rect x={padL + plotW + 2} y={(e.y - 8).toFixed(1)} width={60} height={16} rx={4} fill={e.color} />
+            <text x={padL + plotW + 6} y={(e.y + 3.5).toFixed(1)} fontSize="9.5" fontWeight="700" fill="#fff">{e.sym} {(e.v > 0 ? '+' : '') + e.v.toFixed(1)}</text>
+          </g>
+        ))}
+      </svg>
+      {hov != null && (
+        <div className="pointer-events-none absolute top-2 rounded-fk-sm border border-line bg-surface-elev px-2 py-1.5 text-[11px] shadow-fk" style={{ left: tipLeft, minWidth: 120 }}>
+          <div className="mb-1 text-ink-3">{(() => { const t = new Date((dates[hov] || '') + 'T00:00:00'); return isNaN(t.getTime()) ? dates[hov] : t.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: '2-digit' }); })()}</div>
+          {series.map((s) => (
+            <div key={s.sym} className="flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-fk-pill" style={{ background: s.color }} />
+              <span className="font-semibold">{s.sym}</span>
+              <span className={`ml-auto tabular-nums ${s.vals[hov] >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{(s.vals[hov] > 0 ? '+' : '') + s.vals[hov].toFixed(1)}%</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NormalizedPerformance({ instrMap, groups, symbols, period, onChange }: {
+  instrMap: Map<string, { title: string; metrics: InstrumentMetrics | null }>;
+  groups: Grp[];
+  symbols: string[];
+  period: string;
+  onChange: (symbols: string[], period: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const { dates, series } = buildCompareSeries(symbols, instrMap, period);
+  const remove = (s: string) => onChange(symbols.filter((x) => x !== s), period);
+  const toggle = (s: string) => onChange(symbols.includes(s) ? symbols.filter((x) => x !== s) : [...symbols, s].slice(0, 10), period);
+  const periodVal = COMPARE_PERIODS.some((p) => p.label === period) ? period : '1Г';
+  return (
+    <div className="mb-3.5 rounded-fk border border-line bg-surface-elev shadow-fk-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-3.5 py-3">
+        <div className="flex items-center gap-2.5">
+          <span className="text-[13px] font-bold text-ink">Нормализованный перформанс</span>
+          <Badge variant="brand">избранное · ребейз к 0%</Badge>
+        </div>
+        <div className="flex items-center gap-2">
+          <SegmentedControl size="sm" value={periodVal} onChange={(p) => onChange(symbols, p)} options={COMPARE_PERIODS.map((p) => ({ label: p.label, value: p.label }))} />
+          <button className={`rounded-fk-sm border px-2.5 py-1 text-[11px] font-semibold ${editing ? 'border-brand-100 bg-brand-50 text-brand-700' : 'border-line-strong text-ink-2'}`} onClick={() => setEditing((v) => !v)}>{editing ? '✓ готово' : '✎ тикеры'}</button>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 px-3.5 pt-3">
+        {series.map((s) => {
+          const last = s.vals[s.vals.length - 1];
+          return (
+            <span key={s.sym} className="inline-flex items-center gap-1.5 rounded-fk-pill border border-line bg-surface-2 py-1 pl-2.5 pr-1 text-[12px] font-semibold">
+              <span className="h-2.5 w-2.5 rounded-fk-pill" style={{ background: s.color }} />{s.sym}
+              <span className={`tabular-nums ${last >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{(last > 0 ? '+' : '') + last.toFixed(1)}%</span>
+              <span className="cursor-pointer rounded px-1 text-ink-3 hover:bg-line hover:text-down-strong" onClick={() => remove(s.sym)}>✕</span>
+            </span>
+          );
+        })}
+        {series.length === 0 && <span className="text-[12px] text-ink-3">Добавьте тикеры через «✎ тикеры»</span>}
+      </div>
+      {editing && <div className="mt-3"><TickerPicker groups={groups} selected={new Set(symbols)} onToggle={toggle} /></div>}
+      <div className="px-3.5 py-3">
+        <MultiLineChart dates={dates} series={series} />
       </div>
     </div>
   );

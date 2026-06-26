@@ -97,14 +97,15 @@ export async function computeOverview(blocks: BlockDef[] = SEED_BLOCKS): Promise
   const regime = computeRegime({ avgCorr, volRegime, breadth });
 
   const asOf = maxAsOf(metricsMap);
-  const correlationMx = buildCorrelation(retsMap);
+  const uniq = [...new Set(blocks.flatMap((b) => b.members))];
+  const correlationMx = buildCorrelation(retsMap, uniq);
   return { asOf, blocks: outBlocks, regime, correlation: correlationMx, synthetic: anySynthetic };
 }
 
-// Кросс-ассет корреляции (63д) по курируемому набору — для матрицы на главной.
-const CORR_SET = ['SPY', 'MCHI', 'EWG', 'EWJ', 'GLD', 'SLV', 'URA', 'XLK', 'XLE', 'XLF'];
-function buildCorrelation(retsMap: Map<string, number[]>): MarketOverview['correlation'] {
-  const symbols = CORR_SET.filter((s) => (retsMap.get(s)?.length ?? 0) >= 20);
+// Полная кросс-ассет корреляция (63д) по ВСЕМ тикерам вселенной — клиент сам выбирает
+// подмножество для матрицы (настраиваемый виджет). Матрица NxN, диагональ = 1.
+function buildCorrelation(retsMap: Map<string, number[]>, members: string[]): MarketOverview['correlation'] {
+  const symbols = members.filter((s) => (retsMap.get(s)?.length ?? 0) >= 20);
   if (symbols.length < 2) return null;
   const win = 63;
   const matrix = symbols.map((a) =>
