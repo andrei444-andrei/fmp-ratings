@@ -186,8 +186,9 @@ def build_fval(px, bench, fid, param, step, skip=0):
 
 def forward_extras(px, bench, h):
     # Форвардные метрики ПУТИ от входа за h торг. дней (на каждую сэмпл-дату, шаг=h — как в build_targets):
-    #   ret — сырой форвардный возврат к концу окна; mfe/mae — макс. благоприятная/неблагоприятная экскурсия;
-    #   mdd — макс. просадка пути (peak-to-trough, база — цена входа). Всё в %.
+    #   ret — сырой форвардный возврат к концу окна; mfe/mae — макс. благоприятная/неблагоприятная экскурсия
+    #   ОТНОСИТЕЛЬНО ВХОДА, обрезанные по 0 (MFE ≥ 0 — лучшая прибыль; MAE ≤ 0 — худший убыток; 0, если не было);
+    #   mdd — макс. просадка пути peak-to-trough (от локального пика, база — цена входа), может быть глубже MAE. Всё в %.
     px = px.sort_index()
     keep_pos = list(range(0, len(px.index), max(1, h)))
     idx = px.index
@@ -213,8 +214,8 @@ def forward_extras(px, bench, h):
             rel = win / p0
             eq = np.empty(rel.size + 1); eq[0] = 1.0; eq[1:] = rel
             dd = eq / np.maximum.accumulate(eq) - 1.0
-            recs.append((idx[i], (rel[-1] - 1.0) * 100.0, (rel.max() - 1.0) * 100.0,
-                         (rel.min() - 1.0) * 100.0, dd.min() * 100.0))
+            recs.append((idx[i], (rel[-1] - 1.0) * 100.0, max(0.0, float(rel.max()) - 1.0) * 100.0,
+                         min(0.0, float(rel.min()) - 1.0) * 100.0, dd.min() * 100.0))
         if recs:
             df = pd.DataFrame(recs, columns=['date', 'ret', 'mfe', 'mae', 'mdd'])
             df['symbol'] = s
