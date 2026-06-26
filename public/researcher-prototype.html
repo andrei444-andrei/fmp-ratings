@@ -15,13 +15,14 @@
     --fk-warn:#f59e0b; --fk-warn-bg:#fef2de; --fk-warn-text:#b5740a;
     --fk-radius-sm:10px; --fk-radius:14px;
     --fk-shadow-sm:0 1px 2px rgba(15,23,41,.04),0 1px 3px rgba(15,23,41,.06);
+    --fk-shadow:0 12px 40px rgba(15,23,41,.16);
     --fk-font:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,system-ui,sans-serif;
   }
   *{box-sizing:border-box}
   html,body{margin:0}
   body{background:var(--fk-bg);color:var(--fk-text);font-family:var(--fk-font);-webkit-font-smoothing:antialiased;font-size:13px;line-height:1.4}
   .num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
-  .wrap{max-width:1320px;margin:0 auto;padding:20px 20px 80px}
+  .wrap{max-width:1320px;margin:0 auto;padding:20px 20px 90px}
   .top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px}
   .top h1{font-size:18px;font-weight:750;margin:0}
   .brand-dot{width:18px;height:18px;border-radius:6px;background:linear-gradient(135deg,var(--fk-brand),#9b8bff)}
@@ -35,55 +36,72 @@
   .badge{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:999px;background:var(--fk-surface-2);color:var(--fk-text-2);border:1px solid var(--fk-line)}
   .badge.brand{background:var(--fk-brand-50);color:var(--fk-brand-700);border-color:var(--fk-brand-100)}
   .badge.warn{background:var(--fk-warn-bg);color:var(--fk-warn-text);border-color:transparent}
-  .badge.up{background:var(--fk-up-bg);color:var(--fk-up-text);border-color:transparent}
-  .badge.down{background:var(--fk-down-bg);color:var(--fk-down-text);border-color:transparent}
 
-  /* группы активов — чипы */
-  .grp{display:flex;flex-wrap:wrap;gap:8px}
-  .grp .chip{border:1px solid var(--fk-line-strong);background:var(--fk-surface-elev);color:var(--fk-text-2);
-    border-radius:999px;padding:6px 14px;font-size:12.5px;font-weight:600;cursor:pointer;transition:.12s}
+  .btn{border:1px solid var(--fk-line-strong);background:#fff;color:var(--fk-text-2);border-radius:8px;font:inherit;font-size:12px;font-weight:600;padding:6px 11px;cursor:pointer}
+  .btn:hover{background:var(--fk-surface-2)}
+  .btn.brand{background:var(--fk-brand);border-color:var(--fk-brand);color:#fff}
+  .btn.ghost{border-style:dashed}
+  .btn.sm{padding:4px 9px;font-size:11.5px}
+  .x{cursor:pointer;color:var(--fk-text-3);font-size:13px;padding:2px 5px;border-radius:6px}
+  .x:hover{background:var(--fk-surface-2);color:var(--fk-down-text)}
+
+  /* вселенная */
+  .grp{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:10px}
+  .grp .chip{border:1px solid var(--fk-line-strong);background:#fff;color:var(--fk-text-2);border-radius:999px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer}
   .grp .chip:hover{background:var(--fk-surface-2)}
   .grp .chip.on{background:var(--fk-brand-50);border-color:var(--fk-brand-100);color:var(--fk-brand-700)}
-  .grp .chip .n{color:var(--fk-text-3);font-weight:500;margin-left:5px;font-size:11px}
+  .grp .chip .n{color:var(--fk-text-3);font-weight:500;margin-left:5px;font-size:10.5px}
+  textarea.uni{width:100%;min-height:54px;resize:vertical;font:inherit;font-size:12.5px;border:1px solid var(--fk-line-strong);border-radius:10px;padding:9px 11px;color:var(--fk-text);font-variant-numeric:tabular-nums}
 
-  /* строки метрик */
-  .mrow{display:grid;grid-template-columns:34px 1.4fr 92px 70px 84px 96px;gap:10px;align-items:center;
-    padding:9px 10px;border-radius:var(--fk-radius-sm);border:1px solid transparent}
-  .mrow + .mrow{margin-top:2px}
-  .mrow.on{background:var(--fk-surface-2);border-color:var(--fk-line)}
-  .mrow .nm{font-weight:650;font-size:12.5px}
-  .mrow .nm small{display:block;color:var(--fk-text-3);font-weight:500;font-size:10.5px}
-  .mrow.off .nm,.mrow.off .ctl{opacity:.45}
-  .mhead{display:grid;grid-template-columns:34px 1.4fr 92px 70px 84px 96px;gap:10px;padding:0 10px 6px;
-    font-size:10px;font-weight:650;letter-spacing:.04em;text-transform:uppercase;color:var(--fk-text-3)}
-
-  input[type=checkbox]{width:17px;height:17px;accent-color:var(--fk-brand);cursor:pointer}
-  select,input.val{font:inherit;font-size:12px;border:1px solid var(--fk-line-strong);border-radius:8px;background:#fff;
-    padding:5px 7px;color:var(--fk-text);width:100%}
+  /* конструктор условий (как сегменты в GA) */
+  .blocks{display:flex;flex-direction:column;gap:0}
+  .or-div{display:flex;align-items:center;gap:10px;margin:10px 0}
+  .or-div .ln{flex:1;height:1px;background:var(--fk-line)}
+  .or-div .pill{font-size:11px;font-weight:750;color:var(--fk-brand-700);background:var(--fk-brand-50);border:1px solid var(--fk-brand-100);border-radius:999px;padding:3px 12px}
+  .block{border:1px solid var(--fk-line-strong);border-radius:12px;padding:11px 12px;background:var(--fk-surface-2)}
+  .block-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .block-h .lbl{font-size:11px;font-weight:700;color:var(--fk-text-2);letter-spacing:.03em;text-transform:uppercase}
+  .cond{display:grid;grid-template-columns:58px 1.3fr 80px 64px 78px 26px;gap:8px;align-items:center;background:#fff;border:1px solid var(--fk-line);border-radius:9px;padding:6px 8px}
+  .cond + .cond{margin-top:6px;position:relative}
+  .cond + .cond::before{content:'И';position:absolute;left:-2px;top:-12px;font-size:9.5px;font-weight:750;color:var(--fk-text-3);background:var(--fk-surface-2);padding:0 4px}
+  select,input.val{font:inherit;font-size:12px;border:1px solid var(--fk-line-strong);border-radius:8px;background:#fff;padding:5px 6px;color:var(--fk-text);width:100%}
   input.val{text-align:right;font-variant-numeric:tabular-nums}
-
   .seg{display:inline-flex;background:var(--fk-surface-2);border-radius:8px;padding:2px;width:100%}
   .seg button{flex:1;border:0;background:transparent;font:inherit;font-size:11px;font-weight:650;color:var(--fk-text-2);padding:4px 0;border-radius:6px;cursor:pointer}
   .seg button.on{background:#fff;color:var(--fk-text);box-shadow:var(--fk-shadow-sm)}
-  .seg.andor button.on{color:var(--fk-brand-700)}
+  .nott{border:1px solid var(--fk-line-strong);border-radius:8px;background:#fff;font:inherit;font-size:11px;font-weight:700;color:var(--fk-text-3);padding:5px 0;cursor:pointer;width:100%}
+  .nott.on{background:var(--fk-down-bg);color:var(--fk-down-text);border-color:transparent}
 
-  /* таблица результатов */
+  /* отображаемые метрики */
+  .dchips{display:flex;flex-wrap:wrap;gap:7px}
+  .dchips .dc{border:1px dashed var(--fk-line-strong);background:#fff;color:var(--fk-text-3);border-radius:999px;padding:4px 11px;font-size:11.5px;font-weight:600;cursor:pointer}
+  .dchips .dc.on{border-style:solid;background:var(--fk-surface-2);color:var(--fk-text)}
+
+  /* таблица */
   table{width:100%;border-collapse:collapse}
   thead th{font-size:10px;font-weight:650;letter-spacing:.03em;text-transform:uppercase;color:var(--fk-text-3);padding:8px 8px;text-align:right;border-bottom:1px solid var(--fk-line);white-space:nowrap}
   thead th.l{text-align:left}
   tbody td{padding:8px 8px;text-align:right;border-bottom:1px solid var(--fk-line);font-variant-numeric:tabular-nums;font-size:12.5px}
   tbody td.l{text-align:left}
   tbody tr:last-child td{border-bottom:0}
-  tbody tr.hit{background:var(--fk-brand-50)}
+  tbody tr{cursor:pointer}
   tbody tr:hover{background:var(--fk-surface-2)}
-  .inst .sy{font-weight:700}
+  .sy{font-weight:700}
   .up{color:var(--fk-up-text)} .down{color:var(--fk-down-text)} .flat{color:var(--fk-text-3)}
-  .cond{box-shadow:inset 0 0 0 1px var(--fk-brand-100);border-radius:6px}
-  .ok{color:var(--fk-up-text);font-weight:750} .no{color:var(--fk-text-3)}
-  .matchcount{font-size:12px;color:var(--fk-text-2)}
+  .barpos{display:inline-flex;align-items:center;gap:6px;justify-content:flex-end}
+  .bar{width:64px;height:7px;border-radius:999px;background:var(--fk-surface-2);overflow:hidden;position:relative}
+  .bar > i{position:absolute;top:0;bottom:0;left:50%;border-radius:999px}
   .foot{margin-top:14px;font-size:11px;color:var(--fk-text-3)}
-  .logic-note{font-size:11px;color:var(--fk-text-3);margin-top:8px}
-  .logic-note b{color:var(--fk-text-2)}
+
+  /* drawer провала в сделки */
+  .scrim{position:fixed;inset:0;background:rgba(15,23,41,.34);z-index:50}
+  .drawer{position:fixed;top:0;right:0;bottom:0;width:min(640px,94vw);background:var(--fk-surface-elev);box-shadow:var(--fk-shadow);z-index:51;display:flex;flex-direction:column}
+  .dr-h{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--fk-line)}
+  .dr-b{padding:14px 18px;overflow:auto}
+  .statgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:6px 0 14px}
+  .stat{background:var(--fk-surface-2);border-radius:10px;padding:8px 10px}
+  .stat .k{font-size:10px;color:var(--fk-text-3);text-transform:uppercase;letter-spacing:.04em}
+  .stat .v{font-size:15px;font-weight:700;margin-top:2px}
 </style>
 </head>
 <body>
@@ -92,166 +110,244 @@
       <span class="brand-dot"></span>
       <h1>Скринер активов</h1>
       <span class="badge warn">прототип · демо-данные</span>
-      <span class="sub">Группа активов → метрики (момент., вола…) с условиями И / ИЛИ → таблица результатов.</span>
+      <span class="sub">Вселенная → конструктор условий (блоки ИЛИ, внутри И/НЕ) → таблица (по тикерам/годам) → провал в сделки.</span>
     </div>
 
-    <!-- 1. Группа активов -->
+    <!-- 1. Вселенная -->
     <div class="card">
-      <div class="card-h"><span class="card-t">1 · Группа активов</span><span class="sub" id="grp-count"></span></div>
-      <div class="card-b"><div class="grp" id="grp"></div></div>
+      <div class="card-h"><span class="card-t">1 · Вселенная</span><span class="sub" id="uni-count"></span></div>
+      <div class="card-b">
+        <div class="grp" id="grp"></div>
+        <textarea class="uni" id="uni" spellcheck="false" placeholder="тикеры через запятую/пробел — правь как угодно"></textarea>
+        <div class="sub" style="margin-top:6px">Любой пресет — это просто стартовый набор; список редактируется свободно (в реале — сохранение вселенной в БД + AI-добавление).</div>
+      </div>
     </div>
 
-    <!-- 2. Метрики и условия -->
+    <!-- 2. Конструктор условий -->
     <div class="card">
       <div class="card-h">
-        <span class="card-t">2 · Метрики и условия</span>
-        <span class="sub">вкл. нужные · задай порог · И (обязательно) / ИЛИ (хотя бы одно)</span>
+        <span class="card-t">2 · Условия отбора</span>
+        <span class="sub">блоки соединяются <b style="color:var(--fk-brand-700)">ИЛИ</b> · внутри блока — <b>И</b> / <b style="color:var(--fk-down-text)">НЕ</b></span>
       </div>
       <div class="card-b">
-        <div class="mhead"><span></span><span>Метрика</span><span>Период</span><span>Условие</span><span>Порог</span><span>Логика</span></div>
-        <div id="metrics"></div>
-        <div class="logic-note" id="logic-note"></div>
+        <div class="blocks" id="blocks"></div>
+        <button class="btn ghost" style="margin-top:12px" onclick="addBlock()">+ ИЛИ — новый блок</button>
       </div>
     </div>
 
-    <!-- 3. Результаты -->
+    <!-- 3. Отображаемые метрики -->
+    <div class="card">
+      <div class="card-h"><span class="card-t">3 · Метрики в таблице</span><span class="sub">любые для показа, даже если не в условиях</span></div>
+      <div class="card-b"><div class="dchips" id="dchips"></div></div>
+    </div>
+
+    <!-- 4. Результаты -->
     <div class="card">
       <div class="card-h">
-        <span class="card-t">3 · Результаты</span>
-        <span class="matchcount" id="match-count"></span>
+        <span class="card-t">4 · Результаты</span>
+        <div style="display:flex;gap:10px;align-items:center">
+          <span class="sub" id="match-count"></span>
+          <div class="seg" style="width:auto" id="viewseg">
+            <button data-v="tickers" class="on">По тикерам</button>
+            <button data-v="years">По годам</button>
+          </div>
+        </div>
       </div>
-      <div class="card-b" style="overflow-x:auto">
-        <table id="tbl"></table>
+      <div class="card-b" style="overflow-x:auto"><table id="tbl"></table>
+        <div class="foot">Клик по строке → провал внутрь сделок (даты, метрики на входе, форвардный результат). В реале — реальные кейсы из движка.</div>
       </div>
     </div>
-
-    <div class="foot">Статический прототип · детерминированные демо-числа · дизайн <code>--fk-*</code> (как market-terminal). Без меню. В реале — данные из БД, пересчёт мгновенный на клиенте.</div>
   </div>
 
-<script>
-// ── детерминированный PRNG (демо-метрики стабильны по тикеру) ──
-function hash(str){let h=2166136261;for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,16777619)}return (h>>>0)}
-function rnd(seed){let s=seed>>>0;return ()=>{s=(Math.imul(s,1103515245)+12345)&0x7fffffff;return s/0x7fffffff}}
+  <div id="dr-root"></div>
 
-// ── группы активов ──
+<script>
+function hash(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return h>>>0}
+function rnd(seed){let s=seed>>>0||1;return ()=>{s=(Math.imul(s,1103515245)+12345)&0x7fffffff;return s/0x7fffffff}}
+
 const GROUPS = {
   'Секторные ETF':['XLK','XLF','XLE','XLV','XLY','XLP','XLI','XLB','XLU','XLRE','XLC'],
-  'Страновые ETF':['EWJ','EWG','EWU','EWZ','INDA','EWA','EWC','EWW','FXI','EWY','EWT'],
-  'Сырьё':['GLD','SLV','USO','UNG','DBA','DBB','DBC','PALL','PPLT','CORN','WEAT'],
+  'Страновые ETF':['EWJ','EWG','EWU','EWZ','INDA','EWA','EWC','FXI','EWY','EWT'],
+  'Сырьё':['GLD','SLV','USO','UNG','DBA','DBB','DBC','PALL','PPLT','CORN'],
   'Металлы':['GLD','SLV','PPLT','PALL','CPER','URA','URNM','GDX','SIL'],
   'Темы':['SMH','SOXX','ARKK','ICLN','TAN','LIT','URA','BOTZ','HACK','SKYY'],
-  'Крупные акции':['AAPL','MSFT','NVDA','AMZN','GOOGL','META','TSLA','JPM','XOM','BRK-B'],
+  'Крупные акции':['AAPL','MSFT','NVDA','AMZN','GOOGL','META','TSLA','JPM','XOM'],
 };
+// метрики: id,label,периоды,unit,default порог
+const METRICS = {
+  mom:{label:'Моментум',periods:[21,63,126,252],unit:'%',def:10},
+  vol:{label:'Волатильность',periods:[21,63,126],unit:'%',def:25},
+  ath:{label:'Расст. от ATH',periods:[0],unit:'%',def:-5},
+  xb:{label:'Превышение бенч.',periods:[21,63,126],unit:'пп',def:0},
+  sma:{label:'Откл. от SMA',periods:[50,200],unit:'%',def:0},
+  rsi:{label:'RSI',periods:[14],unit:'',def:60},
+};
+const MID = Object.keys(METRICS);
+const key = (id,p)=> id+'_'+p;
+const mlabel = (id,p)=> METRICS[id].label + (METRICS[id].periods.length>1 ? ' '+p : '');
 
-// ── метрики: id, заголовок, периоды, единица, дефолтное условие, функция значения ──
-const METRICS = [
-  {id:'mom', label:'Моментум', hint:'превышение за период', unit:'%', periods:[21,63,126,252], def:{p:63,cmp:'ge',v:10,mode:'and'},
-    val:(t,p)=>{const r=rnd(hash(t+'mom'+p));return Math.round((( r()-0.42)*60)*10)/10}},
-  {id:'vol', label:'Волатильность', hint:'годовая', unit:'%', periods:[21,63,126], def:{p:21,cmp:'le',v:30,mode:'and'},
-    val:(t,p)=>{const r=rnd(hash(t+'vol'+p));return Math.round((8+r()*40)*10)/10}},
-  {id:'ath', label:'Расст. от ATH', hint:'ниже максимума', unit:'%', periods:[0], def:{p:0,cmp:'ge',v:-5,mode:'or'},
-    val:(t)=>{const r=rnd(hash(t+'ath'));return -Math.round((r()*r()*40)*10)/10}},
-  {id:'xb', label:'Превышение бенч.', hint:'vs SPY за период', unit:'пп', periods:[21,63,126], def:{p:63,cmp:'ge',v:0,mode:'and'},
-    val:(t,p)=>{const r=rnd(hash(t+'xb'+p));return Math.round(((r()-0.45)*36)*10)/10}},
-  {id:'sma', label:'Отклон. от SMA', hint:'цена vs средняя', unit:'%', periods:[50,200], def:{p:200,cmp:'ge',v:0,mode:'and'},
-    val:(t,p)=>{const r=rnd(hash(t+'sma'+p));return Math.round(((r()-0.45)*30)*10)/10}},
-  {id:'rsi', label:'RSI', hint:'перекуплен/перепродан', unit:'', periods:[14], def:{p:14,cmp:'le',v:70,mode:'or'},
-    val:(t)=>{const r=rnd(hash(t+'rsi'));return Math.round(20+r()*60)}},
-];
+// демо-сделка: значение метрики на входе
+function metricVal(t,id,p,i){
+  const r=rnd(hash(t+id+p+i));
+  if(id==='mom') return Math.round((r()-0.42)*60*10)/10;
+  if(id==='vol') return Math.round((8+r()*42)*10)/10;
+  if(id==='ath') return -Math.round(r()*r()*40*10)/10;
+  if(id==='xb')  return Math.round((r()-0.45)*36*10)/10;
+  if(id==='sma') return Math.round((r()-0.45)*30*10)/10;
+  if(id==='rsi') return Math.round(20+r()*60);
+  return 0;
+}
+// набор сделок по тикеру (даты 2016..2025), у каждой — все метрики на входе + форвардный результат
+function deals(t){
+  const r=rnd(hash(t+'deals')); const n=18+Math.floor(r()*22); const out=[];
+  for(let i=0;i<n;i++){
+    const y=2016+Math.floor(r()*10); const mo=1+Math.floor(r()*12); const d=1+Math.floor(r()*27);
+    const m={}; MID.forEach(id=>METRICS[id].periods.forEach(p=>m[key(id,p)]=metricVal(t,id,p,i)));
+    const fwd=Math.round((m['mom_63']*0.06 + (r()-0.48)*9)*10)/10; // форвардная изб. доходность, чуть связана с моментумом
+    out.push({t,date:y+'-'+String(mo).padStart(2,'0')+'-'+String(d).padStart(2,'0'),y,m,fwd});
+  }
+  return out.sort((a,b)=>a.date<b.date?-1:1);
+}
 
 let state = {
   group:'Сырьё',
-  rows: Object.fromEntries(METRICS.map(m=>[m.id,{on:m.id==='mom'||m.id==='vol', p:m.def.p, cmp:m.def.cmp, v:m.def.v, mode:m.def.mode}])),
+  universe: GROUPS['Сырьё'].slice(),
+  blocks: [ { conds:[ {id:'mom',p:63,cmp:'ge',val:10,not:false}, {id:'vol',p:21,cmp:'le',val:30,not:false} ] } ],
+  display: [ {id:'mom',p:63}, {id:'vol',p:21}, {id:'rsi',p:14} ],
+  view:'tickers',
 };
+const $=s=>document.querySelector(s);
+const cmpOk=(v,c,t)=> c==='ge'? v>=t : v<=t;
+function condOk(deal,c){ const ok=cmpOk(deal.m[key(c.id,c.p)],c.cmp,c.val); return c.not?!ok:ok; }
+function dealMatch(deal){
+  const blocks=state.blocks.filter(b=>b.conds.length);
+  if(!blocks.length) return true;
+  return blocks.some(b=> b.conds.every(c=>condOk(deal,c)));
+}
+function totalConds(){return state.blocks.reduce((a,b)=>a+b.conds.length,0)}
 
-const $ = s=>document.querySelector(s);
-const cmpOk = (val,cmp,thr)=> cmp==='ge' ? val>=thr : val<=thr;
-
-function renderGroups(){
+// ── рендер: вселенная ──
+function renderUni(){
   const el=$('#grp'); el.innerHTML='';
   Object.keys(GROUPS).forEach(g=>{
-    const b=document.createElement('button');
-    b.className='chip'+(state.group===g?' on':'');
+    const b=document.createElement('button'); b.className='chip'+(state.group===g?' on':'');
     b.innerHTML=g+'<span class="n">'+GROUPS[g].length+'</span>';
-    b.onclick=()=>{state.group=g;renderAll()};
+    b.onclick=()=>{state.group=g;state.universe=GROUPS[g].slice();$('#uni').value=state.universe.join(', ');renderAll()};
     el.appendChild(b);
   });
-  $('#grp-count').textContent=GROUPS[state.group].length+' инструментов';
+  if($('#uni').value.trim()==='') $('#uni').value=state.universe.join(', ');
+  $('#uni-count').textContent=state.universe.length+' тикеров';
 }
+function parseUni(){ state.universe=[...new Set($('#uni').value.toUpperCase().split(/[^A-Z0-9.\-]+/).filter(Boolean))]; state.group=''; renderAll(); }
 
-function renderMetrics(){
-  const host=$('#metrics'); host.innerHTML='';
-  METRICS.forEach(m=>{
-    const r=state.rows[m.id];
-    const row=document.createElement('div');
-    row.className='mrow '+(r.on?'on':'off');
-    // checkbox
-    const cb=document.createElement('input');cb.type='checkbox';cb.checked=r.on;cb.onchange=()=>{r.on=cb.checked;renderAll()};
-    const c1=document.createElement('div');c1.appendChild(cb);
-    // name
-    const c2=document.createElement('div');c2.className='nm';c2.innerHTML=m.label+'<small>'+m.hint+'</small>';
-    // period
-    const c3=document.createElement('div');c3.className='ctl';
-    if(m.periods.length>1){const s=document.createElement('select');m.periods.forEach(p=>{const o=document.createElement('option');o.value=p;o.textContent=p===0?'всё':p+'д';if(p===r.p)o.selected=true;s.appendChild(o)});s.onchange=()=>{r.p=+s.value;renderAll()};c3.appendChild(s)}
-    else{c3.innerHTML='<span class="sub" style="font-size:11px">'+(m.periods[0]===0?'—':m.periods[0]+'д')+'</span>'}
-    // comparator
-    const c4=document.createElement('div');c4.className='ctl';c4.innerHTML='<div class="seg"><button data-c="ge">≥</button><button data-c="le">≤</button></div>';
-    c4.querySelectorAll('button').forEach(b=>{if(b.dataset.c===r.cmp)b.classList.add('on');b.onclick=()=>{r.cmp=b.dataset.c;renderAll()}});
-    // value
-    const c5=document.createElement('div');c5.className='ctl';const inp=document.createElement('input');inp.className='val';inp.value=r.v;inp.inputMode='decimal';inp.onchange=()=>{const n=parseFloat(inp.value);if(!isNaN(n)){r.v=n;renderAll()}};c5.appendChild(inp);
-    // and/or
-    const c6=document.createElement('div');c6.className='ctl';c6.innerHTML='<div class="seg andor"><button data-m="and">И</button><button data-m="or">ИЛИ</button></div>';
-    c6.querySelectorAll('button').forEach(b=>{if(b.dataset.m===r.mode)b.classList.add('on');b.onclick=()=>{r.mode=b.dataset.m;renderAll()}});
-    [c1,c2,c3,c4,c5,c6].forEach(x=>row.appendChild(x));
-    host.appendChild(row);
+// ── рендер: конструктор условий ──
+function renderBlocks(){
+  const host=$('#blocks'); host.innerHTML='';
+  state.blocks.forEach((blk,bi)=>{
+    if(bi>0){const od=document.createElement('div');od.className='or-div';od.innerHTML='<span class="ln"></span><span class="pill">ИЛИ</span><span class="ln"></span>';host.appendChild(od)}
+    const box=document.createElement('div');box.className='block';
+    const h=document.createElement('div');h.className='block-h';
+    h.innerHTML='<span class="lbl">Блок '+(bi+1)+'</span>';
+    const del=document.createElement('span');del.className='x';del.textContent='удалить блок';del.onclick=()=>{state.blocks.splice(bi,1);if(!state.blocks.length)state.blocks.push({conds:[]});renderAll()};
+    h.appendChild(del); box.appendChild(h);
+    blk.conds.forEach((c,ci)=>{
+      const row=document.createElement('div');row.className='cond';
+      // НЕ
+      const not=document.createElement('button');not.className='nott'+(c.not?' on':'');not.textContent=c.not?'НЕ':'И';not.title='И / НЕ (инверсия)';not.onclick=()=>{c.not=!c.not;renderAll()};
+      // metric
+      const ms=document.createElement('select');MID.forEach(id=>{const o=document.createElement('option');o.value=id;o.textContent=METRICS[id].label;if(id===c.id)o.selected=true;ms.appendChild(o)});ms.onchange=()=>{c.id=ms.value;c.p=METRICS[c.id].periods.includes(c.p)?c.p:METRICS[c.id].periods[0];c.val=METRICS[c.id].def;renderAll()};
+      // period
+      const ps=document.createElement('select');METRICS[c.id].periods.forEach(p=>{const o=document.createElement('option');o.value=p;o.textContent=p===0?'всё':p+'д';if(p===c.p)o.selected=true;ps.appendChild(o)});ps.onchange=()=>{c.p=+ps.value;renderAll()};if(METRICS[c.id].periods.length<2)ps.disabled=true;
+      // cmp
+      const cmp=document.createElement('div');cmp.className='seg';cmp.innerHTML='<button data-c="ge">≥</button><button data-c="le">≤</button>';cmp.querySelectorAll('button').forEach(b=>{if(b.dataset.c===c.cmp)b.classList.add('on');b.onclick=()=>{c.cmp=b.dataset.c;renderAll()}});
+      // value
+      const inp=document.createElement('input');inp.className='val';inp.value=c.val;inp.inputMode='decimal';inp.onchange=()=>{const n=parseFloat(inp.value);if(!isNaN(n)){c.val=n;renderAll()}};
+      // remove
+      const rm=document.createElement('span');rm.className='x';rm.textContent='✕';rm.onclick=()=>{blk.conds.splice(ci,1);renderAll()};
+      [not,ms,ps,cmp,inp,rm].forEach(x=>row.appendChild(x)); box.appendChild(row);
+    });
+    const add=document.createElement('button');add.className='btn sm ghost';add.style.marginTop='8px';add.textContent='+ И условие';add.onclick=()=>{blk.conds.push({id:'mom',p:63,cmp:'ge',val:10,not:false});renderAll()};
+    box.appendChild(add); host.appendChild(box);
   });
-  const ands=METRICS.filter(m=>state.rows[m.id].on&&state.rows[m.id].mode==='and').length;
-  const ors=METRICS.filter(m=>state.rows[m.id].on&&state.rows[m.id].mode==='or').length;
-  $('#logic-note').innerHTML='Совпадение, если <b>все условия «И»</b> выполнены'+(ors?' <b>и</b> выполнено <b>хотя бы одно «ИЛИ»</b>':'')+'. Сейчас: И — '+ands+', ИЛИ — '+ors+'.';
 }
 
-function evalRow(metrics, r, m){ return cmpOk(metrics[m.id+'_'+r.p], r.cmp, r.v); }
+// ── рендер: отображаемые метрики ──
+function renderDisplay(){
+  const host=$('#dchips');host.innerHTML='';
+  const opts=[];MID.forEach(id=>METRICS[id].periods.forEach(p=>opts.push({id,p})));
+  opts.forEach(o=>{
+    const on=state.display.some(d=>d.id===o.id&&d.p===o.p);
+    const c=document.createElement('button');c.className='dc'+(on?' on':'');c.textContent=mlabel(o.id,o.p);
+    c.onclick=()=>{ if(on)state.display=state.display.filter(d=>!(d.id===o.id&&d.p===o.p)); else state.display.push(o); renderAll(); };
+    host.appendChild(c);
+  });
+}
+
+// ── рендер: таблица ──
+function cls(v){return v>0?'up':v<0?'down':'flat'}
+function fwdBar(v){const w=Math.min(50,Math.abs(v)*2.2);const col=v>=0?'var(--fk-up)':'var(--fk-down)';const side=v>=0?'left:50%':'right:50%';return '<span class="barpos"><span class="'+cls(v)+'">'+(v>0?'+':'')+v.toFixed(1)+'</span><span class="bar"><i style="'+side+';width:'+w+'%;background:'+col+'"></i></span></span>'}
 
 function renderTable(){
-  const enabled=METRICS.filter(m=>state.rows[m.id].on);
-  const tickers=GROUPS[state.group];
-  // считаем метрики
-  const rowsData=tickers.map(t=>{
-    const mm={};
-    METRICS.forEach(m=>{const r=state.rows[m.id];mm[m.id+'_'+r.p]=m.val(t,r.p)});
-    // логика И/ИЛИ
-    const andRows=enabled.filter(m=>state.rows[m.id].mode==='and');
-    const orRows=enabled.filter(m=>state.rows[m.id].mode==='or');
-    const andOk=andRows.every(m=>evalRow(mm,state.rows[m.id],m));
-    const orOk=orRows.length===0?true:orRows.some(m=>evalRow(mm,state.rows[m.id],m));
-    const hit=enabled.length>0 && andOk && orOk;
-    return {t,mm,hit};
-  });
-  // сорт: совпадения сверху, потом по первому включённому моментуму/метрике (по убыв.)
-  const sortKey = enabled[0] ? (state.rows[enabled[0].id].p) : null;
-  rowsData.sort((a,b)=> (b.hit-a.hit) || (enabled[0]? (b.mm[enabled[0].id+'_'+sortKey]-a.mm[enabled[0].id+'_'+sortKey]):0));
-
-  const cls=v=>v>0?'up':v<0?'down':'flat';
-  const fmt=(m,v)=> (m.unit==='%'||m.unit==='пп') ? (v>0?'+':'')+v.toFixed(1) : v.toFixed(0);
-  let head='<thead><tr><th class="l">Инструмент</th>';
-  METRICS.forEach(m=>{const r=state.rows[m.id];const lab=m.label+(r.p&&m.periods.length>1?(' '+r.p):'')+(r.on?' '+(r.cmp==='ge'?'≥':'≤')+r.v:'');head+='<th'+(r.on?' style="color:var(--fk-brand-700)"':'')+'>'+lab+'</th>'});
-  head+='<th>Совпадение</th></tr></thead>';
-  let body='<tbody>';
-  rowsData.forEach(rd=>{
-    body+='<tr'+(rd.hit?' class="hit"':'')+'>';
-    body+='<td class="l inst"><span class="sy">'+rd.t+'</span></td>';
-    METRICS.forEach(m=>{const r=state.rows[m.id];const v=rd.mm[m.id+'_'+r.p];const passed=r.on&&cmpOk(v,r.cmp,r.v);
-      body+='<td class="num '+cls(v)+'"><span'+(r.on?' class="'+(passed?'cond':'')+'" style="padding:2px 5px"':'')+'>'+fmt(m,v)+'</span></td>'});
-    body+='<td>'+(enabled.length? (rd.hit?'<span class="ok">✓ да</span>':'<span class="no">—</span>') : '<span class="no">нет условий</span>')+'</td>';
-    body+='</tr>';
-  });
-  body+='</tbody>';
-  $('#tbl').innerHTML=head+body;
-  const hits=rowsData.filter(r=>r.hit).length;
-  $('#match-count').textContent= enabled.length? (hits+' из '+tickers.length+' прошли условия') : 'включите метрики выше';
+  const allDeals=state.universe.flatMap(t=>deals(t));
+  const matched=allDeals.filter(dealMatch);
+  $('#match-count').textContent = totalConds()? (matched.length+' сделок прошли условия · '+new Set(matched.map(d=>d.t)).size+' тикеров') : 'добавьте условия (сейчас показаны все)';
+  const tbl=$('#tbl');
+  if(state.view==='tickers'){
+    const byT={};matched.forEach(d=>{(byT[d.t]=byT[d.t]||[]).push(d)});
+    const rows=Object.keys(byT).map(t=>{
+      const ds=byT[t];const avg=ds.reduce((a,d)=>a+d.fwd,0)/ds.length;const hit=ds.filter(d=>d.fwd>0).length/ds.length*100;
+      const disp=state.display.map(o=>ds.reduce((a,d)=>a+d.m[key(o.id,o.p)],0)/ds.length);
+      return {t,n:ds.length,avg,hit,disp};
+    }).sort((a,b)=>b.avg-a.avg);
+    let h='<thead><tr><th class="l">Тикер</th><th>Сделок</th>';
+    state.display.forEach(o=>h+='<th>'+mlabel(o.id,o.p)+'</th>');
+    h+='<th>Доля +</th><th>Ср. форвард</th></tr></thead><tbody>';
+    rows.forEach(r=>{h+='<tr onclick="openDrill(\'t\',\''+r.t+'\')"><td class="l"><span class="sy">'+r.t+'</span></td><td class="num">'+r.n+'</td>';
+      r.disp.forEach((v,i)=>{const o=state.display[i];h+='<td class="num '+cls(v)+'">'+(o.id==='rsi'?v.toFixed(0):(v>0?'+':'')+v.toFixed(1))+'</td>'});
+      h+='<td class="num">'+r.hit.toFixed(0)+'%</td><td>'+fwdBar(r.avg)+'</td></tr>';});
+    if(!rows.length)h+='<tr><td colspan="9" class="l" style="color:var(--fk-text-3);padding:20px">Ничего не прошло условия — ослабьте блоки.</td></tr>';
+    tbl.innerHTML=h+'</tbody>';
+  } else {
+    const byY={};matched.forEach(d=>{(byY[d.y]=byY[d.y]||[]).push(d)});
+    const years=Object.keys(byY).sort();
+    let h='<thead><tr><th class="l">Год</th><th>Сделок</th><th>Тикеров</th><th>Доля +</th><th>Ср. форвард</th></tr></thead><tbody>';
+    years.forEach(y=>{const ds=byY[y];const avg=ds.reduce((a,d)=>a+d.fwd,0)/ds.length;const hit=ds.filter(d=>d.fwd>0).length/ds.length*100;
+      h+='<tr onclick="openDrill(\'y\',\''+y+'\')"><td class="l"><span class="sy">'+y+'</span></td><td class="num">'+ds.length+'</td><td class="num">'+new Set(ds.map(d=>d.t)).size+'</td><td class="num">'+hit.toFixed(0)+'%</td><td>'+fwdBar(avg)+'</td></tr>';});
+    if(!years.length)h+='<tr><td colspan="5" class="l" style="color:var(--fk-text-3);padding:20px">Нет сделок.</td></tr>';
+    tbl.innerHTML=h+'</tbody>';
+  }
 }
 
-function renderAll(){renderGroups();renderMetrics();renderTable()}
+// ── провал внутрь сделок ──
+function openDrill(kind,kv){
+  const allDeals=state.universe.flatMap(t=>deals(t)).filter(dealMatch);
+  const ds=kind==='t'?allDeals.filter(d=>d.t===kv):allDeals.filter(d=>String(d.y)===kv);
+  const avg=ds.length?ds.reduce((a,d)=>a+d.fwd,0)/ds.length:0;const hit=ds.length?ds.filter(d=>d.fwd>0).length/ds.length*100:0;
+  const title=kind==='t'?(kv+' · сделки по тикеру'):('Год '+kv+' · сделки');
+  let rows='';
+  ds.sort((a,b)=>a.date<b.date?-1:1).forEach(d=>{
+    rows+='<tr><td class="l num">'+d.date+'</td>'+(kind==='y'?'<td class="l sy">'+d.t+'</td>':'')
+      +'<td class="num '+cls(d.m['mom_63'])+'">'+(d.m['mom_63']>0?'+':'')+d.m['mom_63']+'</td>'
+      +'<td class="num">'+d.m['vol_21']+'</td><td class="num">'+d.m['rsi_14']+'</td>'
+      +'<td>'+fwdBar(d.fwd)+'</td></tr>';
+  });
+  const head='<tr><th class="l">Дата</th>'+(kind==='y'?'<th class="l">Тикер</th>':'')+'<th>Моментум 63</th><th>Вола 21</th><th>RSI</th><th>Форвард</th></tr>';
+  $('#dr-root').innerHTML=
+    '<div class="scrim" onclick="closeDrill()"></div><div class="drawer">'
+    +'<div class="dr-h"><div><div style="font-size:15px;font-weight:700">'+title+'</div><div class="sub" style="margin-top:3px">матч-сделки по текущим условиям</div></div><span class="x" onclick="closeDrill()">✕</span></div>'
+    +'<div class="dr-b"><div class="statgrid"><div class="stat"><div class="k">Сделок</div><div class="v">'+ds.length+'</div></div>'
+    +'<div class="stat"><div class="k">Ср. форвард</div><div class="v '+cls(avg)+'">'+(avg>0?'+':'')+avg.toFixed(1)+'%</div></div>'
+    +'<div class="stat"><div class="k">Доля +</div><div class="v">'+hit.toFixed(0)+'%</div></div>'
+    +'<div class="stat"><div class="k">Тикеров</div><div class="v">'+new Set(ds.map(d=>d.t)).size+'</div></div></div>'
+    +'<table>'+head+'<tbody>'+rows+'</tbody></table></div></div>';
+}
+function closeDrill(){$('#dr-root').innerHTML=''}
+window.openDrill=openDrill;window.closeDrill=closeDrill;window.addBlock=()=>{state.blocks.push({conds:[{id:'rsi',p:14,cmp:'le',val:35,not:false}]});renderAll()};
+
+$('#uni').addEventListener('input',()=>{clearTimeout(window._u);window._u=setTimeout(parseUni,400)});
+$('#viewseg').querySelectorAll('button').forEach(b=>b.onclick=()=>{state.view=b.dataset.v;$('#viewseg').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));renderTable()});
+
+function renderAll(){renderUni();renderBlocks();renderDisplay();renderTable()}
 renderAll();
 </script>
 </body>
