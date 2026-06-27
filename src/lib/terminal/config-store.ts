@@ -8,11 +8,17 @@ export type TerminalConfig = {
   compare: { symbols: string[]; period: string };
   /** Корреляционная матрица: выбранные тикеры. */
   corr: { symbols: string[] };
+  /** Переопределения состава блоков-виджетов: blockId → список тикеров. Пусто = сид. */
+  blocks: Record<string, string[]>;
+  /** Вайт-лист (избранное): произвольные тикеры — задел под будущие фичи. */
+  watchlist: string[];
 };
 
 export const DEFAULT_CONFIG: TerminalConfig = {
   compare: { symbols: ['SPY', 'QQQ', 'DIA'], period: '1Г' },
   corr: { symbols: ['SPY', 'QQQ', 'MCHI', 'EWG', 'EWJ', 'GLD', 'SLV', 'URA', 'XLK', 'XLE', 'XLF'] },
+  blocks: {},
+  watchlist: [],
 };
 
 const KEY = 'default';
@@ -40,6 +46,19 @@ function sanitizeSymbols(v: unknown, max: number): string[] {
   return out;
 }
 
+/** Санитизирует карту переопределений блоков: blockId(slug) → валидные тикеры. */
+function sanitizeBlocks(v: unknown): Record<string, string[]> {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  const out: Record<string, string[]> = {};
+  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    const id = String(k).trim();
+    if (!id || !/^[a-z0-9_-]{1,40}$/i.test(id)) continue;
+    const syms = sanitizeSymbols(val, 24);
+    if (syms.length) out[id] = syms; // пустой оверрайд = «нет оверрайда» (вернётся сид)
+  }
+  return out;
+}
+
 /** Нормализует произвольный объект к валидному TerminalConfig, подставляя дефолты. */
 export function normalizeConfig(raw: any): TerminalConfig {
   const compareSyms = sanitizeSymbols(raw?.compare?.symbols, 12);
@@ -48,6 +67,8 @@ export function normalizeConfig(raw: any): TerminalConfig {
   return {
     compare: { symbols: compareSyms.length ? compareSyms : DEFAULT_CONFIG.compare.symbols, period },
     corr: { symbols: corrSyms.length ? corrSyms : DEFAULT_CONFIG.corr.symbols },
+    blocks: sanitizeBlocks(raw?.blocks),
+    watchlist: sanitizeSymbols(raw?.watchlist, 64),
   };
 }
 

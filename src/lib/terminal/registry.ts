@@ -103,6 +103,19 @@ export function instrumentDef(symbol: string): InstrumentDef | undefined {
   return BY_SYMBOL.get(symbol);
 }
 
+/**
+ * Накладывает пользовательские переопределения состава блоков (из серверного конфига)
+ * на сид-вселенную. Непустой оверрайд по blockId заменяет members; остальное — как в сиде.
+ * Кастомные тикеры без def подхватятся фолбэком в overview (title = symbol).
+ */
+export function applyBlockOverrides(overrides?: Record<string, string[]>): BlockDef[] {
+  if (!overrides) return SEED_BLOCKS;
+  return SEED_BLOCKS.map((b) => {
+    const ov = overrides[b.id];
+    return ov && ov.length ? { ...b, members: ov } : b;
+  });
+}
+
 /** Все уникальные символы вселенной (включая бенчмарки блоков) — для батч-загрузки цен. */
 export function allSymbols(blocks: BlockDef[] = SEED_BLOCKS): string[] {
   const set = new Set<string>();
