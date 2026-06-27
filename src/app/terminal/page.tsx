@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Delta, Sparkline, SegmentedControl, Badge, Skeleton } from '@/components/ui';
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { Delta, Sparkline, SegmentedControl, Badge, Skeleton, Modal, Button, Input, Spinner } from '@/components/ui';
 import type { CorrelationMatrix, InstrumentMetrics, MarketOverview, OverviewBlock } from '@/lib/terminal/types';
 
 const PCOLS: { key: number | 'ytd'; label: string }[] = [
@@ -13,7 +13,16 @@ const PCOLS: { key: number | 'ytd'; label: string }[] = [
 ];
 
 type Mode = 'abs' | 'excess';
-type TermConfig = { compare: { symbols: string[]; period: string }; corr: { symbols: string[] } };
+type TermConfig = {
+  compare: { symbols: string[]; period: string };
+  corr: { symbols: string[] };
+  blocks: Record<string, string[]>;
+  watchlist: string[];
+};
+type SearchItem = { symbol: string; name: string; exchange?: string; note?: string };
+
+const EMPTY_CFG: TermConfig = { compare: { symbols: ['SPY', 'QQQ', 'DIA'], period: '1Г' }, corr: { symbols: [] }, blocks: {}, watchlist: [] };
+const SYM_RE = /^[A-Z0-9.\-]{1,12}$/;
 
 const CPALETTE = ['#6d5bf0', '#3b82f6', '#f59e0b', '#12b981', '#ef4444', '#0ea5e9', '#ec4899', '#8b5cf6', '#14b8a6', '#d4a017', '#64748b', '#f97316'];
 function colorFor(sym: string): string {
@@ -86,8 +95,8 @@ export default function TerminalPage() {
       .catch((e) => alive && setErr(e.message || 'ошибка загрузки'));
     fetch('/api/market/config')
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('config'))))
-      .then((c) => alive && setCfg(c))
-      .catch(() => alive && setCfg({ compare: { symbols: ['SPY', 'QQQ', 'DIA'], period: '1Г' }, corr: { symbols: [] } }));
+      .then((c) => alive && setCfg({ ...EMPTY_CFG, ...c, blocks: c?.blocks ?? {}, watchlist: c?.watchlist ?? [] }))
+      .catch(() => alive && setCfg(EMPTY_CFG));
     return () => {
       alive = false;
     };
@@ -107,6 +116,58 @@ export default function TerminalPage() {
     if (!cfg) return;
     updateCfg({ ...cfg, compare: { ...cfg.compare, symbols: symbols.slice(0, 12) } });
     setTimeout(() => npfRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+  };
+
+  const addToCompare = (sym: string) => {
+    if (!cfg) return;
+    const syms = cfg.compare.symbols.includes(sym) ? cfg.compare.symbols : [...cfg.compare.symbols, sym].slice(0, 12);
+    updateCfg({ ...cfg, compare: { ...cfg.compare, symbols: syms } });
+    setSel(null);
+    setTimeout(() => npfRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+  };
+
+  // вайт-лист (избранное): тоггл одного тикера — мгновенно в UI + дебаунс-сохранение
+  const isFav = (sym: string) => cfg?.watchlist?.includes(sym) ?? false;
+  const toggleFav = (sym: string) => {
+    if (!cfg) return;
+    const next = cfg.watchlist.includes(sym) ? cfg.watchlist.filter((x) => x !== sym) : [...cfg.watchlist, sym];
+    updateCfg({ ...cfg, watchlist: next });
+  };
+
+  // открыть drawer по символу (из вайт-листа): ищем инструмент с метриками в любом блоке
+  const openSymbol = (sym: string) => {
+    if (!data) return;
+    for (const b of data.blocks) for (const c of b.instruments) if (c.def.symbol === sym && c.metrics) return setSel({ block: b, m: c.metrics, title: `${sym} · ${c.def.title}` });
+  };
+
+  // редактор состава виджета: немедленное сохранение конфига + пересчёт overview
+  const [editBlock, setEditBlock] = useState<OverviewBlock | null>(null);
+  const [busyBlock, setBusyBlock] = useState(false);
+  const reloadOverview = async () => {
+    try {
+      const r = await fetch('/api/market/overview', { cache: 'no-store' });
+      if (r.ok) setData(await r.json());
+    } catch {
+      /* оставляем предыдущие данные */
+    }
+  };
+  const saveBlockMembers = async (blockId: string, members: string[] | null) => {
+    if (!cfg) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current); // отменяем отложенное сохранение, чтобы не перезатёрло
+    const blocks = { ...cfg.blocks };
+    if (members && members.length) blocks[blockId] = members;
+    else delete blocks[blockId]; // пустой/сброс → возврат к сид-составу
+    const next = { ...cfg, blocks };
+    setCfg(next);
+    setBusyBlock(true);
+    try {
+      await fetch('/api/market/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(next) });
+      await reloadOverview();
+    } catch {
+      /* graceful */
+    }
+    setBusyBlock(false);
+    setEditBlock(null);
   };
 
   const spy = useMemo(() => {
@@ -187,6 +248,15 @@ export default function TerminalPage() {
       ) : (
         <>
           <RegimePulse data={data} movers={movers} />
+          {cfg && cfg.watchlist.length > 0 && (
+            <WatchlistBar
+              watchlist={cfg.watchlist}
+              instrMap={instrMap}
+              onOpen={openSymbol}
+              onRemove={toggleFav}
+              onCompareAll={() => loadBlockToCompare(cfg.watchlist)}
+            />
+          )}
           <div ref={npfRef} className="scroll-mt-3">
             {cfg && (
               <NormalizedPerformance
@@ -206,8 +276,11 @@ export default function TerminalPage() {
                 mode={mode}
                 cell={cell}
                 spy={spy}
+                isFav={isFav}
+                onToggleFav={toggleFav}
                 onPick={(m, title) => setSel({ block: b, m, title })}
                 onCompare={loadBlockToCompare}
+                onEdit={() => setEditBlock(b)}
               />
             ))}
           </div>
@@ -222,7 +295,19 @@ export default function TerminalPage() {
         </>
       )}
 
-      {sel && <DetailDrawer sel={sel} spy={spy} onClose={() => setSel(null)} />}
+      {sel && (
+        <DetailDrawer
+          sel={sel}
+          spy={spy}
+          isFav={isFav(sel.m.symbol)}
+          onToggleFav={() => toggleFav(sel.m.symbol)}
+          onAddCompare={() => addToCompare(sel.m.symbol)}
+          onClose={() => setSel(null)}
+        />
+      )}
+      {editBlock && (
+        <BlockEditor key={editBlock.def.id} block={editBlock} busy={busyBlock} onClose={() => !busyBlock && setEditBlock(null)} onSave={(members) => saveBlockMembers(editBlock.def.id, members)} />
+      )}
     </div>
   );
 }
@@ -312,20 +397,80 @@ function blockBreadth(bm: OverviewBlock['metrics']) {
     : `${bm.advancers}↑/${bm.decliners}↓`;
 }
 
+function FavStar({ on, onClick }: { on: boolean; onClick: (e: ReactMouseEvent) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={on ? 'Убрать из избранного' : 'В избранное'}
+      aria-pressed={on}
+      className={`flex-none rounded px-0.5 text-[13px] leading-none transition-opacity ${on ? 'opacity-100' : 'text-ink-3 opacity-30 hover:opacity-90'}`}
+      style={on ? { color: '#f59e0b' } : undefined}
+    >
+      {on ? '★' : '☆'}
+    </button>
+  );
+}
+
+// Полоска вайт-листа (избранное): чипы с дневным движением, клик → drawer, ✕ → убрать.
+function WatchlistBar({
+  watchlist,
+  instrMap,
+  onOpen,
+  onRemove,
+  onCompareAll,
+}: {
+  watchlist: string[];
+  instrMap: Map<string, { title: string; metrics: InstrumentMetrics | null }>;
+  onOpen: (sym: string) => void;
+  onRemove: (sym: string) => void;
+  onCompareAll: () => void;
+}) {
+  return (
+    <div className="mb-3.5 rounded-fk border border-line bg-surface-elev shadow-fk-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-3.5 py-3">
+        <div className="flex items-center gap-2.5">
+          <span className="text-[13px] font-bold text-ink"><span style={{ color: '#f59e0b' }}>★</span> Избранное</span>
+          <Badge>{watchlist.length}</Badge>
+        </div>
+        <button onClick={onCompareAll} className="rounded-fk-sm border border-line-strong px-2.5 py-1 text-[11px] font-semibold text-ink-2 hover:border-brand-100 hover:bg-brand-50 hover:text-brand-700" title="Загрузить избранное в график сравнения">↗ всё в сравнение</button>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 px-3.5 py-3">
+        {watchlist.map((sym) => {
+          const r1 = instrMap.get(sym)?.metrics?.returns[1] ?? null;
+          return (
+            <span key={sym} className="inline-flex items-center gap-1.5 rounded-fk-pill border border-line bg-surface-2 py-1 pl-2.5 pr-1 text-[12px] font-semibold">
+              <button type="button" className="hover:text-brand" onClick={() => onOpen(sym)} title="Открыть карточку">{sym}</button>
+              {r1 != null && <span className={`tabular-nums ${r1 >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{(r1 > 0 ? '+' : '') + r1.toFixed(1)}%</span>}
+              <span className="cursor-pointer rounded px-1 text-ink-3 hover:bg-line hover:text-down-strong" onClick={() => onRemove(sym)} title="Убрать из избранного">✕</span>
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function BlockCard({
   block,
   mode,
   cell,
   spy,
+  isFav,
+  onToggleFav,
   onPick,
   onCompare,
+  onEdit,
 }: {
   block: OverviewBlock;
   mode: Mode;
   cell: (m: InstrumentMetrics | null, key: number | 'ytd') => number | null;
   spy: InstrumentMetrics | null;
+  isFav: (sym: string) => boolean;
+  onToggleFav: (sym: string) => void;
   onPick: (m: InstrumentMetrics, title: string) => void;
   onCompare?: (symbols: string[]) => void;
+  onEdit?: () => void;
 }) {
   const spy63 = spy?.returns[63] ?? null;
   return (
@@ -343,14 +488,26 @@ function BlockCard({
           </button>
           {block.def.benchmark && <Badge variant="brand">бенч {block.def.benchmark}</Badge>}
         </div>
-        <span className="text-[11px] text-ink-3">{blockBreadth(block.metrics)}</span>
+        <div className="flex items-center gap-2.5">
+          <span className="hidden text-[11px] text-ink-3 sm:inline">{blockBreadth(block.metrics)}</span>
+          {onEdit && (
+            <button
+              type="button"
+              onClick={onEdit}
+              title="Редактировать состав тикеров"
+              className="rounded-fk-sm border border-line-strong px-2 py-0.5 text-[11px] font-semibold text-ink-2 hover:border-brand-100 hover:bg-brand-50 hover:text-brand-700"
+            >
+              ✎ тикеры
+            </button>
+          )}
+        </div>
       </div>
 
       {/* desktop: компактная таблица без горизонтального скролла */}
       <table className="hidden w-full border-collapse md:table">
         <thead>
           <tr className="text-[9.5px] uppercase tracking-wide text-ink-3">
-            <th className="py-1.5 pl-3.5 pr-1 text-left font-semibold">Инстр.</th>
+            <th className="py-1.5 pl-2.5 pr-1 text-left font-semibold">Инстр.</th>
             <th className="px-1 py-1.5 text-left font-semibold">тренд</th>
             {PCOLS.map((p) => (
               <th key={p.label} className="px-1 py-1.5 text-right font-semibold">{p.label}</th>
@@ -370,10 +527,11 @@ function BlockCard({
                 className="cursor-pointer border-b border-line text-[12px] last:border-0 hover:bg-surface-2"
                 onClick={() => m && onPick(m, `${c.def.symbol} · ${c.def.title}`)}
               >
-                <td className="py-1.5 pl-3.5 pr-1 text-left">
-                  <div className="flex min-w-0 items-center gap-2">
+                <td className="py-1.5 pl-2.5 pr-1 text-left">
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <FavStar on={isFav(c.def.symbol)} onClick={(e) => { e.stopPropagation(); onToggleFav(c.def.symbol); }} />
                     <span className="w-9 shrink-0 font-semibold">{c.def.symbol}</span>
-                    <span className="max-w-[74px] truncate text-[11px] text-ink-3" title={c.def.title}>{c.def.title}</span>
+                    <span className="max-w-[68px] truncate text-[11px] text-ink-3" title={c.def.title}>{c.def.title}</span>
                   </div>
                 </td>
                 <td className="px-1 py-1.5">{m ? <Sparkline data={m.spark} width={42} height={16} strokeWidth={1.4} /> : <span className="text-ink-3">—</span>}</td>
@@ -403,7 +561,8 @@ function BlockCard({
           return (
             <div key={c.def.symbol} className="cursor-pointer border-b border-line px-3.5 py-3 last:border-0 active:bg-surface-2" onClick={() => m && onPick(m, `${c.def.symbol} · ${c.def.title}`)}>
               <div className="flex items-center justify-between gap-2.5">
-                <div className="flex min-w-0 items-baseline gap-2">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <FavStar on={isFav(c.def.symbol)} onClick={(e) => { e.stopPropagation(); onToggleFav(c.def.symbol); }} />
                   <span className="text-[14px] font-bold">{c.def.symbol}</span>
                   <span className="truncate text-[12px] text-ink-3">{c.def.title}</span>
                 </div>
@@ -513,6 +672,122 @@ function CorrelationCard({ corr, groups, selected, onChange }: { corr: Correlati
         )}
       </div>
     </div>
+  );
+}
+
+// Редактор состава виджета: ручной ввод + поиск (по тикеру / AI-подбор). Хранится на сервере.
+function BlockEditor({ block, busy, onClose, onSave }: {
+  block: OverviewBlock;
+  busy: boolean;
+  onClose: () => void;
+  onSave: (members: string[] | null) => void;
+}) {
+  const [members, setMembers] = useState<string[]>(block.instruments.map((c) => c.def.symbol));
+  const [manual, setManual] = useState('');
+  const [q, setQ] = useState('');
+  const [mode, setMode] = useState<'symbol' | 'ai'>('symbol');
+  const [results, setResults] = useState<SearchItem[]>([]);
+  const [note, setNote] = useState<string | null>(null);
+  const [searching, setSearching] = useState(false);
+
+  const add = (sym: string) => {
+    const s = sym.trim().toUpperCase();
+    if (!s || !SYM_RE.test(s)) return;
+    setMembers((m) => (m.includes(s) ? m : [...m, s].slice(0, 24)));
+  };
+  const addManual = () => { manual.split(/[\s,]+/).forEach(add); setManual(''); };
+  const remove = (s: string) => setMembers((m) => m.filter((x) => x !== s));
+
+  const runSearch = async () => {
+    const query = q.trim();
+    if (!query) return;
+    setSearching(true);
+    setNote(null);
+    try {
+      const r = await fetch('/api/market/ticker-search', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query, mode }) });
+      const d = await r.json();
+      setResults(Array.isArray(d.items) ? d.items : []);
+      setNote(typeof d.note === 'string' ? d.note : null);
+    } catch {
+      setResults([]);
+      setNote('Ошибка поиска');
+    }
+    setSearching(false);
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      size="lg"
+      title={`Состав виджета · ${block.def.title.replace('Корзина: ', '')}`}
+      description={block.def.benchmark ? `Бенчмарк блока — ${block.def.benchmark} (не редактируется). Добавляйте тикеры вручную или через поиск.` : 'Добавляйте тикеры вручную или через поиск.'}
+      footer={
+        <div className="flex w-full items-center justify-between gap-2">
+          <Button variant="ghost" size="sm" onClick={() => onSave(null)} disabled={busy}>Сбросить к стандартным</Button>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={onClose} disabled={busy}>Отмена</Button>
+            <Button variant="primary" size="sm" onClick={() => onSave(members)} loading={busy} disabled={members.length === 0}>Сохранить</Button>
+          </div>
+        </div>
+      }
+    >
+      <div className="space-y-4">
+        {/* текущий состав */}
+        <div>
+          <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-ink-3">В виджете · {members.length}</div>
+          <div className="flex flex-wrap gap-1.5">
+            {members.map((s) => (
+              <span key={s} className="inline-flex items-center gap-1 rounded-fk-pill border border-line bg-surface-2 py-1 pl-2.5 pr-1 text-[12px] font-semibold">
+                {s}
+                <span className="cursor-pointer rounded px-1 text-ink-3 hover:bg-line hover:text-down-strong" onClick={() => remove(s)} title="Убрать">✕</span>
+              </span>
+            ))}
+            {members.length === 0 && <span className="text-[12px] text-ink-3">Пусто — добавьте хотя бы один тикер</span>}
+          </div>
+        </div>
+
+        {/* ручной ввод */}
+        <div>
+          <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-ink-3">Добавить вручную</div>
+          <div className="flex gap-2">
+            <Input value={manual} onChange={(e) => setManual(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addManual(); } }} placeholder="NVDA, AVGO, ASML…" className="flex-1" />
+            <Button variant="secondary" size="sm" onClick={addManual}>Добавить</Button>
+          </div>
+        </div>
+
+        {/* поиск: по тикеру / AI-подбор */}
+        <div>
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <span className="text-[11px] font-bold uppercase tracking-wide text-ink-3">Поиск тикеров</span>
+            <SegmentedControl size="sm" value={mode} onChange={(v) => setMode(v as 'symbol' | 'ai')} options={[{ label: 'По тикеру', value: 'symbol' }, { label: 'AI-подбор', value: 'ai' }]} />
+          </div>
+          <div className="flex gap-2">
+            <Input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); runSearch(); } }} placeholder={mode === 'ai' ? 'Тема: «уран и атомная энергетика»' : 'apple, semiconductors, GLD…'} className="flex-1" />
+            <Button variant="secondary" size="sm" onClick={runSearch} loading={searching}>{mode === 'ai' ? 'Подобрать' : 'Найти'}</Button>
+          </div>
+          {mode === 'ai' && <div className="mt-1 text-[11px] text-ink-3">AI только находит кандидатов — выбираете вы.</div>}
+          {note && <div className="mt-2 text-[12px] text-warn-strong">{note}</div>}
+          {searching && !results.length && <div className="mt-2 flex items-center gap-2 text-[12px] text-ink-3"><Spinner /> ищем…</div>}
+          {results.length > 0 && (
+            <div className="mt-2 max-h-56 overflow-auto rounded-fk border border-line">
+              {results.map((it) => {
+                const added = members.includes(it.symbol);
+                return (
+                  <div key={it.symbol} className="flex items-center gap-2 border-b border-line px-3 py-2 text-[12px] last:border-0">
+                    <span className="w-14 shrink-0 font-semibold">{it.symbol}</span>
+                    <span className="min-w-0 flex-1 truncate text-ink-2" title={it.name}>{it.name}</span>
+                    {it.exchange && <span className="shrink-0 text-[10px] uppercase text-ink-3">{it.exchange}</span>}
+                    {it.note && <span className="shrink-0 rounded bg-surface-2 px-1 text-[10px] text-ink-3">{it.note}</span>}
+                    <button onClick={() => add(it.symbol)} disabled={added} className={`shrink-0 rounded-fk-sm border px-2 py-0.5 text-[11px] font-semibold ${added ? 'border-line text-ink-3' : 'border-brand-100 bg-brand-50 text-brand-700 hover:bg-brand-100'}`}>{added ? '✓ в составе' : '＋ добавить'}</button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -711,10 +986,16 @@ function Chip({ k, v, tone }: { k: string; v: string; tone?: 'up' | 'down' | 'wa
 function DetailDrawer({
   sel,
   spy,
+  isFav,
+  onToggleFav,
+  onAddCompare,
   onClose,
 }: {
   sel: { block: OverviewBlock; m: InstrumentMetrics; title: string };
   spy: InstrumentMetrics | null;
+  isFav: boolean;
+  onToggleFav: () => void;
+  onAddCompare: () => void;
   onClose: () => void;
 }) {
   const m = sel.m;
@@ -821,8 +1102,14 @@ function DetailDrawer({
           </div>
 
           <div className="mt-5 flex flex-wrap gap-2">
-            <button className="rounded-fk-sm border border-line-strong bg-surface-elev px-3 py-1.5 text-[12px] font-semibold text-ink hover:bg-surface-2">＋ в сравнение</button>
-            <button className="rounded-fk-sm border border-line-strong bg-surface-elev px-3 py-1.5 text-[12px] font-semibold text-ink hover:bg-surface-2">📌 в watchlist</button>
+            <button onClick={onAddCompare} className="rounded-fk-sm border border-line-strong bg-surface-elev px-3 py-1.5 text-[12px] font-semibold text-ink hover:bg-surface-2">＋ в сравнение</button>
+            <button
+              onClick={onToggleFav}
+              className={`rounded-fk-sm border px-3 py-1.5 text-[12px] font-semibold ${isFav ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-line-strong bg-surface-elev text-ink hover:bg-surface-2'}`}
+              style={isFav ? { borderColor: '#fde68a', background: '#fffbeb', color: '#b45309' } : undefined}
+            >
+              {isFav ? '★ в избранном' : '☆ в избранное'}
+            </button>
           </div>
           {m.synthetic && <div className="mt-3 text-[11px] text-warn-strong">демо-данные (нет ключей провайдеров) — не рыночная картина</div>}
         </div>

@@ -93,4 +93,6 @@ export type MarketOverview = {
   regime: MarketRegime;
   correlation: CorrelationMatrix | null;
   synthetic: boolean; // в снапшоте есть синтетика → не показывать как рыночную картину
+  /** Сигнатура состава блоков на момент расчёта — для инвалидации снапшота при правке виджетов. */
+  cfgSig?: string;
 };

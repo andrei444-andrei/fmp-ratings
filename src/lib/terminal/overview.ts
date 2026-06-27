@@ -6,8 +6,9 @@ import { syntheticSeries } from '@/lib/research/metrics';
 import { logAppError } from '@/lib/app-errors';
 import { computeInstrumentMetrics, dailyLogReturns, annualizedVol, correlation, type Bar } from './metrics';
 import { computeBlockMetrics, averagePairwiseCorrelation, computeRegime } from './block-metrics';
-import { SEED_BLOCKS, SEED_INSTRUMENTS, instrumentDef, allSymbols } from './registry';
+import { SEED_BLOCKS, SEED_INSTRUMENTS, instrumentDef, allSymbols, applyBlockOverrides } from './registry';
 import { readSnapshot, writeSnapshot, isFresh } from './store';
+import { readConfig } from './config-store';
 import type { BlockDef, InstrumentMetrics, MarketOverview, OverviewBlock } from './types';
 
 const OVERVIEW_KEY = 'overview';
@@ -133,12 +134,25 @@ function maxAsOf(m: Map<string, InstrumentMetrics | null>): string {
   return mx || isoDaysAgo(0);
 }
 
-/** Snapshot-first: тёплый снапшот мгновенно; иначе считаем, кэшируем и отдаём. */
+/** Сигнатура состава блоков — меняется при правке тикеров виджета → снапшот промахивается. */
+function blocksSignature(blocks: BlockDef[]): string {
+  return blocks.map((b) => `${b.id}:${b.members.join(',')}`).join('|');
+}
+
+/**
+ * Snapshot-first: тёплый снапшот мгновенно; иначе считаем, кэшируем и отдаём.
+ * Учитывает пользовательские переопределения состава блоков (config-store): при правке
+ * виджета сигнатура меняется → кэш промахивается → пересчёт по новому составу.
+ */
 export async function getOverview(): Promise<MarketOverview> {
+  const cfg = await readConfig();
+  const blocks = applyBlockOverrides(cfg.blocks);
+  const sig = blocksSignature(blocks);
   const cached = await readSnapshot<MarketOverview>(OVERVIEW_KEY);
-  if (cached && isFresh(cached.refreshedAt)) return cached.payload;
+  if (cached && isFresh(cached.refreshedAt) && cached.payload.cfgSig === sig) return cached.payload;
   try {
-    const fresh = await computeOverview();
+    const fresh = await computeOverview(blocks);
+    fresh.cfgSig = sig;
     await writeSnapshot(OVERVIEW_KEY, fresh, fresh.asOf);
     return fresh;
   } catch (e: any) {
