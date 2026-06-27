@@ -76,6 +76,7 @@ export default function TerminalPage() {
   const [sel, setSel] = useState<{ block: OverviewBlock; m: InstrumentMetrics; title: string } | null>(null);
   const [cfg, setCfg] = useState<TermConfig | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const npfRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let alive = true;
@@ -99,6 +100,13 @@ export default function TerminalPage() {
     saveTimer.current = setTimeout(() => {
       fetch('/api/market/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(next) }).catch(() => {});
     }, 600);
+  };
+
+  // клик по заголовку блока → загрузить его инструменты в график сравнения и промотать к нему
+  const loadBlockToCompare = (symbols: string[]) => {
+    if (!cfg) return;
+    updateCfg({ ...cfg, compare: { ...cfg.compare, symbols: symbols.slice(0, 12) } });
+    setTimeout(() => npfRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
   };
 
   const spy = useMemo(() => {
@@ -179,18 +187,28 @@ export default function TerminalPage() {
       ) : (
         <>
           <RegimePulse data={data} movers={movers} />
-          {cfg && (
-            <NormalizedPerformance
-              instrMap={instrMap}
-              groups={groups}
-              symbols={cfg.compare.symbols}
-              period={cfg.compare.period}
-              onChange={(symbols, period) => updateCfg({ ...cfg, compare: { symbols, period } })}
-            />
-          )}
+          <div ref={npfRef} className="scroll-mt-3">
+            {cfg && (
+              <NormalizedPerformance
+                instrMap={instrMap}
+                groups={groups}
+                symbols={cfg.compare.symbols}
+                period={cfg.compare.period}
+                onChange={(symbols, period) => updateCfg({ ...cfg, compare: { symbols, period } })}
+              />
+            )}
+          </div>
           <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
             {data.blocks.map((b) => (
-              <BlockCard key={b.def.id} block={b} mode={mode} cell={cell} spy={spy} onPick={(m, title) => setSel({ block: b, m, title })} />
+              <BlockCard
+                key={b.def.id}
+                block={b}
+                mode={mode}
+                cell={cell}
+                spy={spy}
+                onPick={(m, title) => setSel({ block: b, m, title })}
+                onCompare={loadBlockToCompare}
+              />
             ))}
           </div>
           {data.correlation && cfg && (
@@ -300,19 +318,29 @@ function BlockCard({
   cell,
   spy,
   onPick,
+  onCompare,
 }: {
   block: OverviewBlock;
   mode: Mode;
   cell: (m: InstrumentMetrics | null, key: number | 'ytd') => number | null;
   spy: InstrumentMetrics | null;
   onPick: (m: InstrumentMetrics, title: string) => void;
+  onCompare?: (symbols: string[]) => void;
 }) {
   const spy63 = spy?.returns[63] ?? null;
   return (
     <div className="rounded-fk border border-line bg-surface-elev shadow-fk-sm">
       <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-line px-3.5 py-3">
         <div className="flex items-center gap-2.5">
-          <span className="text-[13px] font-bold text-ink">{block.def.title}</span>
+          <button
+            type="button"
+            onClick={() => onCompare?.(block.instruments.map((c) => c.def.symbol))}
+            title="Показать инструменты блока в графике сравнения"
+            className="group flex items-center gap-1.5 text-[13px] font-bold text-ink hover:text-brand"
+          >
+            {block.def.title}
+            <span className="text-[11px] font-normal text-ink-3 opacity-0 transition-opacity group-hover:opacity-100" aria-hidden>↗ сравнить</span>
+          </button>
           {block.def.benchmark && <Badge variant="brand">бенч {block.def.benchmark}</Badge>}
         </div>
         <span className="text-[11px] text-ink-3">{blockBreadth(block.metrics)}</span>
