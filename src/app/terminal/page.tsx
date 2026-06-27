@@ -763,7 +763,7 @@ function BlockEditor({ block, busy, onClose, onSave }: {
             <SegmentedControl size="sm" value={mode} onChange={(v) => setMode(v as 'symbol' | 'ai')} options={[{ label: 'По тикеру', value: 'symbol' }, { label: 'AI-подбор', value: 'ai' }]} />
           </div>
           <div className="flex gap-2">
-            <Input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); runSearch(); } }} placeholder={mode === 'ai' ? 'Тема: «уран и атомная энергетика»' : 'apple, semiconductors, GLD…'} className="flex-1" />
+            <Input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); runSearch(); } }} placeholder={mode === 'ai' ? 'Тема: «уран и атомная энергетика»' : 'AAPL, Apple, золото…'} className="flex-1" />
             <Button variant="secondary" size="sm" onClick={runSearch} loading={searching}>{mode === 'ai' ? 'Подобрать' : 'Найти'}</Button>
           </div>
           {mode === 'ai' && <div className="mt-1 text-[11px] text-ink-3">AI только находит кандидатов — выбираете вы.</div>}

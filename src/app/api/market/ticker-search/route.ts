@@ -2,7 +2,7 @@
 //   mode='symbol' — точный поиск по подстроке через FMP search-symbol (символ/имя/биржа);
 //   mode='ai'     — тематический подбор кандидатов LLM (находит, НЕ выбирает за пользователя).
 // Граждане без ключей: возвращаем пустой список + человекочитаемую заметку (graceful, §5).
-import { fmpSearchSymbol } from '@/lib/fmp';
+import { fmpSearchSymbol, fmpSearchName } from '@/lib/fmp';
 import { aimlChat, friendlyAimlError } from '@/lib/aimlapi';
 import { instrumentDef } from '@/lib/terminal/registry';
 import { logAppError } from '@/lib/app-errors';
@@ -22,34 +22,37 @@ function pickName(it: Item): Item {
   return def ? { ...it, name: def.title } : it;
 }
 
-/** FMP search-symbol → нормализованные кандидаты, US-листинги первыми. */
+/** FMP поиск по тикеру + по названию (merge) → нормализованные кандидаты, US-листинги первыми. */
 async function symbolSearch(query: string): Promise<{ items: Item[]; note?: string }> {
-  try {
-    const raw = await fmpSearchSymbol(query, 18);
-    const arr = Array.isArray(raw) ? raw : [];
-    const seen = new Set<string>();
-    const items: Item[] = [];
-    for (const r of arr) {
-      const symbol = String(r?.symbol ?? '').trim().toUpperCase();
-      if (!symbol || !SYM_RE.test(symbol) || seen.has(symbol)) continue;
-      seen.add(symbol);
-      const exchange = String(r?.exchangeShortName ?? r?.exchange ?? '').trim();
-      const currency = String(r?.currency ?? '').trim().toUpperCase();
-      items.push(
-        pickName({
-          symbol,
-          name: String(r?.name ?? symbol).trim() || symbol,
-          exchange: exchange || undefined,
-          note: currency && currency !== 'USD' ? currency : undefined,
-        }),
-      );
-    }
-    const usFirst = (it: Item) => (it.exchange && US_EXCH.has(it.exchange.toUpperCase()) ? 0 : 1);
-    items.sort((a, b) => usFirst(a) - usFirst(b));
-    return { items: items.slice(0, 16), note: items.length ? undefined : 'Ничего не найдено' };
-  } catch (e: any) {
-    return { items: [], note: 'Поиск по тикерам недоступен (нет ключа FMP)' };
+  // search-symbol матчит тикеры, search-name — названия компаний; объединяем оба источника.
+  const [r1, r2] = await Promise.allSettled([fmpSearchSymbol(query, 18), fmpSearchName(query, 18)]);
+  const bySym = r1.status === 'fulfilled' && Array.isArray(r1.value) ? r1.value : [];
+  const byName = r2.status === 'fulfilled' && Array.isArray(r2.value) ? r2.value : [];
+  if (r1.status === 'rejected' && r2.status === 'rejected') {
+    const msg = String((r1.reason && r1.reason.message) || r1.reason || '');
+    const noKey = /FMP_API_KEY is not set/.test(msg);
+    return { items: [], note: noKey ? 'Поиск по тикерам недоступен (нет ключа FMP)' : 'Поиск временно недоступен' };
   }
+  const seen = new Set<string>();
+  const items: Item[] = [];
+  for (const r of [...bySym, ...byName]) {
+    const symbol = String(r?.symbol ?? '').trim().toUpperCase();
+    if (!symbol || !SYM_RE.test(symbol) || seen.has(symbol)) continue;
+    seen.add(symbol);
+    const exchange = String(r?.exchangeShortName ?? r?.exchange ?? '').trim();
+    const currency = String(r?.currency ?? '').trim().toUpperCase();
+    items.push(
+      pickName({
+        symbol,
+        name: String(r?.name ?? symbol).trim() || symbol,
+        exchange: exchange || undefined,
+        note: currency && currency !== 'USD' ? currency : undefined,
+      }),
+    );
+  }
+  const usFirst = (it: Item) => (it.exchange && US_EXCH.has(it.exchange.toUpperCase()) ? 0 : 1);
+  items.sort((a, b) => usFirst(a) - usFirst(b));
+  return { items: items.slice(0, 16), note: items.length ? undefined : 'Ничего не найдено' };
 }
 
 /** Извлекает JSON-объект из ответа модели (терпимо к обёрткам/тексту). */
