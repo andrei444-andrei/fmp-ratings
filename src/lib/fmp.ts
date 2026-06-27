@@ -97,11 +97,20 @@ export async function fmpScreener(params: Record<string, string | number | boole
   return fmpGet(`${BASE_STABLE}/company-screener?${q.toString()}`);
 }
 
-// Поиск тикера по подстроке (symbol, name, exchange) — для строки поиска.
+// Поиск по ТИКЕРУ (префиксу символа) — для строки поиска.
 export async function fmpSearchSymbol(query: string, limit = 12) {
   const key = getFmpKey();
   return fmpGet(
     `${BASE_STABLE}/search-symbol?query=${encodeURIComponent(query)}` +
+    `&limit=${limit}&apikey=${encodeURIComponent(key)}`
+  );
+}
+
+// Поиск по НАЗВАНИЮ компании (search-symbol матчит только тикеры) — дополняет fmpSearchSymbol.
+export async function fmpSearchName(query: string, limit = 12) {
+  const key = getFmpKey();
+  return fmpGet(
+    `${BASE_STABLE}/search-name?query=${encodeURIComponent(query)}` +
     `&limit=${limit}&apikey=${encodeURIComponent(key)}`
   );
 }
