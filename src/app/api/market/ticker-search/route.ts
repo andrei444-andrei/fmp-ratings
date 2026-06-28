@@ -67,22 +67,49 @@ function extractJson(s: string): any {
   }
 }
 
-/** AI-подбор тематических тикеров (только находит — выбор за пользователем). */
-async function aiSearch(query: string): Promise<{ items: Item[]; note?: string }> {
+type Ctx = { title?: string; members?: string[] };
+
+/** Описание текущего состава виджета для контекста LLM: «EWG (Германия), EWJ (Япония)…». */
+function describeMembers(members: string[]): string {
+  return members
+    .map((s) => {
+      const d = instrumentDef(s);
+      return d ? `${s} (${d.title})` : s;
+    })
+    .join(', ');
+}
+
+/**
+ * AI-подбор тематических тикеров (только находит — выбор за пользователем).
+ * Учитывает КОНТЕКСТ виджета (тема + текущий состав): подбирает инструменты того же
+ * типа, не повторяет уже добавленные — иначе модель скатывается к широким/нерелевантным ETF.
+ */
+async function aiSearch(query: string, ctx: Ctx): Promise<{ items: Item[]; note?: string }> {
+  const members = (ctx.members ?? []).map((s) => s.toUpperCase());
+  const exclude = new Set(members);
+  const userParts = [
+    ctx.title ? `Виджет: «${ctx.title}».` : '',
+    members.length ? `Уже в составе (${members.length}): ${describeMembers(members)}.` : '',
+    `Запрос пользователя: ${query}`,
+    'Предложи до 12 НОВЫХ релевантных тикеров (не повторяй уже добавленные).',
+  ].filter(Boolean);
   try {
     const content = await aimlChat({
-      max_tokens: 700,
+      max_tokens: 800,
       temperature: 0.2,
       response_format: { type: 'json_object' },
       messages: [
         {
           role: 'system',
           content:
-            'Ты помогаешь подобрать биржевые тикеры для виджета рыночного терминала. ' +
-            'Возвращай ТОЛЬКО реальные, существующие тикеры, котирующиеся на биржах США (NYSE/Nasdaq/NYSE Arca) — ETF или акции. ' +
-            'Не выдумывай тикеры. Формат ответа строго JSON: {"items":[{"symbol":"AAPL","name":"Apple Inc."}]} (до 12 штук, без пояснений).',
+            'Ты подбираешь биржевые тикеры для КОНКРЕТНОГО виджета рыночного терминала. Правила:\n' +
+            '1) Только реальные тикеры, котирующиеся на биржах США (NYSE/Nasdaq/NYSE Arca) — ETF или акции. Не выдумывай.\n' +
+            '2) Подбирай инструменты ТОГО ЖЕ ТИПА и темы, что уже в виджете. Если это ETF отдельных стран — предлагай ETF ДРУГИХ отдельных стран (EWA, EWQ, EWT, EWL, EWP…), а НЕ широкие/региональные/мультистрановые/облигационные корзины (EFA, EEM, VWO, AGG и т.п.). Если секторные ETF США — другие секторные. И так далее.\n' +
+            '3) НЕ повторяй тикеры, которые уже в составе.\n' +
+            '4) Ранжируй по релевантности запросу и теме виджета.\n' +
+            'Формат строго JSON: {"items":[{"symbol":"EWQ","name":"iShares MSCI France ETF"}]} — без пояснений.',
         },
-        { role: 'user', content: `Запрос/тема: ${query}` },
+        { role: 'user', content: userParts.join(' ') },
       ],
     });
     const parsed = extractJson(content);
@@ -91,15 +118,23 @@ async function aiSearch(query: string): Promise<{ items: Item[]; note?: string }
     const items: Item[] = [];
     for (const r of rawItems) {
       const symbol = String(r?.symbol ?? '').trim().toUpperCase();
-      if (!symbol || !SYM_RE.test(symbol) || seen.has(symbol)) continue;
+      if (!symbol || !SYM_RE.test(symbol) || seen.has(symbol) || exclude.has(symbol)) continue;
       seen.add(symbol);
       items.push(pickName({ symbol, name: String(r?.name ?? symbol).trim() || symbol, note: 'AI' }));
       if (items.length >= 12) break;
     }
-    return { items, note: items.length ? undefined : 'AI не вернул кандидатов' };
+    return { items, note: items.length ? undefined : 'AI не вернул новых кандидатов' };
   } catch (e: any) {
     return { items: [], note: friendlyAimlError(e) };
   }
+}
+
+function parseCtx(raw: any): Ctx {
+  const title = typeof raw?.title === 'string' ? raw.title.slice(0, 80) : undefined;
+  const members = Array.isArray(raw?.members)
+    ? raw.members.map((x: unknown) => String(x ?? '').trim().toUpperCase()).filter((s: string) => SYM_RE.test(s)).slice(0, 40)
+    : [];
+  return { title, members };
 }
 
 export async function POST(req: Request) {
@@ -108,7 +143,7 @@ export async function POST(req: Request) {
     const query = String(body?.query ?? '').trim().slice(0, 120);
     const mode = body?.mode === 'ai' ? 'ai' : 'symbol';
     if (!query) return Response.json({ items: [], note: 'Пустой запрос' });
-    const res = mode === 'ai' ? await aiSearch(query) : await symbolSearch(query);
+    const res = mode === 'ai' ? await aiSearch(query, parseCtx(body?.context)) : await symbolSearch(query);
     return Response.json(res);
   } catch (e: any) {
     await logAppError({ route: '/api/market/ticker-search', message: e?.message || 'search failed', stack: e?.stack });
