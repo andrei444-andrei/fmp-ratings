@@ -6,8 +6,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './researcher.css';
 import {
-  screenByTicker, screenByYear, screenDeals, dealStats, totalConds,
-  type ScreenPanel, type Block, type Cmp, type Formulas, type CellFn,
+  screenByTicker, screenByYear, screenDeals, screenAllDeals, dealStats,
+  type ScreenPanel, type Block, type Cmp, type Formulas, type CellFn, type Deal,
 } from '@/lib/signals/screen';
 import { compileFormula } from '@/lib/signals/formula';
 
@@ -91,7 +91,9 @@ export default function Researcher() {
     { id: 'f0', name: 'avgMom3', expr: 'avg(momentum[21], momentum[63], momentum[126])', savedName: 'avgMom3', savedExpr: 'avg(momentum[21], momentum[63], momentum[126])' },
   ]);
   const [display, setDisplay] = useState<string[]>(['momentum_63', 'vol_21', 'rsi_14', 'avgMom3']);
-  const [view, setView] = useState<'tickers' | 'years'>('tickers');
+  const [view, setView] = useState<'all' | 'tickers' | 'years'>('all');
+  const [rf, setRf] = useState({ minN: 0, minHit: 0, minRet: -1e9 }); // realtime-фильтры результата
+  const [chartCol, setChartCol] = useState<string>(''); // метрика для графика ('' = авто по первому условию)
   const [panel, setPanel] = useState<ScreenPanel | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
@@ -152,11 +154,22 @@ export default function Researcher() {
   const minYear = lastYear != null ? lastYear - years + 1 : undefined;
 
   const blk = blocks as Block[];
-  const byT = useMemo(() => (panel ? screenByTicker(panel, blk, display, minYear, fmap) : []), [panel, blocks, display, minYear, fmap]); // eslint-disable-line react-hooks/exhaustive-deps
-  const byY = useMemo(() => (panel ? screenByYear(panel, blk, minYear, fmap) : []), [panel, blocks, minYear, fmap]); // eslint-disable-line react-hooks/exhaustive-deps
-  const matchedN = byY.reduce((a, y) => a + y.n, 0);
+  const byTraw = useMemo(() => (panel ? screenByTicker(panel, blk, display, minYear, fmap) : []), [panel, blocks, display, minYear, fmap]); // eslint-disable-line react-hooks/exhaustive-deps
+  const byYraw = useMemo(() => (panel ? screenByYear(panel, blk, minYear, fmap) : []), [panel, blocks, minYear, fmap]); // eslint-disable-line react-hooks/exhaustive-deps
+  const allDeals = useMemo(() => (panel ? screenAllDeals(panel, blk, minYear, fmap) : []), [panel, blocks, minYear, fmap]); // eslint-disable-line react-hooks/exhaustive-deps
+  const consol = useMemo(() => dealStats(allDeals), [allDeals]);
+  // realtime-фильтры результата (мгновенно, поверх агрегатов строк)
+  const passRf = (r: { n: number; hitPct: number; avgRet: number }) => r.n >= rf.minN && r.hitPct >= rf.minHit && r.avgRet >= rf.minRet;
+  const byT = byTraw.filter(passRf);
+  const byY = byYraw.filter(passRf);
+  const matchedN = consol.n;
   const setB = (f: (b: UBlock[]) => UBlock[]) => setBlocks((prev) => f(structuredClone(prev)));
   const tColSpan = 9 + display.length;
+  // Метрика для графика: выбранная (если валидна) → первое условие → первый столбец.
+  const condCols = [...new Set(blk.flatMap((b) => b.conds.map((c) => c.col)))];
+  const chartOpts = [...new Set([...condCols, ...display])];
+  const chartMetric = (chartCol && chartOpts.includes(chartCol)) ? chartCol : (condCols[0] || display[0] || 'momentum_63');
+  const chartThresholds = blk.flatMap((b) => b.conds).filter((c) => c.col === chartMetric).map((c) => ({ cmp: c.cmp, val: c.val }));
 
   const outHead = (
     <>
@@ -346,19 +359,49 @@ export default function Researcher() {
       {/* 5. Результаты */}
       <div className="card">
         <div className="card-b">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
             <span className="card-t">5 · Результаты</span>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-              <span className="sub">{!panel ? '' : totalConds(blk) ? `${matchedN} сделок прошли · ${byT.length} тикеров` : `все сделки (${matchedN})`}</span>
+              <span className="sub">{!panel ? '' : view === 'all' ? `${consol.n} сделок · ${consol.tickers} тикеров`
+                : view === 'tickers' ? `${matchedN} сделок · ${byT.length}${byT.length !== byTraw.length ? `/${byTraw.length}` : ''} тикеров`
+                : `${matchedN} сделок · ${byY.length}${byY.length !== byYraw.length ? `/${byYraw.length}` : ''} лет`}</span>
               <div className="seg" style={{ width: 'auto' }}>
-                {(['tickers', 'years'] as const).map((v) => <button key={v} className={view === v ? 'on' : ''} onClick={() => setView(v)} style={{ padding: '4px 10px' }}>{v === 'tickers' ? 'По тикерам' : 'По годам'}</button>)}
+                {(['all', 'tickers', 'years'] as const).map((v) => <button key={v} className={view === v ? 'on' : ''} onClick={() => setView(v)} style={{ padding: '4px 10px' }}>{v === 'all' ? 'Сводно' : v === 'tickers' ? 'По тикерам' : 'По годам'}</button>)}
               </div>
             </div>
           </div>
-          <div style={{ overflowX: 'auto' }}>
-            {!panel ? (
-              <p className="sub" style={{ textAlign: 'center', padding: '36px 0' }}>{loading ? 'Загружаю панель сделок…' : 'Выберите вселенную.'}</p>
-            ) : view === 'tickers' ? (
+
+          {/* realtime-фильтры строк результата (тикеры/годы) */}
+          {panel && view !== 'all' && (
+            <div className="rfbar">
+              <span className="lbl">Фильтр строк:</span>
+              <label>сделок ≥ <input className="rfin" type="number" min={0} value={rf.minN} onChange={(e) => setRf((s) => ({ ...s, minN: Math.max(0, Math.floor(+e.target.value || 0)) }))} /></label>
+              <label>доля + ≥ <input className="rfin" type="number" min={0} max={100} value={rf.minHit} onChange={(e) => setRf((s) => ({ ...s, minHit: +e.target.value || 0 }))} />%</label>
+              <label>ср.return ≥ <input className="rfin" type="number" value={rf.minRet <= -1e8 ? '' : rf.minRet} placeholder="—" onChange={(e) => setRf((s) => ({ ...s, minRet: e.target.value === '' ? -1e9 : (+e.target.value || 0) }))} /></label>
+              {(rf.minN || rf.minHit || rf.minRet > -1e8) ? <button className="btn sm ghost" onClick={() => setRf({ minN: 0, minHit: 0, minRet: -1e9 })}>сброс</button> : null}
+            </div>
+          )}
+
+          {!panel ? (
+            <p className="sub" style={{ textAlign: 'center', padding: '36px 0' }}>{loading ? 'Загружаю панель сделок…' : 'Выберите вселенную.'}</p>
+          ) : view === 'all' ? (
+            <div>
+              <div className="statgrid cons">
+                {([['Сделок', String(consol.n), ''], ['Тикеров', String(consol.tickers), ''], ['Доля +', consol.hitPct.toFixed(0) + '%', ''], ['Ср. return', fnum(consol.avgRet) + '%', cls(consol.avgRet)],
+                  ['Медиана', fnum(consol.medRet) + '%', cls(consol.medRet)], ['Просадка', fnum(consol.avgMdd) + '%', 'down'], ['MAE', fnum(consol.avgMae) + '%', 'down'], ['MFE', fnum(consol.avgMfe) + '%', 'up'],
+                  ['vs SPY', fnum(consol.avgExc) + '%', cls(consol.avgExc)], ['Период', allDeals.length ? `${allDeals[0].date} … ${allDeals[allDeals.length - 1].date}` : '—', '']] as [string, string, string][]).map(([k, v, t]) => (
+                  <div className="stat" key={k}><div className="k">{k}</div><div className={`v ${t}`}>{v}</div></div>
+                ))}
+              </div>
+              <div className="chart-head">
+                <span className="card-t">График сделок</span>
+                <label className="sub">метрика по Y: <select value={chartMetric} onChange={(e) => setChartCol(e.target.value)}>{chartOpts.map((k) => <option key={k} value={k}>{colLabel(k)}</option>)}</select></label>
+              </div>
+              <DealChart deals={allDeals} metric={chartMetric} label={colLabel(chartMetric)} thresholds={chartThresholds} />
+              <p className="sub" style={{ marginTop: 6 }}>Точка = сделка: X — дата входа (периоды сделок), Y — «{colLabel(chartMetric)}»; <span className="up">зелёная</span>/<span className="down">красная</span> — знак форварда; пунктир — порог условия.</p>
+            </div>
+          ) : view === 'tickers' ? (
+            <div style={{ overflowX: 'auto' }}>
               <table>
                 <thead><tr><th className="l">Тикер</th><th>Сделок</th>{display.map((k) => <th key={k}>{colLabel(k)}</th>)}{outHead}</tr></thead>
                 <tbody>
@@ -369,10 +412,12 @@ export default function Researcher() {
                       {outCells(r)}
                     </tr>
                   ))}
-                  {!byT.length && <tr><td className="l sub" colSpan={tColSpan} style={{ padding: 20 }}>Ничего не прошло условия — ослабьте блоки или расширьте окно лет.</td></tr>}
+                  {!byT.length && <tr><td className="l sub" colSpan={tColSpan} style={{ padding: 20 }}>{byTraw.length ? 'Все строки отсеяны фильтром — ослабьте фильтр строк.' : 'Ничего не прошло условия — ослабьте блоки или расширьте окно лет.'}</td></tr>}
                 </tbody>
               </table>
-            ) : (
+            </div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
               <table>
                 <thead><tr><th className="l">Год</th><th>Сделок</th><th>Тикеров</th>{outHead}</tr></thead>
                 <tbody>
@@ -382,11 +427,11 @@ export default function Researcher() {
                       {outCells(y)}
                     </tr>
                   ))}
-                  {!byY.length && <tr><td className="l sub" colSpan={10} style={{ padding: 20 }}>Нет сделок в окне лет.</td></tr>}
+                  {!byY.length && <tr><td className="l sub" colSpan={10} style={{ padding: 20 }}>{byYraw.length ? 'Все строки отсеяны фильтром.' : 'Нет сделок в окне лет.'}</td></tr>}
                 </tbody>
               </table>
-            )}
-          </div>
+            </div>
+          )}
           {panel && <p className="foot">Клик по строке → провал внутрь сделок. Панель: {panel.meta?.obs} сделок, {panel.symbols.length} тикеров, {panel.meta?.first} … {panel.meta?.last} · форвард {panel.horizon}д · окно {years} лет{minYear ? ` (с ${minYear})` : ''}.</p>}
         </div>
       </div>
@@ -442,6 +487,55 @@ function Drawer({ panel, blocks, drill, horizon, minYear, formulas, display, col
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// График сделок: scatter (X — дата входа, Y — значение метрики отбора), цвет — знак форварда,
+// пунктир — пороги условий по этой метрике. Чистый SVG, без зависимостей.
+function DealChart({ deals, metric, label, thresholds }: { deals: Deal[]; metric: string; label: string; thresholds: { cmp: 'ge' | 'le'; val: number }[] }) {
+  const pts = deals
+    .map((d) => ({ t: Date.parse(d.date + 'T00:00:00Z'), y: d.vals[metric] as number | null, ret: d.ret }))
+    .filter((p) => Number.isFinite(p.t) && p.y != null && Number.isFinite(p.y)) as { t: number; y: number; ret: number }[];
+  if (pts.length < 2) return <p className="sub" style={{ padding: '20px 0' }}>Недостаточно сделок с метрикой «{label}» для графика.</p>;
+  const W = 920, H = 300, mL = 48, mR = 16, mT = 14, mB = 26;
+  const iw = W - mL - mR, ih = H - mT - mB;
+  const ts = pts.map((p) => p.t), ys = pts.map((p) => p.y);
+  const thr = thresholds.map((t) => t.val);
+  const t0 = Math.min(...ts), t1 = Math.max(...ts);
+  let ymin = Math.min(...ys, ...thr), ymax = Math.max(...ys, ...thr);
+  if (ymin === ymax) { ymin -= 1; ymax += 1; }
+  const padY = (ymax - ymin) * 0.08; ymin -= padY; ymax += padY;
+  const X = (t: number) => mL + (t1 === t0 ? iw / 2 : ((t - t0) / (t1 - t0)) * iw);
+  const Y = (v: number) => mT + ((ymax - v) / (ymax - ymin)) * ih;
+  const y0 = new Date(t0).getUTCFullYear(), y1 = new Date(t1).getUTCFullYear();
+  const years: number[] = []; for (let yy = y0; yy <= y1; yy++) years.push(yy);
+  const step = Math.ceil(years.length / 12);
+  const yticks = [ymin, (ymin + ymax) / 2, ymax];
+  const line = 'var(--fk-line)', line2 = 'var(--fk-line-strong)', t3 = 'var(--fk-text-3)', brand = 'var(--fk-brand-700,#2563eb)';
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <svg width={W} height={H} style={{ display: 'block' }}>
+        {yticks.map((v, i) => (
+          <g key={`y${i}`}>
+            <line x1={mL} x2={W - mR} y1={Y(v)} y2={Y(v)} style={{ stroke: line }} />
+            <text x={mL - 6} y={Y(v) + 3} textAnchor="end" fontSize="10" style={{ fill: t3 }}>{v.toFixed(1)}</text>
+          </g>
+        ))}
+        {ymin < 0 && ymax > 0 && <line x1={mL} x2={W - mR} y1={Y(0)} y2={Y(0)} style={{ stroke: line2 }} />}
+        {thresholds.map((t, i) => (
+          <g key={`t${i}`}>
+            <line x1={mL} x2={W - mR} y1={Y(t.val)} y2={Y(t.val)} style={{ stroke: brand }} strokeDasharray="5 4" />
+            <text x={W - mR} y={Y(t.val) - 3} textAnchor="end" fontSize="10" style={{ fill: brand }}>{(t.cmp === 'ge' ? '≥ ' : '≤ ') + t.val}</text>
+          </g>
+        ))}
+        {years.filter((yy) => (yy - y0) % step === 0).map((yy) => (
+          <text key={`x${yy}`} x={X(Date.parse(`${yy}-01-01T00:00:00Z`))} y={H - 8} textAnchor="middle" fontSize="10" style={{ fill: t3 }}>{yy}</text>
+        ))}
+        {pts.map((p, i) => (
+          <circle key={i} cx={X(p.t)} cy={Y(p.y)} r={2.6} style={{ fill: p.ret > 0 ? 'var(--fk-up,#12b981)' : 'var(--fk-down,#f43f5e)', fillOpacity: 0.72 }} />
+        ))}
+      </svg>
     </div>
   );
 }
