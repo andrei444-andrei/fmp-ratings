@@ -109,7 +109,7 @@ function RRGChart({ items }: { items: RotationItem[] }) {
   if (!items.length) return <div className="px-2 py-10 text-center text-[12px] text-ink-3">Нет данных</div>;
 
   const S = 360;
-  const pad = 30;
+  const pad = 22;
   // независимый автоскейл по осям (выброс не сжимает кластер), 100 всегда внутри домена
   const xsAll = items.flatMap((it) => it.tail.map((p) => p.x));
   const ysAll = items.flatMap((it) => it.tail.map((p) => p.y));
@@ -147,20 +147,24 @@ function RRGChart({ items }: { items: RotationItem[] }) {
 
   const hovItem = hov ? items.find((it) => it.symbol === hov) ?? null : null;
 
+  const ranked = [...items].sort((a, b) => b.rsRatio - a.rsRatio);
+
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <span className="text-[11px] text-ink-3">{playing ? 'проигрываю ротацию…' : 'наведи на сектор · ▶ повтор'}</span>
+    <div className="flex flex-col gap-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] text-ink-3">{playing ? 'проигрываю ротацию…' : 'наведи на строку/точку · ▶ повтор'}</span>
         <button
           type="button"
           onClick={play}
           disabled={playing}
           className="rounded-fk-sm border border-line-strong px-2.5 py-1 text-[11px] font-semibold text-ink-2 hover:border-brand-100 hover:bg-brand-50 hover:text-brand-700 disabled:opacity-50"
         >
-          ▶ проиграть ротацию
+          ▶ проиграть
         </button>
       </div>
-      <svg viewBox={`0 0 ${S} ${S}`} width="100%" className="block" style={{ maxHeight: 380 }} fontFamily="inherit">
+      {/* плотная компоновка: график + рейтинг-таблица заполняют ширину */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_188px]">
+      <svg viewBox={`0 0 ${S} ${S}`} width="100%" className="block self-start" style={{ maxHeight: 340 }} fontFamily="inherit">
         {/* quadrant fills */}
         <rect x={cx} y={pad} width={S - pad - cx} height={cy - pad} fill="#12b981" opacity="0.06" />
         <rect x={cx} y={cy} width={S - pad - cx} height={S - pad - cy} fill="#f59e0b" opacity="0.06" />
@@ -242,14 +246,32 @@ function RRGChart({ items }: { items: RotationItem[] }) {
         })()}
         <text x={S - pad} y={S - 6} textAnchor="end" fontSize="9" fill="#8b95a7">RS-Ratio →</text>
       </svg>
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
-        {(['leading', 'improving', 'weakening', 'lagging'] as const).map((q) => (
-          <span key={q} className="inline-flex items-center gap-1.5 text-ink-2">
-            <span className="h-2.5 w-2.5 rounded-full" style={{ background: QC[q].c }} />
-            {QC[q].label}
-            <span className="text-ink-3">{items.filter((i) => i.quadrant === q).map((i) => i.symbol).join(' ') || '—'}</span>
-          </span>
-        ))}
+
+      {/* рейтинг-таблица справа — заполняет пространство данными, синхронизирована с графиком */}
+      <div className="overflow-hidden rounded-fk-sm border border-line text-[11.5px] self-start">
+        <div className="grid grid-cols-[1fr_auto_auto] gap-x-2 bg-surface-2 px-2 py-1 text-[9px] uppercase tracking-wide text-ink-3">
+          <span>сектор</span><span className="text-right">RS</span><span className="text-right">mom</span>
+        </div>
+        {ranked.map((it) => {
+          const on = hov === it.symbol;
+          const momUp = it.rsMomentum >= 100;
+          return (
+            <div
+              key={it.symbol}
+              onMouseEnter={() => startHover(it.symbol)}
+              onMouseLeave={endHover}
+              className={`grid cursor-pointer grid-cols-[1fr_auto_auto] items-center gap-x-2 border-t border-line px-2 py-[3px] ${on ? 'bg-brand-50' : 'hover:bg-surface-2'}`}
+            >
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="h-2 w-2 flex-none rounded-full" style={{ background: QC[it.quadrant].c }} />
+                <b className="text-ink">{it.symbol}</b>
+              </span>
+              <span className="text-right tabular-nums">{it.rsRatio.toFixed(1)}</span>
+              <span className={`text-right tabular-nums ${momUp ? 'text-up-strong' : 'text-down-strong'}`}>{momUp ? '▲' : '▼'}{Math.abs(it.rsMomentum - 100).toFixed(1)}</span>
+            </div>
+          );
+        })}
+      </div>
       </div>
       <details className="text-[11px] text-ink-3">
         <summary className="cursor-pointer select-none hover:text-ink-2">ℹ как считается</summary>
