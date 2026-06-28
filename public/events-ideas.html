@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Радар событий — 3 прототипа отображения</title>
+<style>
+  :root{
+    --bg:#f5f6fb; --surface:#fff; --ink:#0f1729; --ink2:#46506a; --ink3:#8b95a7;
+    --line:#e8ebf2; --line2:#d7dce6; --brand:#6d5bf0; --brand50:#f0eefe; --brand700:#4b3fcf;
+    --up:#12b981; --upbg:#e7f7f0; --down:#f43f5e; --downbg:#fdeaed; --warn:#f59e0b; --warnbg:#fdf3e0;
+    --hi:#f43f5e; --med:#f59e0b;
+    --r:14px; --shadow:0 1px 2px rgba(15,23,41,.06),0 4px 16px rgba(15,23,41,.05);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1100px;margin:0 auto;padding:28px 20px 90px}
+  h1{font-size:22px;margin:0 0 4px}
+  .sub{color:var(--ink2);font-size:14px;margin:0 0 6px}
+  .hint{color:var(--ink3);font-size:12.5px;margin:0 0 24px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);margin-bottom:22px;overflow:hidden}
+  .chead{display:flex;flex-wrap:wrap;align-items:center;gap:10px;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--line)}
+  .ctitle{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:700}
+  .num{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:8px;background:var(--brand);color:#fff;font-size:13px;font-weight:800}
+  .badges{display:flex;flex-wrap:wrap;gap:6px}
+  .b{font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:999px;letter-spacing:.02em}
+  .b.tag{background:#f1f3f8;color:#46506a}
+  .b.hi{background:var(--downbg);color:#c2304a}
+  .body{padding:18px}
+  .why{padding:13px 18px;border-top:1px solid var(--line);background:#fafbfe;font-size:12.5px;color:var(--ink2)}
+  .why b{color:var(--ink)}
+  .muted{color:var(--ink3)}
+  .mono{font-variant-numeric:tabular-nums}
+  .topnote{background:linear-gradient(90deg,#f0eefe,#fff);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;margin-bottom:22px;font-size:13px;color:var(--ink2)}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;vertical-align:middle}
+
+  /* ---------- Вариант 1: агенда недели ---------- */
+  .agenda{display:grid;grid-template-columns:repeat(5,minmax(168px,1fr));gap:12px;overflow-x:auto}
+  .dcol{min-width:0}
+  .dcol-h{display:flex;align-items:baseline;gap:7px;padding:0 2px 8px;border-bottom:2px solid var(--line2);margin-bottom:8px}
+  .dcol-h .dw{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--ink2)}
+  .dcol-h .dd{font-size:11px;color:var(--ink3)}
+  .dcol-h .cnt{margin-left:auto;font-size:10px;font-weight:700;color:var(--ink3)}
+  .ev1{position:relative;background:#fff;border:1px solid var(--line);border-left:3px solid var(--med);border-radius:9px;padding:7px 9px 8px;margin-bottom:8px}
+  .ev1.hi{border-left-color:var(--hi);background:#fff7f8}
+  .ev1 .t{font-size:11px;font-weight:700;color:var(--ink3)}
+  .ev1 .nm{font-size:12.5px;line-height:1.3;margin-top:1px;color:var(--ink2)}
+  .ev1.hi .nm{font-weight:700;color:var(--ink)}
+  .ev1 .cons{display:flex;align-items:center;gap:5px;margin-top:5px;font-size:11px}
+  .ev1 .pv{color:var(--ink3)}
+  .ev1 .ar{font-weight:800}
+  .ev1 .es{font-weight:700}
+  .up{color:var(--up)} .down{color:var(--down)} .flat{color:var(--ink3)}
+
+  /* ---------- Вариант 2: сюрприз-радар / приоритет ---------- */
+  .hero{display:flex;align-items:center;gap:14px;background:linear-gradient(90deg,#fdeaed,#fff 70%);border:1px solid #f6cdd5;border-radius:12px;padding:14px 16px;margin-bottom:16px}
+  .hero .cd{flex:none;text-align:center;min-width:78px}
+  .hero .cd .big{font-size:26px;font-weight:800;color:var(--hi);line-height:1}
+  .hero .cd .cap{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink3);margin-top:3px}
+  .hero .meta{min-width:0}
+  .hero .lbl{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#c2304a}
+  .hero .nm{font-size:15px;font-weight:800;margin:2px 0 3px}
+  .hero .sm{font-size:12px;color:var(--ink2)}
+  .sect-h{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);margin:14px 0 8px}
+  .pcard{display:flex;align-items:center;gap:12px;border:1px solid var(--line);border-left:3px solid var(--hi);border-radius:10px;padding:9px 12px;margin-bottom:8px;background:#fff}
+  .pcard .when{flex:none;width:74px;font-size:11px;font-weight:700;color:var(--ink2)}
+  .pcard .nm{flex:1;min-width:0;font-size:13px;font-weight:700}
+  .pcard .gauge{flex:none;display:flex;align-items:center;gap:9px;font-size:12px}
+  .gauge .blk{text-align:right}
+  .gauge .blk .k{font-size:9.5px;text-transform:uppercase;letter-spacing:.03em;color:var(--ink3)}
+  .gauge .blk .v{font-weight:800}
+  .gauge .delta{font-weight:800;min-width:64px;text-align:center;border-radius:7px;padding:3px 6px;font-size:11.5px}
+  .gauge .delta.up{background:var(--upbg);color:#0c8f63}
+  .gauge .delta.down{background:var(--downbg);color:#c2304a}
+  .gauge .delta.flat{background:#eef1f6;color:var(--ink3)}
+  .mrow{display:flex;align-items:center;gap:10px;padding:6px 4px;border-top:1px solid var(--line);font-size:12px}
+  .mrow:first-of-type{border-top:0}
+  .mrow .when{width:74px;font-size:11px;font-weight:700;color:var(--ink3)}
+  .mrow .nm{flex:1;min-width:0;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mrow .mc{flex:none;font-size:11px;color:var(--ink3)}
+  .mrow .mc b{color:var(--ink2)}
+
+  /* ---------- Вариант 3: тайм-лента ---------- */
+  .tl-leg{display:flex;gap:16px;font-size:11.5px;color:var(--ink2);margin-bottom:6px;align-items:center}
+  #tlwrap{position:relative}
+  #tip{position:absolute;pointer-events:none;opacity:0;transition:opacity .12s;background:#0f1729;color:#fff;font-size:11.5px;padding:7px 9px;border-radius:8px;max-width:240px;z-index:5;box-shadow:0 6px 20px rgba(0,0,0,.25)}
+  #tip .tt{font-weight:700;margin-bottom:2px}
+  #tip .ts{color:#c7cde0;font-size:10.5px}
+  .tl-dot{cursor:pointer;transition:r .12s}
+  #v3 line{pointer-events:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Радар событий — 3 прототипа отображения</h1>
+  <p class="sub">Те же реальные прод-данные, что сейчас на терминале — но без обрезания названий «по 2 буквы».</p>
+  <p class="hint" id="meta"></p>
+
+  <div class="topnote">
+    Проблема текущего виджета: плоская «простыня» в 2 колонки, названия режутся до 10–12 символов
+    (<i>Dallas Fed Manuf…</i>, <i>CB Consum…</i>), а порядок дней путается между колонками.
+    Ниже — 3 разных подхода. Выбери, какой развивать в живой виджет.
+  </div>
+
+  <!-- 1 -->
+  <div class="card">
+    <div class="chead">
+      <div class="ctitle"><span class="num">1</span> «Агенда недели» — колонки по дням</div>
+      <div class="badges"><span class="b tag">week-at-a-glance</span><span class="b tag">как Bloomberg ECO</span></div>
+    </div>
+    <div class="body"><div class="agenda" id="v1"></div></div>
+    <div class="why"><b>Идея:</b> каждый день — своя колонка (как в календаре). Названия видны <b>целиком</b> (переносятся), High-события подсвечены красной полосой и жирным, под именем — <span class="mono">прошлое → прогноз</span> со стрелкой. Сразу читается «на чём тяжёлая неделя»: в среду 1 июл сгрудилось 6 релизов. <b>Плюс:</b> ноль обрезаний, естественная группировка по дням. <b>Минус:</b> при 6+ событиях в день колонка длинная.</div>
+  </div>
+
+  <!-- 2 -->
+  <div class="card">
+    <div class="chead">
+      <div class="ctitle"><span class="num">2</span> «Сюрприз-радар» — приоритет + заложенное изменение</div>
+      <div class="badges"><span class="b hi">для торговли</span><span class="b tag">countdown + Δ vs прошлое</span></div>
+    </div>
+    <div class="body"><div id="v2"></div></div>
+    <div class="why"><b>Идея:</b> сверху — ближайший High-релиз с обратным отсчётом. Дальше High-события крупными карточками с «датчиком»: <span class="mono">прошлое → консенсус</span> и <b>Δ</b> — насколько сильное изменение уже заложено (большой разрыв = релиз, за которым все следят). Medium свёрнуты в компактный хвост. <b>Плюс:</b> моментально видно, что важно и где потенциал сюрприза. <b>Минус:</b> хронология вторична (сортировка по важности).</div>
+  </div>
+
+  <!-- 3 -->
+  <div class="card">
+    <div class="chead">
+      <div class="ctitle"><span class="num">3</span> «Тайм-лента» — горизонтальная шкала недели</div>
+      <div class="badges"><span class="b tag">timeline rail</span><span class="b tag">плотность во времени</span></div>
+    </div>
+    <div class="body">
+      <div class="tl-leg">
+        <span><span class="dot" style="background:var(--hi);width:12px;height:12px"></span> High</span>
+        <span><span class="dot" style="background:var(--med)"></span> Medium</span>
+        <span class="muted">наведи на точку — детали</span>
+      </div>
+      <div id="tlwrap"><div id="tip"></div><svg id="v3" width="100%" viewBox="0 0 1000 230" font-family="inherit"></svg></div>
+    </div>
+    <div class="why"><b>Идея:</b> неделя как горизонтальная ось (Вс→Чт), каждое событие — точка на своём времени; High крупнее и красные. Точки в одно время раскладываются по «дорожкам». Сразу виден ритм недели и сгустки (вт–ср — плотно). High подписаны, остальное по наведению. <b>Плюс:</b> самый наглядный «пульс» недели. <b>Минус:</b> точные цифры прог/пред — только в тултипе.</div>
+  </div>
+</div>
+
+<script>
+const EVENTS = [
+  {date:'2026-06-28 16:35', impact:'Medium', event:'Fed Barkin Speech', est:null, prev:null},
+  {date:'2026-06-29 14:30', impact:'Medium', event:'Dallas Fed Manufacturing Index (Jun)', est:2, prev:0.4},
+  {date:'2026-06-30 13:00', impact:'Medium', event:'S&P/Case-Shiller Home Price YoY (Apr)', est:0.8, prev:0.8},
+  {date:'2026-06-30 13:45', impact:'Medium', event:'Chicago PMI (Jun)', est:60, prev:62.7},
+  {date:'2026-06-30 14:00', impact:'High', event:'JOLTs Job Openings (May)', est:7.28, prev:7.618},
+  {date:'2026-06-30 14:00', impact:'High', event:'CB Consumer Confidence (Jun)', est:94.2, prev:93.1},
+  {date:'2026-06-30 20:30', impact:'Medium', event:'API Crude Oil Stock Change (Jun/26)', est:null, prev:-0.765},
+  {date:'2026-07-01 11:00', impact:'Medium', event:'MBA 30-Year Mortgage Rate (Jun/26)', est:null, prev:6.59},
+  {date:'2026-07-01 12:15', impact:'Medium', event:'ADP Employment Change (Jun)', est:118, prev:122},
+  {date:'2026-07-01 14:00', impact:'Medium', event:'ISM Manufacturing Employment (Jun)', est:49, prev:48.6},
+  {date:'2026-07-01 14:00', impact:'High', event:'ISM Manufacturing PMI (Jun)', est:53.7, prev:54},
+  {date:'2026-07-01 14:30', impact:'Medium', event:'EIA Crude Oil Stocks Change (Jun/26)', est:null, prev:-6.088},
+  {date:'2026-07-01 14:30', impact:'Medium', event:'EIA Gasoline Stocks Change (Jun/26)', est:null, prev:2.064},
+  {date:'2026-07-02 12:30', impact:'Medium', event:'Average Hourly Earnings YoY (Jun)', est:3.4, prev:3.4},
+];
+const NOW = new Date('2026-06-28T12:00:00'); // снапшот данных
+const WD = ['вс','пн','вт','ср','чт','пт','сб'];
+const MON = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
+const COL = {High:'#f43f5e', Medium:'#f59e0b'};
+const parse = (s)=> new Date(s.replace(' ','T')+':00');
+const hhmm = (s)=> s.slice(11,16);
+const dkey = (s)=> s.slice(0,10);
+const esc = (s)=> s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function fmtNum(n){ return (Math.round(n*100)/100).toString(); }
+document.getElementById('meta').textContent =
+  'США · ' + EVENTS.length + ' событий · 28 июн – 2 июл 2026 · источник FMP economic-calendar (synthetic:false)';
+
+/* направление прогноза относительно прошлого */
+function dir(e){
+  if(e.est==null||e.prev==null) return null;
+  const d = e.est - e.prev;
+  const ar = d>0.0001?'↑':d<-0.0001?'↓':'=';
+  const cl = d>0.0001?'up':d<-0.0001?'down':'flat';
+  return {d, ar, cl};
+}
+
+/* ---------- Вариант 1 ---------- */
+(function(){
+  const root = document.getElementById('v1');
+  const days = [...new Set(EVENTS.map(e=>dkey(e.date)))];
+  for(const dk of days){
+    const dd = parse(dk+' 00:00');
+    const evs = EVENTS.filter(e=>dkey(e.date)===dk);
+    const hi = evs.filter(e=>e.impact==='High').length;
+    const col = document.createElement('div'); col.className='dcol';
+    let h = `<div class="dcol-h"><span class="dw">${WD[dd.getDay()]}</span><span class="dd">${dd.getDate()} ${MON[dd.getMonth()]}</span><span class="cnt">${evs.length}${hi?` · ${hi}●`:''}</span></div>`;
+    for(const e of evs){
+      const d = dir(e);
+      const cons = (e.est!=null&&e.prev!=null)
+        ? `<div class="cons"><span class="pv mono">${fmtNum(e.prev)}</span><span class="ar ${d.cl}">${d.ar}</span><span class="es mono ${d.cl}">${fmtNum(e.est)}</span></div>`
+        : (e.prev!=null?`<div class="cons"><span class="pv mono">пред ${fmtNum(e.prev)}</span></div>`:'');
+      h += `<div class="ev1 ${e.impact==='High'?'hi':''}"><div class="t">${hhmm(e.date)}</div><div class="nm">${esc(e.event)}</div>${cons}</div>`;
+    }
+    col.innerHTML = h; root.appendChild(col);
+  }
+})();
+
+/* ---------- Вариант 2 ---------- */
+(function(){
+  const root = document.getElementById('v2');
+  const highs = EVENTS.filter(e=>e.impact==='High').sort((a,b)=>parse(a.date)-parse(b.date));
+  const meds  = EVENTS.filter(e=>e.impact!=='High').sort((a,b)=>parse(a.date)-parse(b.date));
+  const next = highs[0];
+  const whenLbl = (e)=>{ const t=parse(e.date); return `${WD[t.getDay()]} ${t.getDate()}.${t.getMonth()+1} · ${hhmm(e.date)}`; };
+  const cdDays = (e)=> Math.round((parse(dkey(e.date)+' 00:00') - new Date(NOW.toDateString()))/86400000);
+  const cdLbl = (n)=> n<=0?'сегодня':n===1?'завтра':`через ${n} дн`;
+
+  let h = '';
+  if(next){
+    const n = cdDays(next);
+    h += `<div class="hero">
+      <div class="cd"><div class="big">${n<=0?'•':n}</div><div class="cap">${n<=0?'сегодня':n===1?'завтра':'дн до'}</div></div>
+      <div class="meta"><div class="lbl">● ближайший High</div><div class="nm">${esc(next.event)}</div>
+      <div class="sm mono">${whenLbl(next)}${next.est!=null?` · консенсус ${fmtNum(next.est)} (пред ${fmtNum(next.prev)})`:''}</div></div>
+    </div>`;
+  }
+  h += `<div class="sect-h">High-релизы · ${highs.length}</div>`;
+  for(const e of highs){
+    const d = dir(e);
+    const gauge = (e.est!=null&&e.prev!=null)
+      ? `<div class="gauge"><div class="blk"><div class="k">прошлое</div><div class="v mono">${fmtNum(e.prev)}</div></div>
+         <div class="delta ${d.cl}">${d.ar} ${d.d>0?'+':''}${fmtNum(d.d)}</div>
+         <div class="blk"><div class="k">консенсус</div><div class="v mono">${fmtNum(e.est)}</div></div></div>`
+      : `<div class="gauge"><span class="muted mono" style="font-size:11px">нет прогноза</span></div>`;
+    h += `<div class="pcard"><div class="when mono">${cdLbl(cdDays(e))}<br><span class="muted">${whenLbl(e).split(' · ')[1]}</span></div><div class="nm">${esc(e.event)}</div>${gauge}</div>`;
+  }
+  h += `<div class="sect-h">Medium · ${meds.length}</div>`;
+  for(const e of meds){
+    const d = dir(e);
+    const mc = (e.est!=null&&e.prev!=null)
+      ? `<span class="mc mono">${fmtNum(e.prev)} <b class="${d.cl}">${d.ar} ${fmtNum(e.est)}</b></span>`
+      : (e.prev!=null?`<span class="mc mono">пред ${fmtNum(e.prev)}</span>`:'');
+    h += `<div class="mrow"><span class="when mono">${WD[parse(e.date).getDay()]} ${hhmm(e.date)}</span><span class="nm">${esc(e.event)}</span>${mc}</div>`;
+  }
+  root.innerHTML = h;
+})();
+
+/* ---------- Вариант 3 ---------- */
+(function(){
+  const svg = document.getElementById('v3');
+  const tip = document.getElementById('tip');
+  const W=1000,H=230, padL=20,padR=20, axisY=180, topPad=24;
+  const t0 = new Date('2026-06-28T00:00:00').getTime();
+  const t1 = new Date('2026-07-02T23:59:00').getTime();
+  const X = (ms)=> padL + (ms-t0)/(t1-t0)*(W-padL-padR);
+  const NS='http://www.w3.org/2000/svg';
+  const mk=(n,a)=>{const el=document.createElementNS(NS,n);for(const k in a)el.setAttribute(k,a[k]);return el;};
+
+  // ось + дневные деления
+  svg.appendChild(mk('line',{x1:padL,x2:W-padR,y1:axisY,y2:axisY,stroke:'#d7dce6','stroke-width':1.5}));
+  for(let d=0; d<5; d++){
+    const day = new Date(2026,5,28+d);
+    const x = X(day.getTime());
+    svg.appendChild(mk('line',{x1:x,x2:x,y1:topPad,y2:axisY,stroke:'#eef1f6','stroke-width':1}));
+    const wd=mk('text',{x:x+5,y:axisY+18,'font-size':12,'font-weight':700,fill:'#46506a'}); wd.textContent=WD[day.getDay()];
+    const dn=mk('text',{x:x+5,y:axisY+32,'font-size':10.5,fill:'#8b95a7'}); dn.textContent=`${day.getDate()} ${MON[day.getMonth()]}`;
+    svg.appendChild(wd); svg.appendChild(dn);
+  }
+
+  // раскладка по дорожкам, чтобы точки не наезжали
+  const sorted=[...EVENTS].sort((a,b)=>parse(a.date)-parse(b.date));
+  const laneLastX=[]; const MINGAP=46, LANE_H=30;
+  for(const e of sorted){
+    const x=X(parse(e.date).getTime());
+    let lane=0; while(lane<laneLastX.length && x-laneLastX[lane]<MINGAP) lane++;
+    laneLastX[lane]=x; e._x=x; e._y=axisY-18-lane*LANE_H;
+  }
+  for(const e of sorted){
+    const hi=e.impact==='High';
+    svg.appendChild(mk('line',{x1:e._x,x2:e._x,y1:e._y,y2:axisY,stroke:hi?'#f7b6c1':'#eadfc2','stroke-width':hi?1.4:1}));
+    const c=mk('circle',{cx:e._x,cy:e._y,r:hi?7:4.5,fill:COL[e.impact],stroke:'#fff','stroke-width':1.5,class:'tl-dot'});
+    svg.appendChild(c);
+    if(hi){ // подписи только High, чтобы не перегружать
+      const lbl=mk('text',{x:e._x+10,y:e._y+4,'font-size':10.5,'font-weight':700,fill:'#0f1729'});
+      lbl.textContent = e.event.replace(/\s*\(.*?\)\s*/,''); svg.appendChild(lbl);
+    }
+    const dd=dir(e);
+    const detail = (e.est!=null&&e.prev!=null)?`прог ${fmtNum(e.est)} · пред ${fmtNum(e.prev)} (${dd.ar})`:(e.prev!=null?`пред ${fmtNum(e.prev)}`:'без прогноза');
+    const show=()=>{ c.setAttribute('r',hi?9:6.5);
+      tip.innerHTML=`<div class="tt">${esc(e.event)}</div><div class="ts">${WD[parse(e.date).getDay()]} ${hhmm(e.date)} · ${e.impact}</div><div class="ts mono">${detail}</div>`;
+      tip.style.opacity=1;
+      const wrap=document.getElementById('tlwrap').getBoundingClientRect();
+      const px=e._x/W*wrap.width, py=e._y/H*wrap.height;
+      tip.style.left=Math.min(Math.max(px-20,4),wrap.width-200)+'px'; tip.style.top=(py-58)+'px';
+    };
+    const hide=()=>{ c.setAttribute('r',hi?7:4.5); tip.style.opacity=0; };
+    c.addEventListener('mouseenter',show); c.addEventListener('mouseleave',hide);
+  }
+})();
+</script>
+</body>
+</html>
