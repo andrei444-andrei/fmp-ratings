@@ -102,6 +102,9 @@ export default function Researcher() {
   const [rf, setRf] = useState({ minN: 0, minHit: 0, minRet: -1e9 }); // realtime-фильтры результата
   const [chartCol, setChartCol] = useState<string>(''); // метрика для графика ('' = авто по первому условию)
   const [colDraft, setColDraft] = useState('vol_21'); // конструктор столбца (фактор+период) для кнопки «+»
+  const [baskets, setBaskets] = useState<{ id: string; name: string; tickers: string[] }[]>([]); // сохранённые корзины (БД)
+  const [saveName, setSaveName] = useState<string | null>(null); // null=скрыто; строка=поле имени корзины открыто
+  const [uniChatOpen, setUniChatOpen] = useState(false); // AI-подбор тикеров
   const [panel, setPanel] = useState<ScreenPanel | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
@@ -168,6 +171,22 @@ export default function Researcher() {
     try { await fetch(`/api/researcher/formulas?id=${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch { /* удалится из БД позже/вручную */ }
   }, []);
 
+  // Корзины тикеров (БД, навсегда).
+  const saveBasket = useCallback(async (name: string, tickers: string[]) => {
+    const nm = name.trim(); if (!nm || !tickers.length) return;
+    const id = newId();
+    setBaskets((p) => [...p.filter((x) => x.name !== nm), { id, name: nm, tickers }]);
+    setSaveName(null);
+    try {
+      const r = await fetch('/api/researcher/baskets', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, name: nm, tickers }) });
+      const j = await r.json().catch(() => ({})); if (j?.error) throw new Error(j.error);
+    } catch (e: any) { setErr(`корзина не сохранена в БД: ${e?.message || e}`); }
+  }, []);
+  const removeBasket = useCallback(async (id: string) => {
+    setBaskets((p) => p.filter((x) => x.id !== id));
+    try { await fetch(`/api/researcher/baskets?id=${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch { /* */ }
+  }, []);
+
   // Восстановление настроек (UI — из localStorage; формулы — из БД, навсегда) + первичная загрузка панели. Один раз.
   useEffect(() => {
     let cfg: any = null;
@@ -192,6 +211,11 @@ export default function Researcher() {
           fetch('/api/researcher/formulas', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: DEF_FORMULAS[0].id, name: DEF_FORMULAS[0].name, expr: DEF_FORMULAS[0].expr }) }).catch(() => {});
         }
       } catch { /* БД недоступна → остаётся сид-формула */ }
+      try {
+        const r = await fetch('/api/researcher/baskets');
+        const j = await r.json().catch(() => ({}));
+        if (Array.isArray(j?.baskets)) setBaskets(j.baskets.map((b: any) => ({ id: String(b.id), name: String(b.name), tickers: Array.isArray(b.tickers) ? b.tickers : [] })));
+      } catch { /* нет БД — без сохранённых корзин */ }
     })();
     loadedRef.current = true;
     setCfgNonce((n) => n + 1);
@@ -315,10 +339,29 @@ export default function Researcher() {
                 {g}<span className="n">{GROUPS[g].length}</span>
               </button>
             ))}
+            {baskets.map((b) => (
+              <button key={b.id} type="button" className={`chip bskt${group === b.name ? ' on' : ''}`} title={b.tickers.join(', ')} onClick={() => { setGroup(b.name); setUniText(b.tickers.join(', ')); }}>
+                {b.name}<span className="n">{b.tickers.length}</span>
+                <span className="bx" onClick={(e) => { e.stopPropagation(); removeBasket(b.id); }} title="удалить корзину">✕</span>
+              </button>
+            ))}
           </div>
           <textarea className="uni" value={uniText} spellCheck={false} onChange={(e) => { setUniText(e.target.value); setGroup(''); }} />
-          <p className="sub" style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-            <span>Пресет — стартовый набор; список правится свободно (до 40).</span>
+          <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            <button type="button" className={`btn sm ghost${uniChatOpen ? ' on' : ''}`} onClick={() => setUniChatOpen((o) => !o)}>✨ AI-подбор тикеров</button>
+            {saveName === null
+              ? <button type="button" className="btn sm ghost" disabled={universe.length < 1} onClick={() => setSaveName(group && !GROUPS[group] ? group : '')}>💾 Сохранить как корзину</button>
+              : (
+                <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                  <input className="rfin" style={{ width: 160, textAlign: 'left' }} autoFocus placeholder="имя корзины" value={saveName} onChange={(e) => setSaveName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveBasket(saveName, universe); }} />
+                  <button type="button" className="btn sm" disabled={!saveName.trim() || universe.length < 1} onClick={() => saveBasket(saveName, universe)}>Сохранить</button>
+                  <button type="button" className="btn sm ghost" onClick={() => setSaveName(null)}>отмена</button>
+                </span>
+              )}
+          </div>
+          {uniChatOpen && <UniverseChat onApply={(ts, replace) => { const cur = replace ? [] : universe; const merged = [...new Set([...cur, ...ts.map((t) => t.toUpperCase())])].slice(0, 40); setUniText(merged.join(', ')); setGroup(''); }} onClose={() => setUniChatOpen(false)} />}
+          <p className="sub" style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <span>Пресет/корзина — стартовый набор; список правится свободно (до 40).</span>
             <span className="hz">Горизонт (X дней):{HORIZONS.map((h) => <button key={h} type="button" className={horizon === h ? 'on' : ''} onClick={() => setHorizon(h)}>{h}д</button>)}</span>
           </p>
           <div className="yrs">
@@ -702,6 +745,83 @@ function FormulaSuggestion({ f, onInsert }: { f: { name: string; expr: string };
       {err ? <div className="ferr">{err}</div>
         : added ? <div className="fok">✓ добавлено в «Формулы» — проверьте и нажмите «Сохранить»</div>
         : <button type="button" className="btn sm" onClick={() => { onInsert(f.name, f.expr); setAdded(true); }}>Вставить в формулы</button>}
+    </div>
+  );
+}
+
+type UMsg = { role: 'user' | 'assistant'; content: string; tickers?: string[] };
+
+// Встроенный AI-чат подбора вселенной: диалог по теме/критериям → список тикеров, который можно
+// добавить в вселенную или заменить ею.
+function UniverseChat({ onApply, onClose }: { onApply: (tickers: string[], replace: boolean) => void; onClose: () => void }) {
+  const [msgs, setMsgs] = useState<UMsg[]>([
+    { role: 'assistant', content: 'Опишите тему/критерии — подберу тикеры. Например: «ликвидные ETF на полупроводники», «крупные дивидендные акции США», «защита от инфляции», «сектора, растущие при сильном долларе».' },
+  ]);
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const boxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { boxRef.current?.scrollTo({ top: boxRef.current.scrollHeight }); }, [msgs, busy]);
+
+  const send = async () => {
+    const text = input.trim();
+    if (!text || busy) return;
+    setErr(''); setInput('');
+    const next: UMsg[] = [...msgs, { role: 'user', content: text }];
+    setMsgs(next); setBusy(true);
+    try {
+      const res = await fetch('/api/researcher/universe-assistant', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ messages: next.map((m) => ({ role: m.role, content: m.content })) }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (j?.error) throw new Error(j.error);
+      const tickers = Array.isArray(j?.tickers) ? j.tickers.map((t: any) => String(t).toUpperCase()) : [];
+      setMsgs((m) => [...m, { role: 'assistant', content: String(j?.reply || '…'), tickers: tickers.length ? tickers : undefined }]);
+    } catch (e: any) { setErr(e?.message || 'ошибка AI'); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="rsx-chat inline">
+      <div className="hd"><b>AI-подбор тикеров</b><span className="x" onClick={onClose}>✕</span></div>
+      <div className="msgs" ref={boxRef}>
+        {msgs.map((m, i) => (
+          <div key={i} className={`msg ${m.role}`}>
+            <div className="bub">{m.content}</div>
+            {m.tickers && m.tickers.length > 0 && <TickerPick tickers={m.tickers} onApply={onApply} />}
+          </div>
+        ))}
+        {busy && <div className="msg assistant"><div className="bub">…подбираю</div></div>}
+        {err && <div className="msg assistant"><div className="bub err">{err}</div></div>}
+      </div>
+      <div className="inp">
+        <textarea value={input} placeholder="Опишите тему/критерии…" spellCheck={false}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} />
+        <button type="button" className="btn apply on" disabled={busy || !input.trim()} onClick={send}>→</button>
+      </div>
+    </div>
+  );
+}
+
+// Предложенные тикеры: выбираешь нужные → добавить в вселенную или заменить ею.
+function TickerPick({ tickers, onApply }: { tickers: string[]; onApply: (t: string[], replace: boolean) => void }) {
+  const [sel, setSel] = useState<Set<string>>(new Set(tickers));
+  const [done, setDone] = useState('');
+  const arr = [...sel];
+  return (
+    <div className="fcard">
+      <div className="tk-chips">
+        {tickers.map((t) => (
+          <button key={t} type="button" className={`tk${sel.has(t) ? ' on' : ''}`} onClick={() => setSel((s) => { const n = new Set(s); n.has(t) ? n.delete(t) : n.add(t); return n; })}>{t}</button>
+        ))}
+      </div>
+      {done ? <div className="fok">✓ {done}</div> : (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <button type="button" className="btn sm" disabled={!arr.length} onClick={() => { onApply(arr, false); setDone(`добавлено ${arr.length} в вселенную`); }}>Добавить выбранные</button>
+          <button type="button" className="btn sm ghost" disabled={!arr.length} onClick={() => { onApply(arr, true); setDone(`вселенная заменена (${arr.length})`); }}>Заменить вселенную</button>
+        </div>
+      )}
     </div>
   );
 }

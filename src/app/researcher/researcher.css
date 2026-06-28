@@ -141,6 +141,16 @@
 .rsx-chat .inp { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--fk-line); align-items: flex-end; }
 .rsx-chat .inp textarea { flex: 1; resize: none; height: 38px; max-height: 120px; font: inherit; font-size: 12.5px; border: 1px solid var(--fk-line-strong); border-radius: 9px; padding: 8px 10px; color: var(--fk-text); background: var(--fk-surface-elev); }
 .rsx-chat .inp .btn.apply { padding: 8px 14px; }
+/* встроенный вариант чата (в карточке «Вселенная») */
+.rsx-chat.inline { position: static; right: auto; bottom: auto; width: 100%; height: 340px; margin: 8px 0 2px; box-shadow: none; }
+/* чип сохранённой корзины */
+.rsx .grp .chip.bskt { border-style: dashed; }
+.rsx .grp .chip.bskt .bx { margin-left: 6px; color: var(--fk-text-3); font-size: 10px; }
+.rsx .grp .chip.bskt .bx:hover { color: var(--fk-down-text, #c81e3c); }
+/* чипы тикеров в подборе */
+.rsx-chat .tk-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.rsx-chat .tk { border: 1px solid var(--fk-line-strong); background: var(--fk-surface-elev); color: var(--fk-text-3); border-radius: 999px; padding: 3px 9px; font-size: 11.5px; font-weight: 600; cursor: pointer; font-variant-numeric: tabular-nums; }
+.rsx-chat .tk.on { background: var(--fk-brand-50); border-color: var(--fk-brand-100); color: var(--fk-brand-700); }
 
 /* drawer */
 .rsx-scrim { position: fixed; inset: 0; background: rgba(15,23,41,.34); z-index: 50; }
