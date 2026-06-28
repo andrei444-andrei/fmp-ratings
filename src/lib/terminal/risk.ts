@@ -7,7 +7,7 @@ import { syntheticSeries } from '@/lib/research/metrics';
 import { logAppError } from '@/lib/app-errors';
 import { readSnapshot, writeSnapshot, isFresh } from './store';
 
-const RISK_KEY = 'risk_v1';
+const RISK_KEY = 'risk_v2'; // v2: VIX через EODHD-индексы (VIX.INDX)
 
 export type VolPoint = { date: string; v: number };
 export type RiskData = {
@@ -75,6 +75,15 @@ async function lastTwo(sym: string): Promise<{ last: number | null; prev: number
   return { last: null, prev: null };
 }
 
+/** Пробуем несколько символов (EODHD-индексы первыми) — возвращаем первый с данными. */
+async function lastTwoAny(syms: string[]): Promise<{ last: number | null; prev: number | null }> {
+  for (const s of syms) {
+    const r = await lastTwo(s);
+    if (r.last != null) return r;
+  }
+  return { last: null, prev: null };
+}
+
 export async function computeRisk(): Promise<RiskData> {
   const spy = await loadCloses('SPY', 320);
   const rets = [] as number[];
@@ -91,8 +100,11 @@ export async function computeRisk(): Promise<RiskData> {
   const lastC = spy.closes[spy.closes.length - 1] ?? 0;
   const drawdown = maxC > 0 ? ((lastC - maxC) / maxC) * 100 : null;
 
-  // VIX / VIX3M — опционально
-  const [vixTwo, vix3mTwo] = await Promise.all([lastTwo('^VIX'), lastTwo('^VIX3M')]);
+  // VIX / VIX3M — EODHD-индексы (VIX.INDX), с фолбэками
+  const [vixTwo, vix3mTwo] = await Promise.all([
+    lastTwoAny(['VIX.INDX', '^VIX']),
+    lastTwoAny(['VIX3M.INDX', 'VXV.INDX', '^VIX3M']),
+  ]);
   const vix = vixTwo.last;
   const vixChg = vix != null && vixTwo.prev != null ? +(vix - vixTwo.prev).toFixed(2) : null;
   const vix3m = vix3mTwo.last;
