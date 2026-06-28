@@ -52,17 +52,35 @@ function RRGChart({ items }: { items: RotationItem[] }) {
   if (!items.length) return <div className="px-2 py-10 text-center text-[12px] text-ink-3">Нет данных</div>;
   const S = 360;
   const pad = 30;
-  // домен симметрично вокруг 100
-  let span = 1;
-  for (const it of items) for (const p of it.tail) span = Math.max(span, Math.abs(p.x - 100), Math.abs(p.y - 100));
-  span *= 1.18;
-  const lo = 100 - span;
-  const hi = 100 + span;
-  const X = (v: number) => pad + ((v - lo) / (hi - lo)) * (S - 2 * pad);
-  const Y = (v: number) => pad + (S - 2 * pad) - ((v - lo) / (hi - lo)) * (S - 2 * pad);
-  const mid = (100 - lo) / (hi - lo);
-  const cx = pad + mid * (S - 2 * pad);
-  const cy = pad + (S - 2 * pad) - mid * (S - 2 * pad);
+  // независимый автоскейл по каждой оси (иначе один выброс сжимает остальные в кучу),
+  // линия 100 всегда внутри домена как точка отсчёта
+  const xsAll = items.flatMap((it) => it.tail.map((p) => p.x));
+  const ysAll = items.flatMap((it) => it.tail.map((p) => p.y));
+  const fit = (vals: number[]) => {
+    let lo = Math.min(...vals, 100);
+    let hi = Math.max(...vals, 100);
+    const p = (hi - lo) * 0.12 || 1;
+    lo -= p;
+    hi += p;
+    return [lo, hi] as const;
+  };
+  const [xlo, xhi] = fit(xsAll);
+  const [ylo, yhi] = fit(ysAll);
+  const X = (v: number) => pad + ((v - xlo) / (xhi - xlo)) * (S - 2 * pad);
+  const Y = (v: number) => pad + (S - 2 * pad) - ((v - ylo) / (yhi - ylo)) * (S - 2 * pad);
+  const cx = X(100);
+  const cy = Y(100);
+  // подписи с разведением по вертикали (анти-наложение), при сдвиге — тонкий лидер
+  const labels = items
+    .map((it) => ({ sym: it.symbol, col: QC[it.quadrant].c, dx: X(it.tail[it.tail.length - 1].x), dy: Y(it.tail[it.tail.length - 1].y) }))
+    .sort((a, b) => a.dy - b.dy);
+  let prevY = -Infinity;
+  for (const l of labels) {
+    let ly = l.dy;
+    if (ly - prevY < 12) ly = prevY + 12;
+    (l as any).ly = Math.min(S - 4, ly);
+    prevY = (l as any).ly;
+  }
   return (
     <div className="flex flex-col gap-3">
       <svg viewBox={`0 0 ${S} ${S}`} width="100%" className="block" style={{ maxHeight: 380 }} fontFamily="inherit">
@@ -79,16 +97,26 @@ function RRGChart({ items }: { items: RotationItem[] }) {
         <text x={S - pad - 4} y={S - pad - 5} textAnchor="end" fontSize="9.5" fontWeight="700" fill="#f59e0b">СЛАБЕЮТ</text>
         <text x={pad + 4} y={S - pad - 5} fontSize="9.5" fontWeight="700" fill="#f43f5e">ОТСТАЮТ</text>
         <text x={pad + 4} y={pad + 12} fontSize="9.5" fontWeight="700" fill="#6d5bf0">УЛУЧШАЮТСЯ</text>
-        {/* items: гладкий хвост + точка + подпись с белым ореолом */}
+        {/* хвосты + точки */}
         {items.map((it) => {
           const col = QC[it.quadrant].c;
           const path = it.tail.map((p, i) => `${i ? 'L' : 'M'}${X(p.x).toFixed(1)} ${Y(p.y).toFixed(1)}`).join(' ');
           const cur = it.tail[it.tail.length - 1];
           return (
             <g key={it.symbol}>
-              <path d={path} fill="none" stroke={col} strokeWidth={1.3} strokeLinejoin="round" strokeLinecap="round" opacity={0.35} />
+              <path d={path} fill="none" stroke={col} strokeWidth={1.3} strokeLinejoin="round" strokeLinecap="round" opacity={0.32} />
               <circle cx={X(cur.x).toFixed(1)} cy={Y(cur.y).toFixed(1)} r={5} fill={col} stroke="#fff" strokeWidth={1.5} />
-              <text x={(X(cur.x) + 8).toFixed(1)} y={(Y(cur.y) + 3.5).toFixed(1)} fontSize="10" fontWeight="700" fill="#0f1729" stroke="#fff" strokeWidth={2.6} paintOrder="stroke" strokeLinejoin="round">{it.symbol}</text>
+            </g>
+          );
+        })}
+        {/* подписи с разведением (лидер-линия при сдвиге) */}
+        {labels.map((l) => {
+          const ly = (l as any).ly as number;
+          const lx = Math.min(S - pad - 2, l.dx + 8);
+          return (
+            <g key={l.sym}>
+              {Math.abs(ly - l.dy) > 4 && <line x1={(l.dx + 5).toFixed(1)} y1={l.dy.toFixed(1)} x2={lx.toFixed(1)} y2={(ly - 3).toFixed(1)} stroke={l.col} strokeWidth={0.7} opacity={0.5} />}
+              <text x={lx.toFixed(1)} y={ly.toFixed(1)} fontSize="10" fontWeight="700" fill="#0f1729" stroke="#fff" strokeWidth={2.6} paintOrder="stroke" strokeLinejoin="round">{l.sym}</text>
             </g>
           );
         })}
