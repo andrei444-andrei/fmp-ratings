@@ -138,3 +138,9 @@ export async function fmpEarningsCalendar(from: string, to: string) {
     `${BASE_STABLE}/earnings-calendar?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&apikey=${encodeURIComponent(key)}`
   );
 }
+
+// Текущая котировка (в т.ч. индексы вроде ^VIX). Поля: symbol, price, change, changePercentage.
+export async function fmpQuote(symbol: string) {
+  const key = getFmpKey();
+  return fmpGet(`${BASE_STABLE}/quote?symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(key)}`);
+}

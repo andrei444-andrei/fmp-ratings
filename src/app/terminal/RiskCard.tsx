@@ -55,16 +55,34 @@ function Tile({ k, v, sub, tone }: { k: string; v: string; sub?: string; tone?: 
 
 function RiskBody({ d }: { d: RiskData }) {
   const term = d.termRatio == null ? null : d.termRatio > 1 ? 'бэквардация' : 'контанго';
+  const premium = d.vix != null && d.realized21 != null ? +(d.vix - d.realized21).toFixed(1) : null;
+  const volRatio = d.realized21 != null && d.realized63 != null && d.realized63 > 0 ? d.realized21 / d.realized63 : null;
+  const hasVix = d.vix != null;
+  // плитки без «мёртвых» состояний: при наличии VIX — VIX-центрично, иначе — по реализованной воле
   return (
     <div className="flex flex-col gap-3.5">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <Tile k="VIX" v={d.vix != null ? d.vix.toFixed(1) : '—'} sub={d.vixChg != null ? `${d.vixChg > 0 ? '+' : ''}${d.vixChg} д/д` : 'нет данных'} tone={d.vix != null ? REGIME_TONE[d.regime] : undefined} />
-        <Tile k="Терм-структура" v={term ?? '—'} sub={d.termRatio != null ? `VIX/VIX3M ${d.termRatio.toFixed(2)}` : 'VIX3M н/д'} tone={term === 'бэквардация' ? '#f43f5e' : term === 'контанго' ? '#12b981' : undefined} />
-        <Tile k="Реализ. вол" v={d.realized21 != null ? d.realized21.toFixed(0) : '—'} sub={d.realized63 != null ? `21д · 63д ${d.realized63.toFixed(0)}` : '21д'} />
+        {hasVix ? (
+          <>
+            <Tile k="VIX (impl.)" v={d.vix!.toFixed(1)} sub={d.vixChg != null ? `${d.vixChg > 0 ? '+' : ''}${d.vixChg} д/д` : 'implied vol'} tone={REGIME_TONE[d.regime]} />
+            {term ? (
+              <Tile k="Терм-структура" v={term} sub={`VIX/VIX3M ${d.termRatio!.toFixed(2)}`} tone={term === 'бэквардация' ? '#f43f5e' : '#12b981'} />
+            ) : (
+              <Tile k="Премия impl−real" v={premium != null ? `${premium > 0 ? '+' : ''}${premium}` : '—'} sub="VIX − реализ. 21д" tone={premium != null && premium < 0 ? '#f43f5e' : undefined} />
+            )}
+            <Tile k="Реализ. вол" v={d.realized21 != null ? d.realized21.toFixed(0) : '—'} sub={d.realized63 != null ? `21д · 63д ${d.realized63.toFixed(0)}` : '21д'} />
+          </>
+        ) : (
+          <>
+            <Tile k="Реализ. вол 21д" v={d.realized21 != null ? d.realized21.toFixed(1) : '—'} sub="годовая, из SPY" tone={REGIME_TONE[d.regime]} />
+            <Tile k="Реализ. вол 63д" v={d.realized63 != null ? d.realized63.toFixed(1) : '—'} sub="трёхмесячная база" />
+            <Tile k="Вол-тренд 21/63" v={volRatio != null ? `×${volRatio.toFixed(2)}` : '—'} sub={volRatio != null ? (volRatio > 1.1 ? 'ускоряется' : volRatio < 0.9 ? 'затухает' : 'стабильно') : ''} tone={volRatio != null && volRatio > 1.1 ? '#f43f5e' : volRatio != null && volRatio < 0.9 ? '#12b981' : undefined} />
+          </>
+        )}
         <Tile k="SPX от ATH" v={d.drawdown != null ? `${d.drawdown > 0 ? '+' : ''}${d.drawdown.toFixed(1)}%` : '—'} tone={d.drawdown != null && d.drawdown < -5 ? '#f43f5e' : undefined} />
       </div>
       <VolChart hist={d.hist} vix={d.vix} />
-      <div className="text-[11px] text-ink-3">линия — реализованная вол SPY (21д, годовая). Бэквардация VIX и рост реализованной — маркеры стресса.</div>
+      <div className="text-[11px] text-ink-3">{hasVix ? 'VIX — подразумеваемая вол; линия — реализованная (21д). Бэквардация VIX и рост реализованной — маркеры стресса.' : 'линия — реализованная вол SPY (21д, годовая). Рост реализованной и ускорение 21/63 — маркеры стресса.'}</div>
     </div>
   );
 }
