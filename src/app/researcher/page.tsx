@@ -19,25 +19,49 @@ const GROUPS: Record<string, string[]> = {
   'Темы': ['SMH', 'SOXX', 'ARKK', 'ICLN', 'TAN', 'LIT', 'URA', 'BOTZ', 'HACK', 'SKYY'],
   'Крупные акции': ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'TSLA', 'JPM', 'XOM'],
 };
+// Финансово-стандартные периоды факторов (синхронно с движком METR в studies.ts).
 const METRICS: Record<string, { label: string; periods: number[]; unit: string }> = {
-  momentum: { label: 'Моментум', periods: [5, 21, 63, 126, 252], unit: '%' },
-  vol: { label: 'Волатильность', periods: [21, 63], unit: '%' },
-  dist_ath: { label: 'Расст. от ATH', periods: [0], unit: '%' },
-  xbench: { label: 'Превышение бенч.', periods: [5, 21, 63, 126, 252], unit: 'пп' },
-  sma_dist: { label: 'Откл. от SMA', periods: [50, 200], unit: '%' },
-  rsi: { label: 'RSI', periods: [14], unit: '' },
+  momentum: { label: 'Моментум', periods: [5, 10, 21, 63, 126, 252], unit: '%' },
+  vol: { label: 'Волатильность', periods: [10, 21, 63, 126], unit: '%' },
+  dist_ath: { label: 'Расст. от макс.', periods: [0, 63, 252], unit: '%' },
+  xbench: { label: 'Превышение бенч.', periods: [5, 10, 21, 63, 126, 252], unit: 'пп' },
+  sma_dist: { label: 'Откл. от SMA', periods: [20, 50, 100, 200], unit: '%' },
+  rsi: { label: 'RSI', periods: [7, 14, 21], unit: '' },
 };
 const MID = Object.keys(METRICS);
 const colOf = (id: string, p: number) => `${id}_${p}`;
-const mlabel = (id: string, p: number) => METRICS[id].label + (METRICS[id].periods.length > 1 ? ` ${p}` : '');
-// Все базовые колонки-факторы (для выбора в условиях и столбцах + валидации формул).
-const BASE_COLS = MID.flatMap((id) => METRICS[id].periods.map((p) => ({ key: colOf(id, p), id, label: mlabel(id, p) })));
+// Подпись периода: для dist_ath p=0 — «ATH» (исторический максимум), иначе «<p>д».
+const plabel = (id: string, p: number) => (id === 'dist_ath' && p === 0 ? 'ATH' : `${p}д`);
+const mlabel = (id: string, p: number) => METRICS[id].label + (METRICS[id].periods.length > 1 ? ` ${plabel(id, p) === 'ATH' ? 'ATH' : p}` : '');
+// Все базовые колонки-факторы (для столбцов + валидации формул).
+const BASE_COLS = MID.flatMap((id) => METRICS[id].periods.map((p) => ({ key: colOf(id, p), id, p, label: mlabel(id, p) })));
 const BASE_KEYS = new Set(BASE_COLS.map((c) => c.key));
 const HORIZONS = [5, 10, 21, 63];
 
 type UCond = { col: string; cmp: Cmp; val: number; not: boolean };
 type UBlock = { conds: UCond[] };
-type FormulaDef = { id: string; name: string; expr: string };
+// Формула: name/expr — черновик (правится), savedName/savedExpr — применённое (по кнопке «Сохранить»).
+type FormulaDef = { id: string; name: string; expr: string; savedName: string; savedExpr: string };
+
+// Разбор ключа колонки: базовый фактор (fid+период) или имя формулы.
+function parseCol(col: string): { kind: 'base'; id: string; p: number } | { kind: 'formula'; name: string } {
+  const b = BASE_COLS.find((c) => c.key === col);
+  return b ? { kind: 'base', id: b.id, p: b.p } : { kind: 'formula', name: col };
+}
+// Проверка черновика формулы → текст ошибки или null. Ссылки — только на существующие факторы.
+function validateFormula(name: string, expr: string): string | null {
+  const nm = name.trim();
+  if (!nm && !expr.trim()) return null;
+  if (!nm) return 'задайте имя метрики';
+  if (BASE_KEYS.has(nm) || MID.includes(nm)) return 'имя совпадает с фактором — выберите другое';
+  if (!expr.trim()) return 'пустая формула';
+  try {
+    const c = compileFormula(expr);
+    const bad = c.refs.filter((r) => !BASE_KEYS.has(r));
+    if (bad.length) return `неизвестные факторы: ${bad.join(', ')}`;
+  } catch (e: any) { return e?.message || 'ошибка формулы'; }
+  return null;
+}
 
 const cls = (v: number | null) => (v == null ? 'flat' : v > 0 ? 'up' : v < 0 ? 'down' : 'flat');
 const fnum = (v: number | null, d = 1) => (v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(d));
@@ -62,8 +86,10 @@ export default function Researcher() {
   const [blocks, setBlocks] = useState<UBlock[]>([
     { conds: [{ col: 'momentum_63', cmp: 'ge', val: 10, not: false }, { col: 'vol_21', cmp: 'le', val: 30, not: false }] },
   ]);
-  // Вычисляемые метрики (формулы над факторами). Сид-пример = запрошенный кейс «среднее моментума 1/3/6м».
-  const [formulas, setFormulas] = useState<FormulaDef[]>([{ id: 'f0', name: 'avgMom3', expr: 'avg(momentum_21, momentum_63, momentum_126)' }]);
+  // Вычисляемые метрики (формулы над факторами). Сид-пример (уже сохранён) = запрошенный кейс «ср. моментум 1/3/6м».
+  const [formulas, setFormulas] = useState<FormulaDef[]>([
+    { id: 'f0', name: 'avgMom3', expr: 'avg(momentum[21], momentum[63], momentum[126])', savedName: 'avgMom3', savedExpr: 'avg(momentum[21], momentum[63], momentum[126])' },
+  ]);
   const [display, setDisplay] = useState<string[]>(['momentum_63', 'vol_21', 'rsi_14', 'avgMom3']);
   const [view, setView] = useState<'tickers' | 'years'>('tickers');
   const [panel, setPanel] = useState<ScreenPanel | null>(null);
@@ -76,33 +102,26 @@ export default function Researcher() {
   const universe = useMemo(() => [...new Set(uniText.toUpperCase().split(/[^A-Z0-9.\-]+/).filter(Boolean))].slice(0, 40), [uniText]);
   const [applied, setApplied] = useState<{ uni: string; horizon: number } | null>(null);
 
-  // Компиляция формул: имя → eval-функция; и ошибки по id. Имя не должно совпадать с базовым фактором,
-  // ссылки внутри формулы — только на существующие факторы.
-  const { fmap, ferrs } = useMemo(() => {
+  // Компиляция ПРИМЕНЁННЫХ (сохранённых) формул: имя → eval-функция. Черновики не влияют до «Сохранить».
+  const { fmap, savedNames } = useMemo(() => {
     const fmap: Formulas = new Map<string, CellFn>();
-    const ferrs: Record<string, string> = {};
+    const savedNames: string[] = [];
     for (const f of formulas) {
-      const nm = f.name.trim();
-      if (!nm) { if (f.expr.trim()) ferrs[f.id] = 'задайте имя метрики'; continue; }
-      if (BASE_KEYS.has(nm)) { ferrs[f.id] = 'имя совпадает с фактором — выберите другое'; continue; }
-      if (!f.expr.trim()) { ferrs[f.id] = 'пустая формула'; continue; }
+      const sn = f.savedName.trim();
+      if (!sn || !f.savedExpr.trim() || BASE_KEYS.has(sn) || MID.includes(sn) || fmap.has(sn)) continue;
       try {
-        const c = compileFormula(f.expr);
-        const bad = c.refs.filter((r) => !BASE_KEYS.has(r));
-        if (bad.length) { ferrs[f.id] = `неизвестные факторы: ${bad.join(', ')}`; continue; }
-        if (fmap.has(nm)) { ferrs[f.id] = 'дубликат имени'; continue; }
-        fmap.set(nm, c.eval);
-      } catch (e: any) { ferrs[f.id] = e?.message || 'ошибка формулы'; }
+        const c = compileFormula(f.savedExpr);
+        if (c.refs.every((r) => BASE_KEYS.has(r))) { fmap.set(sn, c.eval); savedNames.push(sn); }
+      } catch { /* невалидная сохранённая — пропускаем */ }
     }
-    return { fmap, ferrs };
+    return { fmap, savedNames };
   }, [formulas]);
 
-  const formulaNames = useMemo(() => [...new Set(formulas.map((f) => f.name.trim()).filter(Boolean))], [formulas]);
   const colLabel = useCallback((key: string) => {
     const b = BASE_COLS.find((c) => c.key === key);
     if (b) return b.label;
-    return formulaNames.includes(key) ? `ƒ ${key}` : key;
-  }, [formulaNames]);
+    return savedNames.includes(key) ? `ƒ ${key}` : key;
+  }, [savedNames]);
 
   const fetchPanel = useCallback(async (uni: string[], hz: number): Promise<boolean> => {
     if (uni.length < 1) { setPanel(null); return false; }
@@ -162,20 +181,32 @@ export default function Researcher() {
     </>
   );
 
-  // <select> колонки для условия: факторы + формулы; текущее значение всегда присутствует.
-  const ColSelect = ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
-    <select value={value} onChange={(e) => onChange(e.target.value)}>
-      <optgroup label="Факторы">
-        {BASE_COLS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
-      </optgroup>
-      {formulaNames.length > 0 && (
-        <optgroup label="Формулы">
-          {formulaNames.map((nm) => <option key={nm} value={nm}>ƒ {nm}</option>)}
-        </optgroup>
-      )}
-      {!BASE_KEYS.has(value) && !formulaNames.includes(value) && <option value={value}>{value} (?)</option>}
-    </select>
-  );
+  // Колонка условия = два контрола: тип фактора (или формула) + параметр-период. Период скрыт для формул.
+  const CondCol = ({ value, onChange }: { value: string; onChange: (v: string) => void }) => {
+    const cur = parseCol(value);
+    const ftVal = cur.kind === 'base' ? cur.id : `f:${cur.name}`;
+    const onFactor = (v: string) => {
+      if (v.startsWith('f:')) { onChange(v.slice(2)); return; }
+      const periods = METRICS[v].periods;
+      const p = cur.kind === 'base' && periods.includes(cur.p) ? cur.p : periods[0];
+      onChange(colOf(v, p));
+    };
+    return (
+      <>
+        <select value={ftVal} onChange={(e) => onFactor(e.target.value)}>
+          <optgroup label="Факторы">{MID.map((id) => <option key={id} value={id}>{METRICS[id].label}</option>)}</optgroup>
+          {savedNames.length > 0 && <optgroup label="Формулы">{savedNames.map((nm) => <option key={nm} value={`f:${nm}`}>ƒ {nm}</option>)}</optgroup>}
+          {cur.kind === 'formula' && !savedNames.includes(cur.name) && <option value={`f:${cur.name}`}>{cur.name} (?)</option>}
+        </select>
+        <select value={cur.kind === 'base' ? cur.p : ''} disabled={cur.kind !== 'base' || METRICS[cur.id].periods.length < 2}
+          onChange={(e) => cur.kind === 'base' && onChange(colOf(cur.id, +e.target.value))}>
+          {cur.kind === 'base'
+            ? METRICS[cur.id].periods.map((p) => <option key={p} value={p}>{plabel(cur.id, p)}</option>)
+            : <option value="">—</option>}
+        </select>
+      </>
+    );
+  };
 
   return (
     <main className="rsx" style={{ maxWidth: 1320, margin: '0 auto', padding: '20px 20px 90px' }}>
@@ -243,7 +274,7 @@ export default function Researcher() {
                   {b.conds.map((c, ci) => (
                     <div className="cond" key={ci}>
                       <button className={`nott${c.not ? ' on' : ''}`} onClick={() => setB((bb) => { bb[bi].conds[ci].not = !bb[bi].conds[ci].not; return bb; })}>{c.not ? 'НЕ' : 'И'}</button>
-                      <ColSelect value={c.col} onChange={(v) => setB((bb) => { bb[bi].conds[ci].col = v; return bb; })} />
+                      <CondCol value={c.col} onChange={(v) => setB((bb) => { bb[bi].conds[ci].col = v; return bb; })} />
                       <div className="seg">
                         {(['ge', 'le'] as Cmp[]).map((cm) => <button key={cm} className={c.cmp === cm ? 'on' : ''} onClick={() => setB((bb) => { bb[bi].conds[ci].cmp = cm; return bb; })}>{cm === 'ge' ? '≥' : '≤'}</button>)}
                       </div>
@@ -268,22 +299,28 @@ export default function Researcher() {
             <span className="sub">выражения над факторами: + − × ÷, скобки, avg / min / max / sum / abs</span>
           </div>
           <div className="fmls">
-            {formulas.map((f) => (
-              <div className="fml" key={f.id}>
-                <input className="fname" placeholder="имя" value={f.name} spellCheck={false}
-                  onChange={(e) => setFormulas((p) => p.map((x) => x.id === f.id ? { ...x, name: e.target.value } : x))} />
-                <span className="eq">=</span>
-                <input className="fexpr" placeholder="avg(momentum_21, momentum_63, momentum_126)" value={f.expr} spellCheck={false}
-                  onChange={(e) => setFormulas((p) => p.map((x) => x.id === f.id ? { ...x, expr: e.target.value } : x))} />
-                <span className="x" onClick={() => setFormulas((p) => p.filter((x) => x.id !== f.id))}>✕</span>
-                {ferrs[f.id]
-                  ? <span className="ferr">{ferrs[f.id]}</span>
-                  : (f.name.trim() && fmap.has(f.name.trim()) ? <span className="fok">✓ готово</span> : null)}
-              </div>
-            ))}
+            {formulas.map((f) => {
+              const err = validateFormula(f.name, f.expr);
+              const dirty = f.name !== f.savedName || f.expr !== f.savedExpr;
+              const canSave = dirty && err == null && !!f.name.trim() && !!f.expr.trim();
+              return (
+                <div className="fml" key={f.id}>
+                  <input className="fname" placeholder="имя" value={f.name} spellCheck={false}
+                    onChange={(e) => setFormulas((p) => p.map((x) => x.id === f.id ? { ...x, name: e.target.value } : x))} />
+                  <span className="eq">=</span>
+                  <input className="fexpr" placeholder="avg(momentum[21], momentum[63], momentum[126])" value={f.expr} spellCheck={false}
+                    onChange={(e) => setFormulas((p) => p.map((x) => x.id === f.id ? { ...x, expr: e.target.value } : x))} />
+                  <button className="btn sm" disabled={!canSave} onClick={() => setFormulas((p) => p.map((x) => x.id === f.id ? { ...x, savedName: x.name, savedExpr: x.expr } : x))}>Сохранить</button>
+                  <span className="x" onClick={() => setFormulas((p) => p.filter((x) => x.id !== f.id))}>✕</span>
+                  {err ? <span className="ferr">{err}</span>
+                    : dirty ? <span className="fwarn">● не сохранено — нажмите «Сохранить»</span>
+                    : <span className="fok">✓ применена</span>}
+                </div>
+              );
+            })}
           </div>
-          <button className="btn sm ghost" style={{ marginTop: 10 }} onClick={() => setFormulas((p) => [...p, { id: uid(), name: '', expr: '' }])}>+ формула</button>
-          <p className="sub" style={{ marginTop: 8 }}>Факторы: {BASE_COLS.map((c) => c.key).join(', ')}. Пример условия: <code>avgMom3 ≥ 10</code>.</p>
+          <button className="btn sm ghost" style={{ marginTop: 10 }} onClick={() => setFormulas((p) => [...p, { id: uid(), name: '', expr: '', savedName: '', savedExpr: '' }])}>+ формула</button>
+          <p className="sub" style={{ marginTop: 8 }}>Ссылки на факторы — <code>momentum[252]</code>, <code>vol[63]</code>, <code>xbench[21]</code>, <code>rsi[14]</code>, <code>sma_dist[200]</code>, <code>dist_ath[0]</code>. Пример: <code>avg(momentum[21], momentum[63], momentum[126])</code> → условие <code>avgMom3 ≥ 10</code>.</p>
         </div>
       </div>
 
@@ -298,7 +335,7 @@ export default function Researcher() {
               const on = display.includes(o.key);
               return <button key={o.key} className={`dc${on ? ' on' : ''}`} onClick={() => setDisplay((d) => on ? d.filter((x) => x !== o.key) : [...d, o.key])}>{o.label}</button>;
             })}
-            {formulaNames.map((nm) => {
+            {savedNames.map((nm) => {
               const on = display.includes(nm);
               return <button key={`f_${nm}`} className={`dc fdc${on ? ' on' : ''}`} onClick={() => setDisplay((d) => on ? d.filter((x) => x !== nm) : [...d, nm])}>ƒ {nm}</button>;
             })}
