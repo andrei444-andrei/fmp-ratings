@@ -704,7 +704,11 @@ function BlockEditor({ block, busy, onClose, onSave }: {
     setSearching(true);
     setNote(null);
     try {
-      const r = await fetch('/api/market/ticker-search', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query, mode }) });
+      const r = await fetch('/api/market/ticker-search', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ query, mode, context: { title: block.def.title, members } }),
+      });
       const d = await r.json();
       setResults(Array.isArray(d.items) ? d.items : []);
       setNote(typeof d.note === 'string' ? d.note : null);
