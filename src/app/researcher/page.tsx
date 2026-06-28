@@ -101,6 +101,7 @@ export default function Researcher() {
   const [view, setView] = useState<'all' | 'tickers' | 'years'>('all');
   const [rf, setRf] = useState({ minN: 0, minHit: 0, minRet: -1e9 }); // realtime-фильтры результата
   const [chartCol, setChartCol] = useState<string>(''); // метрика для графика ('' = авто по первому условию)
+  const [colDraft, setColDraft] = useState('vol_21'); // конструктор столбца (фактор+период) для кнопки «+»
   const [panel, setPanel] = useState<ScreenPanel | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
@@ -234,7 +235,7 @@ export default function Researcher() {
   const byY = byYraw.filter(passRf);
   const matchedN = consol.n;
   const setB = (f: (b: UBlock[]) => UBlock[]) => setBlocks((prev) => f(structuredClone(prev)));
-  const tColSpan = 9 + display.length;
+  const tColSpan = 10 + display.length;
   // Метрика для графика: выбранная (если валидна) → первое условие → первый столбец.
   const condCols = [...new Set(blk.flatMap((b) => b.conds.map((c) => c.col)))];
   const chartOpts = [...new Set([...condCols, ...display])];
@@ -250,9 +251,10 @@ export default function Researcher() {
       <th title="Средняя макс. неблагоприятная экскурсия от входа (MAE ≤ 0; 0, если позиция не уходила в минус)">MAE</th>
       <th title="Средняя макс. благоприятная экскурсия от входа (MFE ≥ 0; 0, если прибыли не было)">MFE</th>
       <th title="Среднее превышение бенчмарка SPY за горизонт (сырое, без винзоризации)">vs SPY</th>
+      <th title="t-статистика среднего форвардного возврата (|t|≥2 ≈ значимо). Грубо: наблюдения сэмплированы шагом H, межтикерная корреляция не учтена">t-стат</th>
     </>
   );
-  const outCells = (s: { hitPct: number; avgRet: number; medRet: number; avgMdd: number; avgMae: number; avgMfe: number; avgExc: number }) => (
+  const outCells = (s: { hitPct: number; avgRet: number; medRet: number; avgMdd: number; avgMae: number; avgMfe: number; avgExc: number; tstat: number }) => (
     <>
       <td className="num">{s.hitPct.toFixed(0)}%</td>
       <td className="num"><Num v={s.avgRet} /></td>
@@ -261,6 +263,7 @@ export default function Researcher() {
       <td className="num down">{fnum(s.avgMae)}</td>
       <td className="num up">{fnum(s.avgMfe)}</td>
       <td><FwdBar v={s.avgExc} /></td>
+      <td className="num" style={{ fontWeight: Math.abs(s.tstat) >= 2 ? 700 : 400, color: Math.abs(s.tstat) >= 2 ? 'var(--fk-text)' : 'var(--fk-text-3)' }}>{s.tstat.toFixed(2)}</td>
     </>
   );
 
@@ -412,17 +415,20 @@ export default function Researcher() {
       <div className="card">
         <div className="card-b">
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-            <span className="card-t">4 · Столбцы в таблице</span><span className="sub">факторы и формулы для показа · метрики оценки показываются всегда</span>
+            <span className="card-t">4 · Столбцы в таблице</span><span className="sub">выберите функцию и параметр, нажмите «+» · метрики оценки показываются всегда</span>
           </div>
+          {/* выбранные столбцы — удаляемые чипы (в каноническом порядке) */}
           <div className="dchips">
-            {BASE_COLS.map((o) => {
-              const on = display.includes(o.key);
-              return <button key={o.key} className={`dc${on ? ' on' : ''}`} onClick={() => setDisplay((d) => on ? d.filter((x) => x !== o.key) : [...d, o.key])}>{o.label}</button>;
-            })}
-            {savedNames.map((nm) => {
-              const on = display.includes(nm);
-              return <button key={`f_${nm}`} className={`dc fdc${on ? ' on' : ''}`} onClick={() => setDisplay((d) => on ? d.filter((x) => x !== nm) : [...d, nm])}>ƒ {nm}</button>;
-            })}
+            {displayCols.length
+              ? displayCols.map((k) => <button key={k} className={`dc on${savedNames.includes(k) ? ' fdc' : ''}`} onClick={() => setDisplay((d) => d.filter((x) => x !== k))} title="убрать столбец">{colLabel(k)} ✕</button>)
+              : <span className="sub">столбцов нет — добавьте ниже</span>}
+          </div>
+          {/* добавление столбца: функция + параметр + «+» */}
+          <div className="addcol">
+            <span className="lbl">Добавить столбец:</span>
+            <CondCol value={colDraft} onChange={setColDraft} />
+            <button type="button" className="btn sm" disabled={display.includes(colDraft)} onClick={() => setDisplay((d) => d.includes(colDraft) ? d : [...d, colDraft])}>+ добавить</button>
+            {display.includes(colDraft) && <span className="sub">уже добавлен</span>}
           </div>
         </div>
       </div>
@@ -460,7 +466,9 @@ export default function Researcher() {
               <div className="statgrid cons">
                 {([['Сделок', String(consol.n), ''], ['Тикеров', String(consol.tickers), ''], ['Доля +', consol.hitPct.toFixed(0) + '%', ''], ['Ср. return', fnum(consol.avgRet) + '%', cls(consol.avgRet)],
                   ['Медиана', fnum(consol.medRet) + '%', cls(consol.medRet)], ['Просадка', fnum(consol.avgMdd) + '%', 'down'], ['MAE', fnum(consol.avgMae) + '%', 'down'], ['MFE', fnum(consol.avgMfe) + '%', 'up'],
-                  ['vs SPY', fnum(consol.avgExc) + '%', cls(consol.avgExc)], ['Период', allDeals.length ? `${allDeals[0].date} … ${allDeals[allDeals.length - 1].date}` : '—', '']] as [string, string, string][]).map(([k, v, t]) => (
+                  ['vs SPY', fnum(consol.avgExc) + '%', cls(consol.avgExc)],
+                  ['t-стат', consol.tstat.toFixed(2), Math.abs(consol.tstat) >= 2 ? 'up' : ''], ['p-value', consol.pval.toFixed(3), consol.pval <= 0.05 ? 'up' : ''],
+                  ['Период', allDeals.length ? `${allDeals[0].date} … ${allDeals[allDeals.length - 1].date}` : '—', '']] as [string, string, string][]).map(([k, v, t]) => (
                   <div className="stat" key={k}><div className="k">{k}</div><div className={`v ${t}`}>{v}</div></div>
                 ))}
               </div>
@@ -498,7 +506,7 @@ export default function Researcher() {
                       {outCells(y)}
                     </tr>
                   ))}
-                  {!byY.length && <tr><td className="l sub" colSpan={10} style={{ padding: 20 }}>{byYraw.length ? 'Все строки отсеяны фильтром.' : 'Нет сделок в окне лет.'}</td></tr>}
+                  {!byY.length && <tr><td className="l sub" colSpan={11} style={{ padding: 20 }}>{byYraw.length ? 'Все строки отсеяны фильтром.' : 'Нет сделок в окне лет.'}</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -529,6 +537,8 @@ function Drawer({ panel, blocks, drill, horizon, minYear, formulas, display, col
     ['MAE', fnum(st.avgMae) + '%', 'down'],
     ['MFE', fnum(st.avgMfe) + '%', 'up'],
     ['vs SPY', fnum(st.avgExc) + '%', cls(st.avgExc)],
+    ['t-стат', st.tstat.toFixed(2), Math.abs(st.tstat) >= 2 ? 'up' : ''],
+    ['p-value', st.pval.toFixed(3), st.pval <= 0.05 ? 'up' : ''],
   ];
   return (
     <div className="rsx">

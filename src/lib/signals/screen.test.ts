@@ -87,6 +87,16 @@ describe('screen — конструктор условий', () => {
     expect(aaa.medRet).toBeCloseTo(med, 9);
   });
 
+  it('t-стат среднего форвардного возврата = mean/(sd/√n)', () => {
+    const aaa = screenByTicker(P, [{ conds: [] }], [])!.find((g) => g.symbol === 'AAA')!;
+    const r = P.rows.filter((x) => x[0] === 0).map((x) => x[2] as number);
+    const m = r.reduce((a, b) => a + b, 0) / r.length;
+    const sd = Math.sqrt(r.reduce((s, x) => s + (x - m) * (x - m), 0) / (r.length - 1));
+    expect(aaa.tstat).toBeCloseTo(m / (sd / Math.sqrt(r.length)), 9);
+    expect(aaa.pval).toBeGreaterThanOrEqual(0);
+    expect(aaa.pval).toBeLessThanOrEqual(1);
+  });
+
   it('окно лет (minYear) отсекает ранние наблюдения', () => {
     const all = screenByYear(P, [{ conds: [] }]);
     const win = screenByYear(P, [{ conds: [] }], 2023);
