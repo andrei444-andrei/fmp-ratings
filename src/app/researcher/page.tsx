@@ -67,6 +67,16 @@ const cls = (v: number | null) => (v == null ? 'flat' : v > 0 ? 'up' : v < 0 ? '
 const fnum = (v: number | null, d = 1) => (v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(d));
 const isRsiKey = (k: string) => k.startsWith('rsi');
 
+// Дефолты конфигурации скринера (для старта и кнопки «Сбросить»).
+const SEED_EXPR = 'avg(momentum[21], momentum[63], momentum[126])';
+const DEF_UNITEXT = GROUPS['Сырьё'].join(', ');
+const DEF_BLOCKS: UBlock[] = [{ conds: [{ col: 'momentum_63', cmp: 'ge', val: 10, not: false }, { col: 'vol_21', cmp: 'le', val: 30, not: false }] }];
+const DEF_FORMULAS: FormulaDef[] = [{ id: 'f0', name: 'avgMom3', expr: SEED_EXPR, savedName: 'avgMom3', savedExpr: SEED_EXPR }];
+const DEF_DISPLAY = ['momentum_63', 'vol_21', 'rsi_14', 'avgMom3'];
+const CFG_KEY = 'rsx:cfg:v1'; // localStorage-ключ UI-настроек (БЕЗ формул — те в БД)
+const parseUni = (s: string) => [...new Set(String(s).toUpperCase().split(/[^A-Z0-9.\-]+/).filter(Boolean))].slice(0, 40);
+const newId = () => (typeof crypto !== 'undefined' && crypto.randomUUID ? `f_${crypto.randomUUID()}` : `f_${Math.round(performance.now())}_${Math.floor(performance.now() % 1000)}`);
+
 function FwdBar({ v }: { v: number }) {
   const w = Math.min(50, Math.abs(v) * 2.2);
   return (
@@ -80,17 +90,13 @@ const Num = ({ v, d = 1 }: { v: number | null; d?: number }) => <span className=
 
 export default function Researcher() {
   const [group, setGroup] = useState('Сырьё');
-  const [uniText, setUniText] = useState(GROUPS['Сырьё'].join(', '));
+  const [uniText, setUniText] = useState(DEF_UNITEXT);
   const [horizon, setHorizon] = useState(21);
   const [years, setYears] = useState(10);
-  const [blocks, setBlocks] = useState<UBlock[]>([
-    { conds: [{ col: 'momentum_63', cmp: 'ge', val: 10, not: false }, { col: 'vol_21', cmp: 'le', val: 30, not: false }] },
-  ]);
-  // Вычисляемые метрики (формулы над факторами). Сид-пример (уже сохранён) = запрошенный кейс «ср. моментум 1/3/6м».
-  const [formulas, setFormulas] = useState<FormulaDef[]>([
-    { id: 'f0', name: 'avgMom3', expr: 'avg(momentum[21], momentum[63], momentum[126])', savedName: 'avgMom3', savedExpr: 'avg(momentum[21], momentum[63], momentum[126])' },
-  ]);
-  const [display, setDisplay] = useState<string[]>(['momentum_63', 'vol_21', 'rsi_14', 'avgMom3']);
+  const [blocks, setBlocks] = useState<UBlock[]>(structuredClone(DEF_BLOCKS));
+  // Вычисляемые метрики (формулы) — постоянно в БД (см. /api/researcher/formulas). Сид-пример до загрузки из БД.
+  const [formulas, setFormulas] = useState<FormulaDef[]>(structuredClone(DEF_FORMULAS));
+  const [display, setDisplay] = useState<string[]>([...DEF_DISPLAY]);
   const [view, setView] = useState<'all' | 'tickers' | 'years'>('all');
   const [rf, setRf] = useState({ minN: 0, minHit: 0, minRet: -1e9 }); // realtime-фильтры результата
   const [chartCol, setChartCol] = useState<string>(''); // метрика для графика ('' = авто по первому условию)
@@ -98,8 +104,8 @@ export default function Researcher() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
   const [drill, setDrill] = useState<{ kind: 't' | 'y'; kv: string } | null>(null);
-  const idRef = useRef(1);
-  const uid = () => `f${++idRef.current}`;
+  const loadedRef = useRef(false);          // настройки восстановлены (можно начинать персист)
+  const [cfgNonce, setCfgNonce] = useState(0); // ремоунт uncontrolled-инпутов после восстановления/сброса
 
   const universe = useMemo(() => [...new Set(uniText.toUpperCase().split(/[^A-Z0-9.\-]+/).filter(Boolean))].slice(0, 40), [uniText]);
   const [applied, setApplied] = useState<{ uni: string; horizon: number } | null>(null);
@@ -145,7 +151,66 @@ export default function Researcher() {
     if (ok) setApplied({ uni: uni.join(','), horizon: hz });
   }, [fetchPanel]);
 
-  useEffect(() => { apply(universe, horizon); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Сохранить формулу НАВСЕГДА в БД (по кнопке), затем зафиксировать «применённый» снимок локально.
+  const saveFormula = useCallback(async (f: FormulaDef) => {
+    const name = f.name.trim(), expr = f.expr.trim();
+    try {
+      const r = await fetch('/api/researcher/formulas', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: f.id, name, expr }) });
+      const j = await r.json().catch(() => ({}));
+      if (j?.error) throw new Error(j.error);
+      setFormulas((p) => p.map((x) => (x.id === f.id ? { ...x, name, expr, savedName: name, savedExpr: expr } : x)));
+    } catch (e: any) { setErr(`формула не сохранена в БД: ${e?.message || e}`); }
+  }, []);
+  const deleteFormula = useCallback(async (id: string) => {
+    setFormulas((p) => p.filter((x) => x.id !== id));
+    try { await fetch(`/api/researcher/formulas?id=${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch { /* удалится из БД позже/вручную */ }
+  }, []);
+
+  // Восстановление настроек (UI — из localStorage; формулы — из БД, навсегда) + первичная загрузка панели. Один раз.
+  useEffect(() => {
+    let cfg: any = null;
+    try { const raw = localStorage.getItem(CFG_KEY); if (raw) cfg = JSON.parse(raw); } catch { /* нет/битый */ }
+    if (cfg && typeof cfg === 'object') {
+      if (typeof cfg.uniText === 'string') setUniText(cfg.uniText);
+      if (typeof cfg.group === 'string') setGroup(cfg.group);
+      if (typeof cfg.horizon === 'number') setHorizon(cfg.horizon);
+      if (typeof cfg.years === 'number') setYears(cfg.years);
+      if (Array.isArray(cfg.blocks)) setBlocks(cfg.blocks);
+      if (Array.isArray(cfg.display)) setDisplay(cfg.display);
+      if (cfg.view === 'all' || cfg.view === 'tickers' || cfg.view === 'years') setView(cfg.view);
+    }
+    (async () => {
+      try {
+        const r = await fetch('/api/researcher/formulas');
+        const j = await r.json().catch(() => ({}));
+        if (Array.isArray(j?.formulas) && j.formulas.length) {
+          setFormulas(j.formulas.map((f: any) => ({ id: String(f.id), name: String(f.name), expr: String(f.expr), savedName: String(f.name), savedExpr: String(f.expr) })));
+        } else {
+          // БД пуста → сохраняем сид-формулу навсегда (чтобы avgMom3 работала из коробки).
+          fetch('/api/researcher/formulas', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: DEF_FORMULAS[0].id, name: DEF_FORMULAS[0].name, expr: DEF_FORMULAS[0].expr }) }).catch(() => {});
+        }
+      } catch { /* БД недоступна → остаётся сид-формула */ }
+    })();
+    loadedRef.current = true;
+    setCfgNonce((n) => n + 1);
+    apply(parseUni(cfg?.uniText ?? DEF_UNITEXT), typeof cfg?.horizon === 'number' ? cfg.horizon : 21);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Персист UI-настроек в localStorage (формулы НЕ здесь — они в БД).
+  useEffect(() => {
+    if (!loadedRef.current) return;
+    try { localStorage.setItem(CFG_KEY, JSON.stringify({ uniText, group, horizon, years, blocks, display, view })); } catch { /* квота/приватный режим */ }
+  }, [uniText, group, horizon, years, blocks, display, view]);
+
+  // Сброс UI-настроек к дефолтам (формулы в БД не трогаем — они постоянные).
+  const resetAll = () => {
+    try { localStorage.removeItem(CFG_KEY); } catch { /* */ }
+    setGroup('Сырьё'); setUniText(DEF_UNITEXT); setHorizon(21); setYears(10);
+    setBlocks(structuredClone(DEF_BLOCKS)); setDisplay([...DEF_DISPLAY]); setView('all');
+    setRf({ minN: 0, minHit: 0, minRet: -1e9 }); setCfgNonce((n) => n + 1);
+    apply(parseUni(DEF_UNITEXT), 21);
+  };
+
   const dirty = !applied || applied.uni !== universe.join(',') || applied.horizon !== horizon;
 
   const lastYear = panel ? +String(panel.meta?.last || panel.dates[panel.dates.length - 1] || '').slice(0, 4) || null : null;
@@ -154,7 +219,11 @@ export default function Researcher() {
   const minYear = lastYear != null ? lastYear - years + 1 : undefined;
 
   const blk = blocks as Block[];
-  const byTraw = useMemo(() => (panel ? screenByTicker(panel, blk, display, minYear, fmap) : []), [panel, blocks, display, minYear, fmap]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Каноническая последовательность столбцов: факторы по типу (моментум → вола → … ) с возрастающим
+  // периодом (порядок BASE_COLS), формулы — в конце. Чтобы столбцы шли логично, а не в порядке клика.
+  const colRank = (k: string) => { const i = BASE_COLS.findIndex((c) => c.key === k); return i >= 0 ? i : 1000 + Math.max(0, savedNames.indexOf(k)); };
+  const displayCols = useMemo(() => [...display].sort((a, b) => colRank(a) - colRank(b)), [display, savedNames]); // eslint-disable-line react-hooks/exhaustive-deps
+  const byTraw = useMemo(() => (panel ? screenByTicker(panel, blk, displayCols, minYear, fmap) : []), [panel, blocks, displayCols, minYear, fmap]); // eslint-disable-line react-hooks/exhaustive-deps
   const byYraw = useMemo(() => (panel ? screenByYear(panel, blk, minYear, fmap) : []), [panel, blocks, minYear, fmap]); // eslint-disable-line react-hooks/exhaustive-deps
   const allDeals = useMemo(() => (panel ? screenAllDeals(panel, blk, minYear, fmap) : []), [panel, blocks, minYear, fmap]); // eslint-disable-line react-hooks/exhaustive-deps
   const consol = useMemo(() => dealStats(allDeals), [allDeals]);
@@ -258,10 +327,11 @@ export default function Researcher() {
             <button type="button" className={`btn apply${dirty ? ' on' : ''}`} disabled={loading || universe.length < 1} onClick={() => apply(universe, horizon)}>
               {loading ? 'Пересчёт…' : dirty ? 'Применить — пересчитать данные' : 'Обновить данные'}
             </button>
+            <button type="button" className="btn ghost sm" onClick={resetAll}>Сбросить к дефолтам</button>
             <span className="sub">
               {loading ? 'запрос подготовленных данных с бэка…'
                 : dirty ? 'изменены вселенная или горизонт — нажмите «Применить», чтобы пересчитать'
-                : 'данные актуальны · условия, формулы, окно лет и столбцы пересчитываются на клиенте мгновенно'}
+                : 'настройка сохраняется в браузере, формулы — в БД · условия/окно лет/столбцы считаются мгновенно'}
             </span>
           </div>
           {err && <p className="sub" style={{ color: 'var(--fk-down-text,#c81e3c)', fontWeight: 600, marginTop: 6 }}>Ошибка: {err}</p>}
@@ -291,7 +361,7 @@ export default function Researcher() {
                       <div className="seg">
                         {(['ge', 'le'] as Cmp[]).map((cm) => <button key={cm} className={c.cmp === cm ? 'on' : ''} onClick={() => setB((bb) => { bb[bi].conds[ci].cmp = cm; return bb; })}>{cm === 'ge' ? '≥' : '≤'}</button>)}
                       </div>
-                      <input className="val" defaultValue={c.val} inputMode="decimal" onChange={(e) => { const n = parseFloat(e.target.value); if (!isNaN(n)) setB((bb) => { bb[bi].conds[ci].val = n; return bb; }); }} />
+                      <input className="val" key={`v-${cfgNonce}`} defaultValue={c.val} inputMode="decimal" onChange={(e) => { const n = parseFloat(e.target.value); if (!isNaN(n)) setB((bb) => { bb[bi].conds[ci].val = n; return bb; }); }} />
                       <span className="x" onClick={() => setB((bb) => { bb[bi].conds.splice(ci, 1); return bb; })}>✕</span>
                     </div>
                   ))}
@@ -323,8 +393,8 @@ export default function Researcher() {
                   <span className="eq">=</span>
                   <input className="fexpr" placeholder="avg(momentum[21], momentum[63], momentum[126])" value={f.expr} spellCheck={false}
                     onChange={(e) => setFormulas((p) => p.map((x) => x.id === f.id ? { ...x, expr: e.target.value } : x))} />
-                  <button className="btn sm" disabled={!canSave} onClick={() => setFormulas((p) => p.map((x) => x.id === f.id ? { ...x, savedName: x.name, savedExpr: x.expr } : x))}>Сохранить</button>
-                  <span className="x" onClick={() => setFormulas((p) => p.filter((x) => x.id !== f.id))}>✕</span>
+                  <button className="btn sm" disabled={!canSave} onClick={() => saveFormula(f)}>Сохранить</button>
+                  <span className="x" onClick={() => deleteFormula(f.id)}>✕</span>
                   {err ? <span className="ferr">{err}</span>
                     : dirty ? <span className="fwarn">● не сохранено — нажмите «Сохранить»</span>
                     : <span className="fok">✓ применена</span>}
@@ -332,8 +402,8 @@ export default function Researcher() {
               );
             })}
           </div>
-          <button className="btn sm ghost" style={{ marginTop: 10 }} onClick={() => setFormulas((p) => [...p, { id: uid(), name: '', expr: '', savedName: '', savedExpr: '' }])}>+ формула</button>
-          <p className="sub" style={{ marginTop: 8 }}>Ссылки на факторы — <code>momentum[252]</code>, <code>vol[63]</code>, <code>xbench[21]</code>, <code>rsi[14]</code>, <code>sma_dist[200]</code>, <code>dist_ath[0]</code>. Пример: <code>avg(momentum[21], momentum[63], momentum[126])</code> → условие <code>avgMom3 ≥ 10</code>.</p>
+          <button className="btn sm ghost" style={{ marginTop: 10 }} onClick={() => setFormulas((p) => [...p, { id: newId(), name: '', expr: '', savedName: '', savedExpr: '' }])}>+ формула</button>
+          <p className="sub" style={{ marginTop: 8 }}>Сохранённые формулы хранятся в БД (навсегда). Ссылки на факторы — <code>momentum[252]</code>, <code>vol[63]</code>, <code>xbench[21]</code>, <code>rsi[14]</code>, <code>sma_dist[200]</code>, <code>dist_ath[0]</code>. Пример: <code>avg(momentum[21], momentum[63], momentum[126])</code> → условие <code>avgMom3 ≥ 10</code>.</p>
         </div>
       </div>
 
@@ -403,12 +473,12 @@ export default function Researcher() {
           ) : view === 'tickers' ? (
             <div style={{ overflowX: 'auto' }}>
               <table>
-                <thead><tr><th className="l">Тикер</th><th>Сделок</th>{display.map((k) => <th key={k}>{colLabel(k)}</th>)}{outHead}</tr></thead>
+                <thead><tr><th className="l">Тикер</th><th>Сделок</th>{displayCols.map((k) => <th key={k}>{colLabel(k)}</th>)}{outHead}</tr></thead>
                 <tbody>
                   {byT.map((r) => (
                     <tr key={r.symbol} className="click" onClick={() => setDrill({ kind: 't', kv: r.symbol })}>
                       <td className="l"><span className="sy">{r.symbol}</span></td><td className="num">{r.n}</td>
-                      {r.disp.map((v, i) => <td key={i} className={`num ${cls(v)}`}>{v == null ? '—' : isRsiKey(display[i]) ? v.toFixed(0) : fnum(v)}</td>)}
+                      {r.disp.map((v, i) => <td key={i} className={`num ${cls(v)}`}>{v == null ? '—' : isRsiKey(displayCols[i]) ? v.toFixed(0) : fnum(v)}</td>)}
                       {outCells(r)}
                     </tr>
                   ))}
@@ -436,7 +506,7 @@ export default function Researcher() {
         </div>
       </div>
 
-      {drill && panel && <Drawer panel={panel} blocks={blk} drill={drill} horizon={panel.horizon || horizon} minYear={minYear} formulas={fmap} display={display} colLabel={colLabel} onClose={() => setDrill(null)} />}
+      {drill && panel && <Drawer panel={panel} blocks={blk} drill={drill} horizon={panel.horizon || horizon} minYear={minYear} formulas={fmap} display={displayCols} colLabel={colLabel} onClose={() => setDrill(null)} />}
     </main>
   );
 }
