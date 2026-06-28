@@ -128,6 +128,17 @@ def factor_series(c, bc, fid, param, has_b, skip=0):
             exc = (c.shift(sk) / c.shift(p) - 1.0) * 100.0
         vol = c.pct_change().rolling(p).std() * math.sqrt(252) * 100.0
         return exc / vol.replace(0, np.nan)
+    if fid == 'xvadj':
+        # Превышение бенча, СКОРРЕКТИРОВАННОЕ НА ВОЛАТИЛЬНОСТЬ: доходность актива приводим к воле бенча
+        # (масштаб vol_bench/vol_asset), затем вычитаем доходность бенча. Равные по риск-доходности активы
+        # дают 0. В % (пунктах доходности). Множитель годовой нормировки в отношении вол сокращается.
+        if not has_b:
+            return c * np.nan
+        ar = c.shift(sk) / c.shift(p) - 1.0
+        br = bc.shift(sk) / bc.shift(p) - 1.0
+        av = c.pct_change().rolling(p).std()
+        bv = bc.pct_change().rolling(p).std()
+        return (ar * (bv / av.replace(0, np.nan)) - br) * 100.0
     if fid == 'vol':
         return c.pct_change().rolling(p).std() * math.sqrt(252) * 100.0
     if fid == 'dist_ath':
@@ -899,6 +910,7 @@ async def main():
                 ('vol', 10), ('vol', 21), ('vol', 63), ('vol', 126),
                 ('dist_ath', 0), ('dist_ath', 63), ('dist_ath', 252),
                 ('xbench', 5), ('xbench', 10), ('xbench', 21), ('xbench', 63), ('xbench', 126), ('xbench', 252),
+                ('xvadj', 21), ('xvadj', 63), ('xvadj', 126), ('xvadj', 252),
                 ('sma_dist', 20), ('sma_dist', 50), ('sma_dist', 100), ('sma_dist', 200),
                 ('rsi', 7), ('rsi', 14), ('rsi', 21)]
         cols = [f + '_' + str(p) for f, p in METR]

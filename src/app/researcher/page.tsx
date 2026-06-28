@@ -25,6 +25,7 @@ const METRICS: Record<string, { label: string; periods: number[]; unit: string }
   vol: { label: 'Волатильность', periods: [10, 21, 63, 126], unit: '%' },
   dist_ath: { label: 'Расст. от макс.', periods: [0, 63, 252], unit: '%' },
   xbench: { label: 'Превышение бенч.', periods: [5, 10, 21, 63, 126, 252], unit: 'пп' },
+  xvadj: { label: 'Превыш., норм. на волу', periods: [21, 63, 126, 252], unit: 'пп' },
   sma_dist: { label: 'Откл. от SMA', periods: [20, 50, 100, 200], unit: '%' },
   rsi: { label: 'RSI', periods: [7, 14, 21], unit: '' },
 };
