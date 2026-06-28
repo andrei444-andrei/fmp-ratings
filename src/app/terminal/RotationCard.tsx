@@ -79,17 +79,16 @@ function RRGChart({ items }: { items: RotationItem[] }) {
         <text x={S - pad - 4} y={S - pad - 5} textAnchor="end" fontSize="9.5" fontWeight="700" fill="#f59e0b">СЛАБЕЮТ</text>
         <text x={pad + 4} y={S - pad - 5} fontSize="9.5" fontWeight="700" fill="#f43f5e">ОТСТАЮТ</text>
         <text x={pad + 4} y={pad + 12} fontSize="9.5" fontWeight="700" fill="#6d5bf0">УЛУЧШАЮТСЯ</text>
-        {/* items: tail + dot + label */}
+        {/* items: гладкий хвост + точка + подпись с белым ореолом */}
         {items.map((it) => {
           const col = QC[it.quadrant].c;
           const path = it.tail.map((p, i) => `${i ? 'L' : 'M'}${X(p.x).toFixed(1)} ${Y(p.y).toFixed(1)}`).join(' ');
           const cur = it.tail[it.tail.length - 1];
           return (
             <g key={it.symbol}>
-              <path d={path} fill="none" stroke={col} strokeWidth={1.4} opacity={0.45} />
-              {it.tail.map((p, i) => (i < it.tail.length - 1 ? <circle key={i} cx={X(p.x).toFixed(1)} cy={Y(p.y).toFixed(1)} r={1.6} fill={col} opacity={0.4} /> : null))}
-              <circle cx={X(cur.x).toFixed(1)} cy={Y(cur.y).toFixed(1)} r={5} fill={col} stroke="#fff" strokeWidth={1.4} />
-              <text x={(X(cur.x) + 8).toFixed(1)} y={(Y(cur.y) + 3.5).toFixed(1)} fontSize="10" fontWeight="700" fill="#0f1729">{it.symbol}</text>
+              <path d={path} fill="none" stroke={col} strokeWidth={1.3} strokeLinejoin="round" strokeLinecap="round" opacity={0.35} />
+              <circle cx={X(cur.x).toFixed(1)} cy={Y(cur.y).toFixed(1)} r={5} fill={col} stroke="#fff" strokeWidth={1.5} />
+              <text x={(X(cur.x) + 8).toFixed(1)} y={(Y(cur.y) + 3.5).toFixed(1)} fontSize="10" fontWeight="700" fill="#0f1729" stroke="#fff" strokeWidth={2.6} paintOrder="stroke" strokeLinejoin="round">{it.symbol}</text>
             </g>
           );
         })}
@@ -104,6 +103,15 @@ function RRGChart({ items }: { items: RotationItem[] }) {
           </span>
         ))}
       </div>
+      <details className="text-[11px] text-ink-3">
+        <summary className="cursor-pointer select-none hover:text-ink-2">ℹ как считается</summary>
+        <div className="mt-1.5 space-y-1 leading-relaxed">
+          <div><b className="text-ink-2">RS</b> = цена сектора / SPY (относительная сила).</div>
+          <div><b className="text-ink-2">RS-Ratio (X)</b> = 100·RS / среднее(RS). &gt;100 — сектор сильнее рынка, &lt;100 — слабее.</div>
+          <div><b className="text-ink-2">RS-Momentum (Y)</b> = ускорение RS-Ratio. &gt;100 — сила растёт, &lt;100 — затухает.</div>
+          <div>Ряды сглажены EMA. Хвост — траектория ~6 недель. Движение по часовой: Улучшаются → Лидеры → Слабеют → Отстают.</div>
+        </div>
+      </details>
     </div>
   );
 }

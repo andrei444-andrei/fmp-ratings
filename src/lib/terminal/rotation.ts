@@ -11,8 +11,11 @@ import { readSnapshot, writeSnapshot, isFresh } from './store';
 
 const BENCH = 'SPY';
 const LOOKBACK_DAYS = 320; // ~250 торг. дней + запас
-const W_RATIO = 50; // окно нормализации RS-Ratio (торг. дни)
+const EMA_REL = 8; // сглаживание относительной силы (убирает дневной шум)
+const W_RATIO = 60; // окно нормализации RS-Ratio (торг. дни)
+const EMA_RATIO = 8; // доп. сглаживание RS-Ratio → гладкие дуги
 const W_MOM = 20; // окно момента RS-Ratio
+const EMA_MOM = 5; // сглаживание момента
 const TAIL_POINTS = 6; // недельных точек в хвосте
 const TAIL_STEP = 5; // ~неделя
 
@@ -34,7 +37,7 @@ export type RotationData = {
   synthetic: boolean;
 };
 
-const ROTATION_KEY = 'rotation';
+const ROTATION_KEY = 'rotation_v2'; // v2: EMA-сглаживание рядов (гладкие хвосты)
 
 function isoDaysAgo(n: number): string {
   const d = new Date();
@@ -50,6 +53,18 @@ function smaSeries(xs: number[], n: number): (number | null)[] {
     sum += xs[i];
     if (i >= n) sum -= xs[i - n];
     if (i >= n - 1) out[i] = sum / n;
+  }
+  return out;
+}
+
+/** EMA как РЯД той же длины (сглаживание шума → гладкие хвосты RRG). */
+function emaSeries(xs: number[], n: number): number[] {
+  const out: number[] = new Array(xs.length);
+  const a = 2 / (n + 1);
+  let prev = xs[0] ?? 0;
+  for (let i = 0; i < xs.length; i++) {
+    prev = i === 0 ? xs[i] : xs[i] * a + prev * (1 - a);
+    out[i] = prev;
   }
   return out;
 }
@@ -99,11 +114,16 @@ export async function computeRotation(symbols?: string[]): Promise<RotationData>
         }
       }
       if (rel.length < W_RATIO + W_MOM + TAIL_POINTS * TAIL_STEP) continue;
-      const smaRel = smaSeries(rel, W_RATIO);
-      const rsRatioSeries = rel.map((v, i) => (smaRel[i] != null && smaRel[i]! > 0 ? 100 * (v / smaRel[i]!) : null));
+      // RS-Ratio: сглаженная относительная сила / её норма; затем доп. EMA для гладких дуг
+      const relS = emaSeries(rel, EMA_REL);
+      const smaRel = smaSeries(relS, W_RATIO);
+      const ratioRaw = relS.map((v, i) => (smaRel[i] != null && smaRel[i]! > 0 ? 100 * (v / smaRel[i]!) : 100));
+      const rsRatioSeries: (number | null)[] = emaSeries(ratioRaw, EMA_RATIO);
+      // RS-Momentum: ускорение RS-Ratio относительно своей нормы (тоже сглажено)
       const ratioClean = rsRatioSeries.map((v) => (v == null ? 100 : v));
       const smaRatio = smaSeries(ratioClean, W_MOM);
-      const rsMomSeries = ratioClean.map((v, i) => (smaRatio[i] != null && smaRatio[i]! > 0 ? 100 * (v / smaRatio[i]!) : null));
+      const momRaw = ratioClean.map((v, i) => (smaRatio[i] != null && smaRatio[i]! > 0 ? 100 * (v / smaRatio[i]!) : 100));
+      const rsMomSeries: (number | null)[] = emaSeries(momRaw, EMA_MOM);
 
       // хвост — последние TAIL_POINTS точек с шагом TAIL_STEP
       const tail: RotationPoint[] = [];
