@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { normalizeConfig, DEFAULT_CONFIG } from './config-store';
-import { applyBlockOverrides, SEED_BLOCKS } from './registry';
+import { applyBlockOverrides, effectiveBlocks, SEED_BLOCKS } from './registry';
 
 describe('normalizeConfig', () => {
   it('подставляет дефолты для пустого/мусорного ввода', () => {
@@ -29,6 +29,46 @@ describe('normalizeConfig', () => {
     expect(c.blocks.chips).toEqual(['NVDA']);
     expect(c.blocks).not.toHaveProperty('bad__id$');
     expect(c.blocks).not.toHaveProperty('empty');
+  });
+
+  it('санитизирует customBaskets / hiddenBlocks / blockTitles', () => {
+    const c = normalizeConfig({
+      customBaskets: [
+        { id: 'my_basket', title: '  Моя  корзина  ', members: ['nvda', 'avgo', 'nvda'] }, // тримминг title, дедуп
+        { id: 'no_members', title: 'X', members: [] }, // без бумаг → отброшена
+        { id: 'bad id', title: 'Y', members: ['AAA'] }, // невалидный id → отброшена
+      ],
+      hiddenBlocks: ['metals', 'bad id!', 'metals'], // дедуп + отсев мусора
+      blockTitles: { countries: '  Страны  мира ', bad$id: 'Z' },
+    });
+    expect(c.customBaskets).toHaveLength(1);
+    expect(c.customBaskets[0]).toEqual({ id: 'my_basket', title: 'Моя корзина', members: ['NVDA', 'AVGO'] });
+    expect(c.hiddenBlocks).toEqual(['metals']);
+    expect(c.blockTitles).toEqual({ countries: 'Страны мира' });
+  });
+});
+
+describe('effectiveBlocks', () => {
+  it('без настроек = сид', () => {
+    const out = effectiveBlocks({});
+    expect(out.map((b) => b.id)).toEqual(SEED_BLOCKS.map((b) => b.id));
+  });
+
+  it('скрывает блок, переименовывает, добавляет кастомную корзину', () => {
+    const out = effectiveBlocks({
+      hiddenBlocks: ['metals'],
+      blockTitles: { countries: 'Страны мира' },
+      customBaskets: [{ id: 'ai_infra', title: 'AI-инфраструктура', members: ['NVDA', 'AVGO', 'SMCI'] }],
+    });
+    const ids = out.map((b) => b.id);
+    expect(ids).not.toContain('metals'); // скрыт
+    expect(out.find((b) => b.id === 'countries')!.title).toBe('Страны мира'); // переименован
+    const custom = out.find((b) => b.id === 'ai_infra')!;
+    expect(custom.type).toBe('basket');
+    expect(custom.custom).toBe(true);
+    expect(custom.benchmark).toBe('SPY');
+    expect(custom.members).toEqual(['NVDA', 'AVGO', 'SMCI']);
+    expect(ids[ids.length - 1]).toBe('ai_infra'); // кастомные в конце
   });
 });
 

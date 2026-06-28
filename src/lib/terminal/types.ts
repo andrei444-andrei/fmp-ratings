@@ -32,6 +32,8 @@ export type BlockDef = {
   /** Символы инструментов (many-to-many: один символ может входить в разные блоки). */
   members: string[];
   layout?: BlockLayout;
+  /** true — пользовательская корзина (создана в UI), а не сид-блок. */
+  custom?: boolean;
 };
 
 // Метрики одного инструмента — результат чистых функций от ряда цен.
@@ -67,6 +69,8 @@ export type BlockMetrics = {
   avgCorr: number | null; // средняя попарная корреляция 63д
   best: { symbol: string; ret63: number } | null;
   worst: { symbol: string; ret63: number } | null;
+  /** Общая доходность блока/корзины (equal-weight среднее по членам): window→%, и YTD. */
+  agg: { returns: Record<number, number | null>; ytd: number | null };
 };
 
 export type InstrumentCell = { def: InstrumentDef; metrics: InstrumentMetrics | null };

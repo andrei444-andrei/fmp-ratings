@@ -116,6 +116,33 @@ export function applyBlockOverrides(overrides?: Record<string, string[]>): Block
   });
 }
 
+/**
+ * Итоговый список блоков-виджетов с учётом всех пользовательских настроек:
+ * переопределения состава и названий, скрытие сид-блоков и пользовательские корзины
+ * (добавляются в конец как type='basket', бенчмарк SPY). Сид остаётся источником по умолчанию.
+ */
+export function effectiveBlocks(opts: {
+  blocks?: Record<string, string[]>;
+  customBaskets?: { id: string; title: string; members: string[] }[];
+  hiddenBlocks?: string[];
+  blockTitles?: Record<string, string>;
+} = {}): BlockDef[] {
+  const { blocks, customBaskets = [], hiddenBlocks = [], blockTitles = {} } = opts;
+  const hidden = new Set(hiddenBlocks);
+  const seed = SEED_BLOCKS.filter((b) => !hidden.has(b.id)).map((b) => {
+    const ov = blocks?.[b.id];
+    const title = blockTitles[b.id];
+    let out = b;
+    if (ov && ov.length) out = { ...out, members: ov };
+    if (title) out = { ...out, title };
+    return out;
+  });
+  const custom: BlockDef[] = customBaskets
+    .filter((c) => !hidden.has(c.id) && c.members.length)
+    .map((c) => ({ id: c.id, title: c.title || c.id, type: 'basket' as const, benchmark: 'SPY', members: c.members, custom: true }));
+  return [...seed, ...custom];
+}
+
 /** Все уникальные символы вселенной (включая бенчмарки блоков) — для батч-загрузки цен. */
 export function allSymbols(blocks: BlockDef[] = SEED_BLOCKS): string[] {
   const set = new Set<string>();

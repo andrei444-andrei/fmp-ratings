@@ -30,6 +30,17 @@ describe('computeBlockMetrics', () => {
     expect(bm.breadthMA200).toBeNull();
     expect(bm.advancers).toBe(0);
     expect(bm.best).toBeNull();
+    expect(bm.agg.returns[63]).toBeNull();
+    expect(bm.agg.ytd).toBeNull();
+  });
+  it('agg — equal-weight среднее доходностей членов (null игнорируются)', () => {
+    const bm = computeBlockMetrics([
+      mk({ symbol: 'A', returns: { 1: 2, 5: 0, 21: 0, 63: 10, 126: 0, 252: 0 }, ytd: 20 }),
+      mk({ symbol: 'B', returns: { 1: 4, 5: 0, 21: 0, 63: null as any, 126: 0, 252: 0 }, ytd: null }),
+    ]);
+    expect(bm.agg.returns[1]).toBeCloseTo(3, 6); // (2+4)/2
+    expect(bm.agg.returns[63]).toBeCloseTo(10, 6); // только A
+    expect(bm.agg.ytd).toBeCloseTo(20, 6); // только A
   });
 });
 
