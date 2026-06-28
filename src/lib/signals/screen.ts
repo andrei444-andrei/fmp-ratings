@@ -1,7 +1,8 @@
 // Клиентский движок скринера: по ПАНЕЛИ СДЕЛОК (наблюдений с факторами на входе + форвардными исходами)
 // считает условия и метрики оценки мгновенно, без перепрогона. Конструктор как в Google Analytics:
 // блоки соединяются ИЛИ, внутри блока условия по И, у каждого — инверсия НЕ. Разрезы по тикерам/годам,
-// окно лет, hit-rate / средний / медиана + провал в сделки.
+// окно лет, hit-rate / средний / медиана + провал в сделки. Условия и столбцы могут ссылаться на
+// ВЫЧИСЛЯЕМЫЕ МЕТРИКИ (формулы над факторами) — см. formula.ts.
 //
 // Панель: rows[i] = [symIdx, dateIdx, ret, exc, mfe, mae, mdd, v0, v1, ...] — сперва OUTN форвардных исходов
 // (за горизонт H), затем факторы по cols. Всё пересчитывается на клиенте — сервер отдаёт панель один раз.
@@ -19,10 +20,29 @@ export type Cmp = 'ge' | 'le';
 export type Cond = { col: string; cmp: Cmp; val: number; not?: boolean };
 export type Block = { conds: Cond[] };
 
+// Вычисляемые метрики (формулы): имя → функция от getter'а факторов строки. См. compileFormula в formula.ts.
+export type CellFn = (get: (n: string) => number | null) => number | null;
+export type Formulas = Map<string, CellFn>;
+
 export function colIndex(panel: ScreenPanel): Record<string, number> {
   const m: Record<string, number> = {};
   panel.cols.forEach((c, i) => (m[c] = i));
   return m;
+}
+
+// Getter значений базовых факторов строки по имени колонки.
+function rowGetter(row: (number | null)[], ci: Record<string, number>): (n: string) => number | null {
+  return (name) => {
+    const i = ci[name];
+    if (i === undefined) return null;
+    const v = row[FAC_OFF + i];
+    return v == null || !Number.isFinite(v as number) ? null : (v as number);
+  };
+}
+// Значение «колонки» — базового фактора ИЛИ вычисляемой метрики (формулы) — для строки.
+function cellValue(get: (n: string) => number | null, formulas: Formulas | undefined, key: string): number | null {
+  const f = formulas?.get(key);
+  return f ? f(get) : get(key);
 }
 
 function evalCond(v: number | null | undefined, c: Cond): boolean {
@@ -32,10 +52,11 @@ function evalCond(v: number | null | undefined, c: Cond): boolean {
 }
 
 // Сделка проходит, если выполнен ХОТЯ БЫ ОДИН блок (ИЛИ); блок выполнен, если ВСЕ его условия (И, с НЕ).
-export function matchRow(row: (number | null)[], blocks: Block[], ci: Record<string, number>): boolean {
+export function matchRow(row: (number | null)[], blocks: Block[], ci: Record<string, number>, formulas?: Formulas): boolean {
   const active = blocks.filter((b) => b.conds.length);
   if (!active.length) return true; // нет условий → все сделки
-  return active.some((b) => b.conds.every((c) => evalCond(row[FAC_OFF + (ci[c.col] ?? -1e9)] as number, c)));
+  const get = rowGetter(row, ci);
+  return active.some((b) => b.conds.every((c) => evalCond(cellValue(get, formulas, c.col), c)));
 }
 
 export function totalConds(blocks: Block[]): number {
@@ -79,18 +100,19 @@ function statsOf(a: Agg, n: number): OutStats {
 export type TickerRow = { symbol: string; n: number; disp: (number | null)[] } & OutStats;
 
 // Разрез ПО ТИКЕРАМ: на каждый тикер — число матч-сделок, метрики оценки (return/hit/медиана/MFE/MAE/MaxDD/vs SPY)
-// и средние «отображаемых» факторов. minYear — нижняя граница окна лет (включительно).
-export function screenByTicker(panel: ScreenPanel, blocks: Block[], displayCols: string[], minYear?: number): TickerRow[] {
+// и средние «отображаемых» колонок (факторы И формулы). minYear — нижняя граница окна лет (включительно).
+export function screenByTicker(panel: ScreenPanel, blocks: Block[], displayCols: string[], minYear?: number, formulas?: Formulas): TickerRow[] {
   const ci = colIndex(panel);
   const acc = new Map<number, { a: Agg; n: number; disp: number[]; dispN: number[] }>();
   for (const row of panel.rows) {
-    if (outOfWindow(panel, row, minYear) || !matchRow(row, blocks, ci)) continue;
+    if (outOfWindow(panel, row, minYear) || !matchRow(row, blocks, ci, formulas)) continue;
     const si = row[0] as number;
     let g = acc.get(si);
     if (!g) { g = { a: newAgg(), n: 0, disp: displayCols.map(() => 0), dispN: displayCols.map(() => 0) }; acc.set(si, g); }
     g.n++; pushOut(g.a, row);
+    const get = rowGetter(row, ci);
     displayCols.forEach((col, k) => {
-      const v = row[FAC_OFF + (ci[col] ?? -1e9)] as number;
+      const v = cellValue(get, formulas, col);
       if (v != null && Number.isFinite(v)) { g.disp[k] += v; g.dispN[k]++; }
     });
   }
@@ -103,11 +125,11 @@ export function screenByTicker(panel: ScreenPanel, blocks: Block[], displayCols:
 export type YearRow = { year: number; n: number; tickers: number } & OutStats;
 
 // Разрез ПО ГОДАМ: агрегат матч-сделок по календарному году (в окне лет).
-export function screenByYear(panel: ScreenPanel, blocks: Block[], minYear?: number): YearRow[] {
+export function screenByYear(panel: ScreenPanel, blocks: Block[], minYear?: number, formulas?: Formulas): YearRow[] {
   const ci = colIndex(panel);
   const acc = new Map<number, { a: Agg; n: number; syms: Set<number> }>();
   for (const row of panel.rows) {
-    if (outOfWindow(panel, row, minYear) || !matchRow(row, blocks, ci)) continue;
+    if (outOfWindow(panel, row, minYear) || !matchRow(row, blocks, ci, formulas)) continue;
     const y = rowYear(panel, row);
     let g = acc.get(y);
     if (!g) { g = { a: newAgg(), n: 0, syms: new Set() }; acc.set(y, g); }
@@ -120,17 +142,19 @@ export function screenByYear(panel: ScreenPanel, blocks: Block[], minYear?: numb
 
 export type Deal = { date: string; symbol: string; ret: number; exc: number; mfe: number; mae: number; mdd: number; vals: Record<string, number | null> };
 
-// Провал в сделки: матч-сделки по одному тикеру ('t') или по году ('y'), в окне лет.
-export function screenDeals(panel: ScreenPanel, blocks: Block[], kind: 't' | 'y', kv: string, minYear?: number): Deal[] {
+// Провал в сделки: матч-сделки по одному тикеру ('t') или по году ('y'), в окне лет. vals содержит и базовые
+// факторы, и значения формул (по имени) — чтобы drawer показал любые выбранные столбцы.
+export function screenDeals(panel: ScreenPanel, blocks: Block[], kind: 't' | 'y', kv: string, minYear?: number, formulas?: Formulas): Deal[] {
   const ci = colIndex(panel);
   const out: Deal[] = [];
   for (const row of panel.rows) {
-    if (outOfWindow(panel, row, minYear) || !matchRow(row, blocks, ci)) continue;
+    if (outOfWindow(panel, row, minYear) || !matchRow(row, blocks, ci, formulas)) continue;
     const sym = panel.symbols[row[0] as number];
     const date = panel.dates[row[1] as number];
     if (kind === 't' ? sym !== kv : date.slice(0, 4) !== kv) continue;
     const vals: Record<string, number | null> = {};
     panel.cols.forEach((c, i) => (vals[c] = row[FAC_OFF + i] as number | null));
+    if (formulas?.size) { const get = rowGetter(row, ci); for (const [name, fn] of formulas) vals[name] = fn(get); }
     out.push({
       date, symbol: sym,
       ret: row[RET] as number, exc: row[EXC] as number, mfe: row[MFE] as number, mae: row[MAE] as number, mdd: row[MDD] as number,

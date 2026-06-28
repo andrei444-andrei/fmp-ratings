@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 // Фикс. набор столбцов панели (как в движке screen) — фолбэк, если кэш пуст и компьют ничего не дал.
-const SCREEN_COLS = ['momentum_21', 'momentum_63', 'momentum_126', 'momentum_252', 'vol_21', 'vol_63', 'dist_ath_0', 'xbench_63', 'sma_dist_50', 'sma_dist_200', 'rsi_14'];
+const SCREEN_COLS = ['momentum_5', 'momentum_21', 'momentum_63', 'momentum_126', 'momentum_252', 'vol_21', 'vol_63', 'dist_ath_0', 'xbench_5', 'xbench_21', 'xbench_63', 'xbench_126', 'xbench_252', 'sma_dist_50', 'sma_dist_200', 'rsi_14'];
 
 // Подготовленная панель сделок по вселенной: кэш-первым (мгновенно), Pyodide — только на недостающие тикеры.
 export async function POST(req: Request) {

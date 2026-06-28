@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { matchRow, screenByTicker, screenByYear, screenDeals, dealStats, colIndex, totalConds, OUTN, type ScreenPanel, type Block } from './screen';
+import { matchRow, screenByTicker, screenByYear, screenDeals, dealStats, colIndex, totalConds, OUTN, type ScreenPanel, type Block, type Formulas } from './screen';
+import { compileFormula } from './formula';
 
 // Панель: 2 тикера × 5 лет × 4 наблюдения, cols mom_63, vol_21. Детерминированно.
 // Строка: [si, di, ret, exc, mfe, mae, mdd, mom, vol] — OUTN исходов, затем факторы (смещение 2+OUTN).
@@ -99,6 +100,19 @@ describe('screen — конструктор условий', () => {
     const total = yrs.reduce((a, y) => a + y.n, 0);
     expect(total).toBe(P.rows.filter((r) => matchRow(r, blocks, ci)).length);
     expect(yrs.map((y) => y.year)).toEqual([...yrs.map((y) => y.year)].sort((a, b) => a - b));
+  });
+
+  it('формулы: условие и столбец считаются по выражению над факторами', () => {
+    const fmap: Formulas = new Map([['fsum', compileFormula('mom_63 + vol_21').eval]]);
+    // эталон: сумма фактора момент(7) и волы(8) по строке
+    const ref = (r: (number | null)[]) => (r[FAC] as number) + (r[FAC + 1] as number);
+    const blocks: Block[] = [{ conds: [{ col: 'fsum', cmp: 'ge', val: 20 }] }];
+    P.rows.forEach((r) => expect(matchRow(r, blocks, ci, fmap)).toBe(ref(r) >= 20));
+    // столбец-формула: среднее значение fsum по тикеру AAA сходится с эталоном
+    const got = screenByTicker(P, [{ conds: [] }], ['fsum'], undefined, fmap);
+    const aaa = got.find((g) => g.symbol === 'AAA')!;
+    const refRows = P.rows.filter((r) => r[0] === 0);
+    expect(aaa.disp[0]).toBeCloseTo(refRows.reduce((a, r) => a + ref(r), 0) / refRows.length, 9);
   });
 
   it('провал в сделки: по тикеру возвращает только его матч-сделки с метриками и исходами', () => {
