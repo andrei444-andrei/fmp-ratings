@@ -508,6 +508,11 @@ export default function Researcher() {
       </div>
 
       {drill && panel && <Drawer panel={panel} blocks={blk} drill={drill} horizon={panel.horizon || horizon} minYear={minYear} formulas={fmap} display={displayCols} colLabel={colLabel} onClose={() => setDrill(null)} />}
+
+      <FormulaChat
+        factors={MID.map((id) => ({ id, label: METRICS[id].label, periods: METRICS[id].periods }))}
+        onInsert={(name, expr) => { setFormulas((p) => [...p, { id: newId(), name, expr, savedName: '', savedExpr: '' }]); }}
+      />
     </main>
   );
 }
@@ -607,6 +612,86 @@ function DealChart({ deals, metric, label, thresholds }: { deals: Deal[]; metric
           <circle key={i} cx={X(p.t)} cy={Y(p.y)} r={2.6} style={{ fill: p.ret > 0 ? 'var(--fk-up,#12b981)' : 'var(--fk-down,#f43f5e)', fillOpacity: 0.72 }} />
         ))}
       </svg>
+    </div>
+  );
+}
+
+type ChatMsg = { role: 'user' | 'assistant'; content: string; formula?: { name: string; expr: string } | null };
+
+// Всплывающий AI-чат: помогает составить формулу из словесного описания, предлагает готовое выражение
+// (валидируется на клиенте) с кнопкой «Вставить в формулы».
+function FormulaChat({ factors, onInsert }: { factors: { id: string; label: string; periods: number[] }[]; onInsert: (name: string, expr: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [msgs, setMsgs] = useState<ChatMsg[]>([
+    { role: 'assistant', content: 'Опишите метрику словами — соберу формулу. Например: «моментум за 3 месяца, делённый на волатильность 63д» или «превышение бенча, скорр. на волу, минус половина просадки».' },
+  ]);
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const boxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { boxRef.current?.scrollTo({ top: boxRef.current.scrollHeight }); }, [msgs, busy]);
+
+  const send = async () => {
+    const text = input.trim();
+    if (!text || busy) return;
+    setErr(''); setInput('');
+    const next: ChatMsg[] = [...msgs, { role: 'user', content: text }];
+    setMsgs(next); setBusy(true);
+    try {
+      const res = await fetch('/api/researcher/formula-assistant', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ factors, messages: next.map((m) => ({ role: m.role, content: m.content })) }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (j?.error) throw new Error(j.error);
+      const formula = j?.formula && j.formula.name && j.formula.expr ? { name: String(j.formula.name), expr: String(j.formula.expr) } : null;
+      setMsgs((m) => [...m, { role: 'assistant', content: String(j?.reply || '…'), formula }]);
+    } catch (e: any) { setErr(e?.message || 'ошибка AI'); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="rsx">
+      <button type="button" className="rsx-chat-fab" onClick={() => setOpen((o) => !o)}>✨ AI-формулы</button>
+      {open && (
+        <div className="rsx-chat">
+          <div className="hd"><b>AI-помощник по формулам</b><span className="x" onClick={() => setOpen(false)}>✕</span></div>
+          <div className="msgs" ref={boxRef}>
+            {msgs.map((m, i) => (
+              <div key={i} className={`msg ${m.role}`}>
+                <div className="bub">{m.content}</div>
+                {m.formula && <FormulaSuggestion f={m.formula} onInsert={onInsert} />}
+              </div>
+            ))}
+            {busy && <div className="msg assistant"><div className="bub">…думаю</div></div>}
+            {err && <div className="msg assistant"><div className="bub err">{err}</div></div>}
+          </div>
+          <div className="inp">
+            <textarea value={input} placeholder="Опишите метрику…" spellCheck={false}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} />
+            <button type="button" className="btn apply on" disabled={busy || !input.trim()} onClick={send}>→</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Карточка предложенной формулы с валидацией (компиляция + ссылки на факторы) и кнопкой вставки.
+function FormulaSuggestion({ f, onInsert }: { f: { name: string; expr: string }; onInsert: (n: string, e: string) => void }) {
+  const [added, setAdded] = useState(false);
+  const err = useMemo(() => {
+    if (BASE_KEYS.has(f.name) || MID.includes(f.name)) return 'имя совпадает с фактором';
+    try { const c = compileFormula(f.expr); const bad = c.refs.filter((r) => !BASE_KEYS.has(r)); return bad.length ? `неизвестные факторы: ${bad.join(', ')}` : null; }
+    catch (e: any) { return e?.message || 'ошибка формулы'; }
+  }, [f]);
+  return (
+    <div className="fcard">
+      <div className="fc-name">ƒ {f.name}</div>
+      <code>{f.expr}</code>
+      {err ? <div className="ferr">{err}</div>
+        : added ? <div className="fok">✓ добавлено в «Формулы» — проверьте и нажмите «Сохранить»</div>
+        : <button type="button" className="btn sm" onClick={() => { onInsert(f.name, f.expr); setAdded(true); }}>Вставить в формулы</button>}
     </div>
   );
 }
