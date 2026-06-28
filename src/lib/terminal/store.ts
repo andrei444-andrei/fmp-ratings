@@ -6,7 +6,8 @@ import { libsqlClient } from '@/db/client';
 
 // Версия формата метрик: бамп → старые снапшоты «промахиваются» и пересобираются.
 // '2': добавлена корреляционная матрица + sparkT в payload — старые снапшоты промахиваются.
-export const TERMINAL_EPOCH = '2';
+// '3': добавлена общая доходность корзины (BlockMetrics.agg) — старые снапшоты без agg промахиваются.
+export const TERMINAL_EPOCH = '3';
 export const SNAPSHOT_TTL_MS = 45 * 60 * 1000; // EOD-данные; обновляем не чаще ~45 мин
 
 let ensured = false;

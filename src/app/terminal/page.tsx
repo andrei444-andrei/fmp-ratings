@@ -561,9 +561,10 @@ function BlockCard({
 }) {
   const spy63 = spy?.returns[63] ?? null;
   const isBasket = block.def.type === 'basket';
+  const agg = block.metrics.agg; // может отсутствовать в старом снапшоте → null-safe
   // общая (equal-weight) доходность корзины по колонке, с учётом режима «Превышение SPY»
   const aggVal = (key: number | 'ytd') => {
-    const raw = key === 'ytd' ? block.metrics.agg.ytd : block.metrics.agg.returns[key] ?? null;
+    const raw = key === 'ytd' ? agg?.ytd ?? null : agg?.returns?.[key] ?? null;
     if (raw == null) return null;
     if (mode === 'excess') {
       const b = key === 'ytd' ? spy?.ytd ?? null : spy?.returns[key] ?? null;
@@ -571,7 +572,8 @@ function BlockCard({
     }
     return raw;
   };
-  const aggRs = block.metrics.agg.returns[63] != null && spy63 != null ? block.metrics.agg.returns[63]! - spy63 : null;
+  const agg63 = agg?.returns?.[63] ?? null;
+  const aggRs = agg63 != null && spy63 != null ? agg63 - spy63 : null;
   return (
     <div className="rounded-fk border border-line bg-surface-elev shadow-fk-sm">
       <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-line px-3.5 py-3">
@@ -868,15 +870,9 @@ function BlockEditor({ block, mode: editMode, busy, onClose, onSave, onReset, on
       title={isCreate ? 'Новая корзина' : `Редактировать · ${block.def.title.replace('Корзина: ', '')}`}
       description={block.def.benchmark ? `Бенчмарк — ${block.def.benchmark} (не редактируется). Задайте название, состав вручную или через поиск.` : 'Задайте название и состав — вручную или через поиск.'}
       footer={
-        <div className="flex w-full items-center justify-between gap-2">
-          <div>
-            {canReset && <Button variant="ghost" size="sm" onClick={onReset} disabled={busy}>Сбросить к стандартным</Button>}
-            {canDelete && <Button variant="ghost" size="sm" onClick={onDelete} disabled={busy} className="text-down-strong hover:bg-down-soft">{isCustom ? 'Удалить корзину' : 'Скрыть блок'}</Button>}
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="secondary" size="sm" onClick={onClose} disabled={busy}>Отмена</Button>
-            <Button variant="primary" size="sm" onClick={() => onSave(title.trim(), members)} loading={busy} disabled={members.length === 0 || !titleOk}>{isCreate ? 'Создать' : 'Сохранить'}</Button>
-          </div>
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={onClose} disabled={busy}>Отмена</Button>
+          <Button variant="primary" size="sm" onClick={() => onSave(title.trim(), members)} loading={busy} disabled={members.length === 0 || !titleOk}>{isCreate ? 'Создать' : 'Сохранить'}</Button>
         </div>
       }
     >
@@ -940,6 +936,28 @@ function BlockEditor({ block, mode: editMode, busy, onClose, onSave, onReset, on
             </div>
           )}
         </div>
+
+        {/* управление блоком: сброс / удаление (для существующих) */}
+        {(canReset || canDelete) && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
+            {canReset && (
+              <Button variant="ghost" size="sm" onClick={onReset} disabled={busy}>↺ Сбросить к стандартным</Button>
+            )}
+            {canDelete && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onDelete}
+                disabled={busy}
+                className="text-down-strong hover:bg-down-soft"
+                title={isCustom ? 'Удалить корзину безвозвратно' : 'Скрыть корзину (можно вернуть из «Скрытые блоки»)'}
+              >
+                🗑 Удалить корзину
+              </Button>
+            )}
+            {canDelete && !isCustom && <span className="text-[11px] text-ink-3">встроенную можно вернуть из «Скрытые блоки»</span>}
+          </div>
+        )}
       </div>
     </Modal>
   );
