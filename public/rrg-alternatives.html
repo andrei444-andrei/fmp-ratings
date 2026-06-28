@@ -1,0 +1,164 @@
+<!doctype html><html lang=ru><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>RRG — 3 варианта</title><style>:root{--ink:#0f1729;--ink2:#46506a;--ink3:#8b95a7;--line:#e8ebf2;--brand:#6d5bf0;--brand50:#f0eefe;--up:#12b981;--down:#f43f5e}
+*{box-sizing:border-box}body{margin:0;background:#f5f6fb;color:var(--ink);font:14px/1.45 -apple-system,Inter,sans-serif}
+.wrap{max-width:980px;margin:0 auto;padding:26px 18px 70px}h1{font-size:21px;margin:0 0 4px}.sub{color:var(--ink2);margin:0 0 22px;font-size:13.5px}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 1px 2px rgba(15,23,41,.05),0 4px 16px rgba(15,23,41,.04);margin-bottom:20px;overflow:hidden}
+.ch{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line)}
+.num{width:24px;height:24px;border-radius:7px;background:var(--brand);color:#fff;font-weight:800;font-size:12px;display:flex;align-items:center;justify-content:center}
+.ct{font-size:15px;font-weight:700}.body{padding:16px 18px}
+.why{padding:12px 18px;border-top:1px solid var(--line);background:#fafbfe;font-size:12.5px;color:var(--ink2)}
+.mono{font-variant-numeric:tabular-nums}.up{color:var(--up)}.down{color:var(--down)}.muted{color:var(--ink3)}
+table{width:100%;border-collapse:collapse}th,td{padding:7px 8px;text-align:left;font-size:12.5px}th{font-size:10px;text-transform:uppercase;letter-spacing:.03em;color:var(--ink3)}
+td.rk{color:var(--ink3);width:24px}td.mono,th.mono{text-align:right}tbody tr{border-top:1px solid var(--line)}
+.pill{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:999px}
+.ladrow{display:flex;align-items:center;gap:8px;padding:3px 0}.lsym{width:42px}.lval{width:46px;text-align:right;color:var(--ink2)}
+.track{position:relative;flex:1;height:16px;background:#f1f3f8;border-radius:5px}.mid{position:absolute;left:50%;top:0;bottom:0;width:1px;background:#c7cfdd}
+.bar{position:absolute;top:2px;bottom:2px;border-radius:3px}</style></head><body><div class=wrap>
+<h1>Ротация секторов — 3 варианта отображения</h1>
+<p class=sub>Те же данные (относительная сила и моментум секторов vs SPY), но без скучивания скаттера. Реальные данные на 2026-06-26. Выбери, что сделать виджетом.</p>
+
+<div class=card><div class=ch><span class=num>A</span><span class=ct>Рейтинг-таблица</span></div>
+<div class=body><table><thead><tr><th class=rk>#</th><th>Сектор</th><th class=mono>RS-Ratio</th><th class=mono>Momentum</th><th>Статус</th><th class=mono>63д</th></tr></thead><tbody><tr>
+   <td class="rk">1</td>
+   <td><b>XLK</b> <span class="muted">Технологии</span></td>
+   <td class="mono">109.4</td>
+   <td class="mono down">▼ 98.6</td>
+   <td><span class="pill" style="background:#f59e0b22;color:#f59e0b">Слабеет</span></td>
+   <td class="mono up">+36.8%</td>
+  </tr><tr>
+   <td class="rk">2</td>
+   <td><b>XLI</b> <span class="muted">Промышленность</span></td>
+   <td class="mono">100.1</td>
+   <td class="mono up">▲ 103.3</td>
+   <td><span class="pill" style="background:#12b98122;color:#12b981">Лидер</span></td>
+   <td class="mono up">+12.4%</td>
+  </tr><tr>
+   <td class="rk">3</td>
+   <td><b>XLF</b> <span class="muted">Финансы</span></td>
+   <td class="mono">99.8</td>
+   <td class="mono up">▲ 103.3</td>
+   <td><span class="pill" style="background:#6d5bf022;color:#6d5bf0">Улучшается</span></td>
+   <td class="mono up">+9.6%</td>
+  </tr><tr>
+   <td class="rk">4</td>
+   <td><b>XLV</b> <span class="muted">Здравоохранение</span></td>
+   <td class="mono">99.4</td>
+   <td class="mono up">▲ 103.7</td>
+   <td><span class="pill" style="background:#6d5bf022;color:#6d5bf0">Улучшается</span></td>
+   <td class="mono up">+10.5%</td>
+  </tr><tr>
+   <td class="rk">5</td>
+   <td><b>XLRE</b> <span class="muted">Недвижимость</span></td>
+   <td class="mono">98.3</td>
+   <td class="mono up">▲ 101.6</td>
+   <td><span class="pill" style="background:#6d5bf022;color:#6d5bf0">Улучшается</span></td>
+   <td class="mono up">+12.3%</td>
+  </tr><tr>
+   <td class="rk">6</td>
+   <td><b>XLB</b> <span class="muted">Материалы</span></td>
+   <td class="mono">97.0</td>
+   <td class="mono up">▲ 102.3</td>
+   <td><span class="pill" style="background:#6d5bf022;color:#6d5bf0">Улучшается</span></td>
+   <td class="mono up">+5.1%</td>
+  </tr><tr>
+   <td class="rk">7</td>
+   <td><b>XLP</b> <span class="muted">Потреб. защитный</span></td>
+   <td class="mono">96.9</td>
+   <td class="mono up">▲ 102.1</td>
+   <td><span class="pill" style="background:#6d5bf022;color:#6d5bf0">Улучшается</span></td>
+   <td class="mono up">+4.4%</td>
+  </tr><tr>
+   <td class="rk">8</td>
+   <td><b>XLY</b> <span class="muted">Потреб. цикличный</span></td>
+   <td class="mono">96.0</td>
+   <td class="mono up">▲ 100.1</td>
+   <td><span class="pill" style="background:#6d5bf022;color:#6d5bf0">Улучшается</span></td>
+   <td class="mono up">+5.1%</td>
+  </tr><tr>
+   <td class="rk">9</td>
+   <td><b>XLU</b> <span class="muted">Коммунальные</span></td>
+   <td class="mono">94.8</td>
+   <td class="mono up">▲ 102.8</td>
+   <td><span class="pill" style="background:#6d5bf022;color:#6d5bf0">Улучшается</span></td>
+   <td class="mono up">+1.9%</td>
+  </tr><tr>
+   <td class="rk">10</td>
+   <td><b>XLE</b> <span class="muted">Энергетика</span></td>
+   <td class="mono">92.0</td>
+   <td class="mono down">▼ 98.9</td>
+   <td><span class="pill" style="background:#f43f5e22;color:#f43f5e">Отстаёт</span></td>
+   <td class="mono down">-11.9%</td>
+  </tr><tr>
+   <td class="rk">11</td>
+   <td><b>XLC</b> <span class="muted">Комм. услуги</span></td>
+   <td class="mono">91.9</td>
+   <td class="mono down">▼ 99.2</td>
+   <td><span class="pill" style="background:#f43f5e22;color:#f43f5e">Отстаёт</span></td>
+   <td class="mono down">-2.4%</td>
+  </tr></tbody></table></div>
+<div class=why><b>Плюсы:</b> плотно, сортировка по силе, ноль наложений, точные числа. <b>Минусы:</b> не видно «движения» как на квадрантах. Лучшее для быстрого скана «кто сильнее».</div></div>
+
+<div class=card><div class=ch><span class=num>B</span><span class=ct>Бар-лэддер силы (отклонение RS от 100)</span></div>
+<div class=body><div class="ladrow">
+    <span class="lsym"><b>XLK</b></span>
+    <div class="track"><div class="mid"></div><div class="bar" style="left:50%;width:45.454545454545446%;background:#f59e0b"></div></div>
+    <span class="lval mono">+9.4</span>
+    <span class="mono down" style="width:42px;text-align:right">▼1.4</span>
+  </div><div class="ladrow">
+    <span class="lsym"><b>XLI</b></span>
+    <div class="track"><div class="mid"></div><div class="bar" style="left:50%;width:0.2736459197160555%;background:#12b981"></div></div>
+    <span class="lval mono">+0.1</span>
+    <span class="mono up" style="width:42px;text-align:right">▲3.3</span>
+  </div><div class="ladrow">
+    <span class="lsym"><b>XLF</b></span>
+    <div class="track"><div class="mid"></div><div class="bar" style="right:50%;width:1.0027660537895016%;background:#6d5bf0"></div></div>
+    <span class="lval mono">-0.2</span>
+    <span class="mono up" style="width:42px;text-align:right">▲3.3</span>
+  </div><div class="ladrow">
+    <span class="lsym"><b>XLV</b></span>
+    <div class="track"><div class="mid"></div><div class="bar" style="right:50%;width:2.753457161815426%;background:#6d5bf0"></div></div>
+    <span class="lval mono">-0.6</span>
+    <span class="mono up" style="width:42px;text-align:right">▲3.7</span>
+  </div><div class="ladrow">
+    <span class="lsym"><b>XLRE</b></span>
+    <div class="track"><div class="mid"></div><div class="bar" style="right:50%;width:8.141206043576526%;background:#6d5bf0"></div></div>
+    <span class="lval mono">-1.7</span>
+    <span class="mono up" style="width:42px;text-align:right">▲1.6</span>
+  </div><div class="ladrow">
+    <span class="lsym"><b>XLB</b></span>
+    <div class="track"><div class="mid"></div><div class="bar" style="right:50%;width:14.663844970250537%;background:#6d5bf0"></div></div>
+    <span class="lval mono">-3.0</span>
+    <span class="mono up" style="width:42px;text-align:right">▲2.3</span>
+  </div><div class="ladrow">
+    <span class="lsym"><b>XLP</b></span>
+    <div class="track"><div class="mid"></div><div class="bar" style="right:50%;width:14.747367448385335%;background:#6d5bf0"></div></div>
+    <span class="lval mono">-3.1</span>
+    <span class="mono up" style="width:42px;text-align:right">▲2.1</span>
+  </div><div class="ladrow">
+    <span class="lsym"><b>XLY</b></span>
+    <div class="track"><div class="mid"></div><div class="bar" style="right:50%;width:19.067575960896992%;background:#6d5bf0"></div></div>
+    <span class="lval mono">-4.0</span>
+    <span class="mono up" style="width:42px;text-align:right">▲0.1</span>
+  </div><div class="ladrow">
+    <span class="lsym"><b>XLU</b></span>
+    <div class="track"><div class="mid"></div><div class="bar" style="right:50%;width:25.012244228454154%;background:#6d5bf0"></div></div>
+    <span class="lval mono">-5.2</span>
+    <span class="mono up" style="width:42px;text-align:right">▲2.8</span>
+  </div><div class="ladrow">
+    <span class="lsym"><b>XLE</b></span>
+    <div class="track"><div class="mid"></div><div class="bar" style="right:50%;width:38.24319266341044%;background:#f43f5e"></div></div>
+    <span class="lval mono">-8.0</span>
+    <span class="mono down" style="width:42px;text-align:right">▼1.1</span>
+  </div><div class="ladrow">
+    <span class="lsym"><b>XLC</b></span>
+    <div class="track"><div class="mid"></div><div class="bar" style="right:50%;width:38.81041535567646%;background:#f43f5e"></div></div>
+    <span class="lval mono">-8.1</span>
+    <span class="mono down" style="width:42px;text-align:right">▼0.8</span>
+  </div><div style="margin-top:8px;font-size:11px;color:var(--ink3)">вправо/зелёное — сильнее SPY, влево/красное — слабее; ▲/▼ — моментум (ускорение силы)</div></div>
+<div class=why><b>Плюсы:</b> мгновенно видно ранжир и насколько сектор сильнее/слабее рынка. <b>Минусы:</b> моментум только значком. Лучшее как «лидерборд силы».</div></div>
+
+<div class=card><div class=ch><span class=num>C</span><span class=ct>Слоуп рангов (6 недель → сейчас)</span></div>
+<div class=body><svg viewBox="0 0 380 360" width="100%" style="max-height:380px" font-family="inherit">
+  <text x="60" y="10" text-anchor="middle" font-size="9.5" fill="#8b95a7">~6 нед назад</text>
+  <text x="300" y="10" text-anchor="middle" font-size="9.5" fill="#8b95a7">сейчас</text><line x1="60" y1="15" x2="300" y2="15" stroke="#8b95a7" stroke-width="1.2" opacity="0.8"/><circle cx="60" cy="15" r="3" fill="#8b95a7"/><circle cx="300" cy="15" r="3.5" fill="#8b95a7"/><text x="52" y="18.5" text-anchor="end" font-size="10" font-weight="700" fill="#0f1729">XLK</text><text x="308" y="18.5" font-size="10" font-weight="700" fill="#0f1729">XLK</text><line x1="60" y1="213" x2="300" y2="345" stroke="#f43f5e" stroke-width="2" opacity="0.8"/><circle cx="60" cy="213" r="3" fill="#f43f5e"/><circle cx="300" cy="345" r="3.5" fill="#f43f5e"/><text x="52" y="216.5" text-anchor="end" font-size="10" font-weight="700" fill="#0f1729">XLC</text><text x="308" y="348.5" font-size="10" font-weight="700" fill="#0f1729">XLC</text><line x1="60" y1="48" x2="300" y2="246" stroke="#f43f5e" stroke-width="2" opacity="0.8"/><circle cx="60" cy="48" r="3" fill="#f43f5e"/><circle cx="300" cy="246" r="3.5" fill="#f43f5e"/><text x="52" y="51.5" text-anchor="end" font-size="10" font-weight="700" fill="#0f1729">XLY</text><text x="308" y="249.5" font-size="10" font-weight="700" fill="#0f1729">XLY</text><line x1="60" y1="180" x2="300" y2="81" stroke="#12b981" stroke-width="2" opacity="0.8"/><circle cx="60" cy="180" r="3" fill="#12b981"/><circle cx="300" cy="81" r="3.5" fill="#12b981"/><text x="52" y="183.5" text-anchor="end" font-size="10" font-weight="700" fill="#0f1729">XLF</text><text x="308" y="84.5" font-size="10" font-weight="700" fill="#0f1729">XLF</text><line x1="60" y1="147" x2="300" y2="48" stroke="#12b981" stroke-width="2" opacity="0.8"/><circle cx="60" cy="147" r="3" fill="#12b981"/><circle cx="300" cy="48" r="3.5" fill="#12b981"/><text x="52" y="150.5" text-anchor="end" font-size="10" font-weight="700" fill="#0f1729">XLI</text><text x="308" y="51.5" font-size="10" font-weight="700" fill="#0f1729">XLI</text><line x1="60" y1="345" x2="300" y2="114" stroke="#12b981" stroke-width="2" opacity="0.8"/><circle cx="60" cy="345" r="3" fill="#12b981"/><circle cx="300" cy="114" r="3.5" fill="#12b981"/><text x="52" y="348.5" text-anchor="end" font-size="10" font-weight="700" fill="#0f1729">XLV</text><text x="308" y="117.5" font-size="10" font-weight="700" fill="#0f1729">XLV</text><line x1="60" y1="246" x2="300" y2="213" stroke="#12b981" stroke-width="2" opacity="0.8"/><circle cx="60" cy="246" r="3" fill="#12b981"/><circle cx="300" cy="213" r="3.5" fill="#12b981"/><text x="52" y="249.5" text-anchor="end" font-size="10" font-weight="700" fill="#0f1729">XLP</text><text x="308" y="216.5" font-size="10" font-weight="700" fill="#0f1729">XLP</text><line x1="60" y1="312" x2="300" y2="279" stroke="#12b981" stroke-width="2" opacity="0.8"/><circle cx="60" cy="312" r="3" fill="#12b981"/><circle cx="300" cy="279" r="3.5" fill="#12b981"/><text x="52" y="315.5" text-anchor="end" font-size="10" font-weight="700" fill="#0f1729">XLU</text><text x="308" y="282.5" font-size="10" font-weight="700" fill="#0f1729">XLU</text><line x1="60" y1="279" x2="300" y2="180" stroke="#12b981" stroke-width="2" opacity="0.8"/><circle cx="60" cy="279" r="3" fill="#12b981"/><circle cx="300" cy="180" r="3.5" fill="#12b981"/><text x="52" y="282.5" text-anchor="end" font-size="10" font-weight="700" fill="#0f1729">XLB</text><text x="308" y="183.5" font-size="10" font-weight="700" fill="#0f1729">XLB</text><line x1="60" y1="81" x2="300" y2="147" stroke="#f43f5e" stroke-width="2" opacity="0.8"/><circle cx="60" cy="81" r="3" fill="#f43f5e"/><circle cx="300" cy="147" r="3.5" fill="#f43f5e"/><text x="52" y="84.5" text-anchor="end" font-size="10" font-weight="700" fill="#0f1729">XLRE</text><text x="308" y="150.5" font-size="10" font-weight="700" fill="#0f1729">XLRE</text><line x1="60" y1="114" x2="300" y2="312" stroke="#f43f5e" stroke-width="2" opacity="0.8"/><circle cx="60" cy="114" r="3" fill="#f43f5e"/><circle cx="300" cy="312" r="3.5" fill="#f43f5e"/><text x="52" y="117.5" text-anchor="end" font-size="10" font-weight="700" fill="#0f1729">XLE</text><text x="308" y="315.5" font-size="10" font-weight="700" fill="#0f1729">XLE</text></svg><div style="margin-top:4px;font-size:11px;color:var(--ink3)">зелёная линия вверх — сектор поднялся в рейтинге относительной силы, красная вниз — опустился</div></div>
+<div class=why><b>Плюсы:</b> прямо показывает ротацию = кто перехватывает лидерство. <b>Минусы:</b> только ранг, без величины. Лучшее для «куда перетекают деньги».</div></div>
+</div></body></html>
