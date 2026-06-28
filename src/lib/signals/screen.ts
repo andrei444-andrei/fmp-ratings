@@ -85,15 +85,30 @@ function pushOut(a: Agg, row: (number | null)[]) {
   const v = row[MAE] as number | null; if (v != null && Number.isFinite(v)) a.sumMae += v;
   const d = row[MDD] as number | null; if (d != null && Number.isFinite(d)) a.sumMdd += d;
 }
-export type OutStats = { avgRet: number; medRet: number; hitPct: number; avgExc: number; avgMfe: number; avgMae: number; avgMdd: number };
+// Стандартная нормальная CDF (Zelen–Severo) — для p-value t-статистики.
+function normalCdf(x: number): number {
+  const t = 1 / (1 + 0.2316419 * Math.abs(x));
+  const d = 0.3989422804 * Math.exp((-x * x) / 2);
+  const prob = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+  return x > 0 ? 1 - prob : prob;
+}
+
+// t-статистика среднего форвардного возврата и p-value (двусторонний). ГРУБАЯ оценка: наблюдения
+// сэмплированы шагом H (внутри тикера без перекрытия), межтикерная корреляция не учитывается.
+export type OutStats = { avgRet: number; medRet: number; hitPct: number; avgExc: number; avgMfe: number; avgMae: number; avgMdd: number; tstat: number; pval: number };
 function statsOf(a: Agg, n: number): OutStats {
-  const nr = a.ret.length || 1;
+  const arr = a.ret; const k = arr.length || 1;
+  const mean = arr.reduce((x, y) => x + y, 0) / k;
+  const sd = arr.length > 1 ? Math.sqrt(arr.reduce((s, x) => s + (x - mean) * (x - mean), 0) / (arr.length - 1)) : 0;
+  const tstat = arr.length > 1 && sd > 0 ? mean / (sd / Math.sqrt(arr.length)) : 0;
+  const pval = arr.length > 1 && sd > 0 ? Math.max(0, Math.min(1, 2 * (1 - normalCdf(Math.abs(tstat))))) : 1;
   return {
-    avgRet: a.ret.reduce((x, y) => x + y, 0) / nr,
-    medRet: median(a.ret),
-    hitPct: (a.ret.filter((x) => x > 0).length / nr) * 100,
+    avgRet: mean,
+    medRet: median(arr),
+    hitPct: (arr.filter((x) => x > 0).length / k) * 100,
     avgExc: a.sumExc / (a.nExc || 1),
     avgMfe: a.sumMfe / n, avgMae: a.sumMae / n, avgMdd: a.sumMdd / n,
+    tstat, pval,
   };
 }
 
