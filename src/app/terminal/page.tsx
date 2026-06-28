@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEven
 import { Delta, Sparkline, SegmentedControl, Badge, Skeleton, Modal, Button, Input, Spinner } from '@/components/ui';
 import { SEED_BLOCKS } from '@/lib/terminal/registry';
 import RotationCard from './RotationCard';
+import RatesCard from './RatesCard';
 import type { CorrelationMatrix, InstrumentMetrics, MarketOverview, OverviewBlock } from '@/lib/terminal/types';
 
 const PCOLS: { key: number | 'ytd'; label: string }[] = [
@@ -334,9 +335,10 @@ export default function TerminalPage() {
               />
             )}
           </div>
-          {/* Макро/ротация — компактные виджеты (≈50%); сюда же добавятся ставки/волатильность/события */}
+          {/* Макро/ротация — компактные виджеты (≈50%); сюда же добавятся волатильность/события */}
           <div className="mb-3.5 grid grid-cols-1 gap-3.5 xl:grid-cols-2">
             <RotationCard />
+            <RatesCard />
           </div>
           <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
             {data.blocks.map((b) => (
