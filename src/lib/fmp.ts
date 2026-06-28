@@ -114,3 +114,11 @@ export async function fmpSearchName(query: string, limit = 12) {
     `&limit=${limit}&apikey=${encodeURIComponent(key)}`
   );
 }
+
+// Ставки казначейства США (кривая доходности). Поля: date, month1/3/6, year1/2/3/5/7/10/20/30.
+export async function fmpTreasury(from: string, to: string) {
+  const key = getFmpKey();
+  return fmpGet(
+    `${BASE_STABLE}/treasury-rates?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&apikey=${encodeURIComponent(key)}`
+  );
+}
