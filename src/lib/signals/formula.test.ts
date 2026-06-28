@@ -11,10 +11,19 @@ describe('formula — безопасный вычислитель', () => {
     expect(compileFormula('10 / 4').eval(G({}))).toBe(2.5);
   });
 
-  it('ссылки на колонки', () => {
+  it('ссылки на колонки (подчёркивание и скобки)', () => {
     const c = compileFormula('(momentum_21 + momentum_63 + momentum_126) / 3');
     expect(c.refs.sort()).toEqual(['momentum_126', 'momentum_21', 'momentum_63']);
     expect(c.eval(G({ momentum_21: 9, momentum_63: 12, momentum_126: 15 }))).toBe(12);
+  });
+
+  it('параметрический синтаксис factor[период]', () => {
+    const c = compileFormula('avg(momentum[21], momentum[63], momentum[126])');
+    expect(c.refs.sort()).toEqual(['momentum_126', 'momentum_21', 'momentum_63']);
+    expect(c.eval(G({ momentum_21: 9, momentum_63: 12, momentum_126: 15 }))).toBe(12);
+    expect(compileFormula('xbench[5] - xbench[252]').eval(G({ xbench_5: 3, xbench_252: 1 }))).toBe(2);
+    expect(() => compileFormula('momentum[]')).toThrow(/период/);
+    expect(() => compileFormula('momentum[5')).toThrow(/скобка/);
   });
 
   it('функции avg/min/max/sum/abs', () => {

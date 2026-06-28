@@ -1,7 +1,7 @@
 // Безопасный вычислитель формул для составных метрик скринера (БЕЗ eval). Выражения над факторами панели:
-// числа, имена колонок (momentum_21, xbench_5, vol_63, …), операторы + − × ÷, скобки, унарный минус и
-// функции avg/min/max/sum (≥1 арг) и abs (1 арг). Пример: (momentum_21+momentum_63+momentum_126)/3
-// или avg(momentum_21, momentum_63, momentum_126).
+// числа, ссылки на факторы в параметрическом виде momentum[252] (или momentum_252), операторы + − × ÷,
+// скобки, унарный минус и функции avg/min/max/sum (≥1 арг) и abs (1 арг).
+// Пример: avg(momentum[21], momentum[63], momentum[126]) или (momentum[21]+momentum[63]+momentum[126])/3.
 //
 // Семантика null: любой неопределённый фактор (нет данных) → вся метрика null (как базовый фактор —
 // условие тогда не подтверждается). Деление на 0 → null.
@@ -12,7 +12,7 @@ export type Compiled = { refs: string[]; eval: (get: Getter) => number | null };
 
 const FUNCS = new Set(['avg', 'min', 'max', 'sum', 'abs']);
 
-type Tok = { t: 'num'; v: number } | { t: 'id'; v: string } | { t: 'op'; v: string } | { t: 'lp' } | { t: 'rp' } | { t: 'comma' };
+type Tok = { t: 'num'; v: number } | { t: 'id'; v: string } | { t: 'op'; v: string } | { t: 'lp' } | { t: 'rp' } | { t: 'lb' } | { t: 'rb' } | { t: 'comma' };
 
 function tokenize(s: string): Tok[] {
   const out: Tok[] = [];
@@ -22,6 +22,8 @@ function tokenize(s: string): Tok[] {
     if (c === ' ' || c === '\t' || c === '\n') { i++; continue; }
     if (c === '(') { out.push({ t: 'lp' }); i++; continue; }
     if (c === ')') { out.push({ t: 'rp' }); i++; continue; }
+    if (c === '[') { out.push({ t: 'lb' }); i++; continue; }
+    if (c === ']') { out.push({ t: 'rb' }); i++; continue; }
     if (c === ',') { out.push({ t: 'comma' }); i++; continue; }
     if (c === '+' || c === '-' || c === '*' || c === '/') { out.push({ t: 'op', v: c }); i++; continue; }
     if (c === '×') { out.push({ t: 'op', v: '*' }); i++; continue; }
@@ -77,7 +79,7 @@ export function compileFormula(src: string): Compiled {
     if (tk.t === 'lp') { eat(); const e = parseAdd(); if (peek()?.t !== 'rp') throw new Error('Не закрыта скобка.'); eat(); return e; }
     if (tk.t === 'id') {
       eat();
-      const name = tk.v;
+      let name = tk.v;
       if (peek()?.t === 'lp') { // вызов функции
         const fn = name.toLowerCase();
         if (!FUNCS.has(fn)) throw new Error(`Неизвестная функция: «${name}». Доступны: avg, min, max, sum, abs.`);
@@ -96,7 +98,16 @@ export function compileFormula(src: string): Compiled {
           return n.reduce((a, b) => a + b, 0) / n.length; // avg
         };
       }
-      refs.add(name); // ссылка на колонку-фактор
+      if (peek()?.t === 'lb') { // параметрическая ссылка: momentum[252] → колонка momentum_252
+        eat();
+        const nt = peek();
+        if (!nt || nt.t !== 'num' || !Number.isInteger(nt.v)) throw new Error(`Ожидался целый период: ${name}[N].`);
+        eat();
+        if (peek()?.t !== 'rb') throw new Error(`Не закрыта скобка […] у «${name}».`);
+        eat();
+        name = `${name}_${nt.v}`;
+      }
+      refs.add(name); // ссылка на колонку-фактор (factor_period)
       return (g) => g(name);
     }
     throw new Error('Неожиданный токен в формуле.');
