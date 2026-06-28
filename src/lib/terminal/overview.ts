@@ -6,7 +6,7 @@ import { syntheticSeries } from '@/lib/research/metrics';
 import { logAppError } from '@/lib/app-errors';
 import { computeInstrumentMetrics, dailyLogReturns, annualizedVol, correlation, type Bar } from './metrics';
 import { computeBlockMetrics, averagePairwiseCorrelation, computeRegime } from './block-metrics';
-import { SEED_BLOCKS, SEED_INSTRUMENTS, instrumentDef, allSymbols, applyBlockOverrides } from './registry';
+import { SEED_BLOCKS, SEED_INSTRUMENTS, instrumentDef, allSymbols, effectiveBlocks } from './registry';
 import { readSnapshot, writeSnapshot, isFresh } from './store';
 import { readConfig } from './config-store';
 import type { BlockDef, InstrumentMetrics, MarketOverview, OverviewBlock } from './types';
@@ -134,9 +134,9 @@ function maxAsOf(m: Map<string, InstrumentMetrics | null>): string {
   return mx || isoDaysAgo(0);
 }
 
-/** Сигнатура состава блоков — меняется при правке тикеров виджета → снапшот промахивается. */
+/** Сигнатура блоков — меняется при правке состава/названия/набора виджетов → снапшот промахивается. */
 function blocksSignature(blocks: BlockDef[]): string {
-  return blocks.map((b) => `${b.id}:${b.members.join(',')}`).join('|');
+  return blocks.map((b) => `${b.id}:${b.title}:${b.members.join(',')}`).join('|');
 }
 
 /**
@@ -146,7 +146,7 @@ function blocksSignature(blocks: BlockDef[]): string {
  */
 export async function getOverview(): Promise<MarketOverview> {
   const cfg = await readConfig();
-  const blocks = applyBlockOverrides(cfg.blocks);
+  const blocks = effectiveBlocks(cfg);
   const sig = blocksSignature(blocks);
   const cached = await readSnapshot<MarketOverview>(OVERVIEW_KEY);
   if (cached && isFresh(cached.refreshedAt) && cached.payload.cfgSig === sig) return cached.payload;

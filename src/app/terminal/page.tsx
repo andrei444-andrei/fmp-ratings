@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { Delta, Sparkline, SegmentedControl, Badge, Skeleton, Modal, Button, Input, Spinner } from '@/components/ui';
+import { SEED_BLOCKS } from '@/lib/terminal/registry';
 import type { CorrelationMatrix, InstrumentMetrics, MarketOverview, OverviewBlock } from '@/lib/terminal/types';
 
 const PCOLS: { key: number | 'ytd'; label: string }[] = [
@@ -13,15 +14,20 @@ const PCOLS: { key: number | 'ytd'; label: string }[] = [
 ];
 
 type Mode = 'abs' | 'excess';
+type CustomBasket = { id: string; title: string; members: string[] };
 type TermConfig = {
   compare: { symbols: string[]; period: string };
   corr: { symbols: string[] };
   blocks: Record<string, string[]>;
   watchlist: string[];
+  customBaskets: CustomBasket[];
+  hiddenBlocks: string[];
+  blockTitles: Record<string, string>;
 };
 type SearchItem = { symbol: string; name: string; exchange?: string; note?: string };
 
-const EMPTY_CFG: TermConfig = { compare: { symbols: ['SPY', 'QQQ', 'DIA'], period: '1Г' }, corr: { symbols: [] }, blocks: {}, watchlist: [] };
+const EMPTY_CFG: TermConfig = { compare: { symbols: ['SPY', 'QQQ', 'DIA'], period: '1Г' }, corr: { symbols: [] }, blocks: {}, watchlist: [], customBaskets: [], hiddenBlocks: [], blockTitles: {} };
+const SEED_TITLE: Record<string, string> = Object.fromEntries(SEED_BLOCKS.map((b) => [b.id, b.title]));
 const SYM_RE = /^[A-Z0-9.\-]{1,12}$/;
 
 const CPALETTE = ['#6d5bf0', '#3b82f6', '#f59e0b', '#12b981', '#ef4444', '#0ea5e9', '#ec4899', '#8b5cf6', '#14b8a6', '#d4a017', '#64748b', '#f97316'];
@@ -95,7 +101,15 @@ export default function TerminalPage() {
       .catch((e) => alive && setErr(e.message || 'ошибка загрузки'));
     fetch('/api/market/config')
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('config'))))
-      .then((c) => alive && setCfg({ ...EMPTY_CFG, ...c, blocks: c?.blocks ?? {}, watchlist: c?.watchlist ?? [] }))
+      .then((c) => alive && setCfg({
+        ...EMPTY_CFG,
+        ...c,
+        blocks: c?.blocks ?? {},
+        watchlist: c?.watchlist ?? [],
+        customBaskets: Array.isArray(c?.customBaskets) ? c.customBaskets : [],
+        hiddenBlocks: Array.isArray(c?.hiddenBlocks) ? c.hiddenBlocks : [],
+        blockTitles: c?.blockTitles ?? {},
+      }))
       .catch(() => alive && setCfg(EMPTY_CFG));
     return () => {
       alive = false;
@@ -140,8 +154,8 @@ export default function TerminalPage() {
     for (const b of data.blocks) for (const c of b.instruments) if (c.def.symbol === sym && c.metrics) return setSel({ block: b, m: c.metrics, title: `${sym} · ${c.def.title}` });
   };
 
-  // редактор состава виджета: немедленное сохранение конфига + пересчёт overview
-  const [editBlock, setEditBlock] = useState<OverviewBlock | null>(null);
+  // редактор виджета/корзины: немедленное сохранение конфига + пересчёт overview
+  const [editor, setEditor] = useState<{ block: OverviewBlock; mode: 'edit' | 'create' } | null>(null);
   const [busyBlock, setBusyBlock] = useState(false);
   const reloadOverview = async () => {
     try {
@@ -151,13 +165,9 @@ export default function TerminalPage() {
       /* оставляем предыдущие данные */
     }
   };
-  const saveBlockMembers = async (blockId: string, members: string[] | null) => {
-    if (!cfg) return;
-    if (saveTimer.current) clearTimeout(saveTimer.current); // отменяем отложенное сохранение, чтобы не перезатёрло
-    const blocks = { ...cfg.blocks };
-    if (members && members.length) blocks[blockId] = members;
-    else delete blocks[blockId]; // пустой/сброс → возврат к сид-составу
-    const next = { ...cfg, blocks };
+  // общий коммит конфига: мгновенно в UI + немедленный POST + пересчёт overview
+  const commitCfg = async (next: TermConfig) => {
+    if (saveTimer.current) clearTimeout(saveTimer.current); // отменяем отложенный дебаунс
     setCfg(next);
     setBusyBlock(true);
     try {
@@ -167,7 +177,58 @@ export default function TerminalPage() {
       /* graceful */
     }
     setBusyBlock(false);
-    setEditBlock(null);
+  };
+
+  const openCreateBasket = () => {
+    const id = `custom_${Date.now().toString(36)}`;
+    const def = { id, title: '', type: 'basket' as const, benchmark: 'SPY', members: [] as string[], custom: true };
+    setEditor({ block: { def, metrics: {} as any, instruments: [] }, mode: 'create' });
+  };
+
+  // сохранить состав/название блока (seed → blocks+blockTitles; custom → customBaskets)
+  const saveBlock = async (kind: 'seed' | 'custom', id: string, title: string, members: string[]) => {
+    if (!cfg || !members.length) return;
+    let next: TermConfig;
+    if (kind === 'custom') {
+      const exists = cfg.customBaskets.some((b) => b.id === id);
+      const customBaskets = exists
+        ? cfg.customBaskets.map((b) => (b.id === id ? { ...b, title, members } : b))
+        : [...cfg.customBaskets, { id, title, members }];
+      next = { ...cfg, customBaskets };
+    } else {
+      const blockTitles = { ...cfg.blockTitles };
+      if (title && title !== SEED_TITLE[id]) blockTitles[id] = title;
+      else delete blockTitles[id];
+      next = { ...cfg, blocks: { ...cfg.blocks, [id]: members }, blockTitles };
+    }
+    await commitCfg(next);
+    setEditor(null);
+  };
+
+  // сброс seed-блока к стандарту (состав + название)
+  const resetBlock = async (id: string) => {
+    if (!cfg) return;
+    const blocks = { ...cfg.blocks };
+    delete blocks[id];
+    const blockTitles = { ...cfg.blockTitles };
+    delete blockTitles[id];
+    await commitCfg({ ...cfg, blocks, blockTitles });
+    setEditor(null);
+  };
+
+  // удалить блок: custom → выкинуть из списка; seed → скрыть
+  const deleteBlock = async (kind: 'seed' | 'custom', id: string) => {
+    if (!cfg) return;
+    const next = kind === 'custom'
+      ? { ...cfg, customBaskets: cfg.customBaskets.filter((b) => b.id !== id) }
+      : { ...cfg, hiddenBlocks: cfg.hiddenBlocks.includes(id) ? cfg.hiddenBlocks : [...cfg.hiddenBlocks, id] };
+    await commitCfg(next);
+    setEditor(null);
+  };
+
+  const restoreHidden = async (id: string) => {
+    if (!cfg) return;
+    await commitCfg({ ...cfg, hiddenBlocks: cfg.hiddenBlocks.filter((x) => x !== id) });
   };
 
   const spy = useMemo(() => {
@@ -280,10 +341,27 @@ export default function TerminalPage() {
                 onToggleFav={toggleFav}
                 onPick={(m, title) => setSel({ block: b, m, title })}
                 onCompare={loadBlockToCompare}
-                onEdit={() => setEditBlock(b)}
+                onEdit={() => setEditor({ block: b, mode: 'edit' })}
               />
             ))}
+            <button
+              type="button"
+              onClick={openCreateBasket}
+              className="flex min-h-[120px] items-center justify-center gap-2 rounded-fk border-2 border-dashed border-line-strong text-[13px] font-semibold text-ink-2 transition-colors hover:border-brand hover:bg-brand-50 hover:text-brand-700"
+            >
+              ＋ Создать корзину
+            </button>
           </div>
+          {cfg && cfg.hiddenBlocks.length > 0 && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-[12px] text-ink-3">
+              <span>Скрытые блоки:</span>
+              {cfg.hiddenBlocks.map((id) => (
+                <button key={id} onClick={() => restoreHidden(id)} disabled={busyBlock} className="rounded-fk-pill border border-line px-2.5 py-0.5 font-semibold hover:border-brand hover:text-brand" title="Восстановить блок">
+                  {SEED_TITLE[id] ?? id} ↩
+                </button>
+              ))}
+            </div>
+          )}
           {data.correlation && cfg && (
             <CorrelationCard
               corr={data.correlation}
@@ -305,8 +383,17 @@ export default function TerminalPage() {
           onClose={() => setSel(null)}
         />
       )}
-      {editBlock && (
-        <BlockEditor key={editBlock.def.id} block={editBlock} busy={busyBlock} onClose={() => !busyBlock && setEditBlock(null)} onSave={(members) => saveBlockMembers(editBlock.def.id, members)} />
+      {editor && (
+        <BlockEditor
+          key={editor.block.def.id}
+          block={editor.block}
+          mode={editor.mode}
+          busy={busyBlock}
+          onClose={() => !busyBlock && setEditor(null)}
+          onSave={(title, members) => saveBlock(editor.block.def.custom ? 'custom' : 'seed', editor.block.def.id, title, members)}
+          onReset={() => resetBlock(editor.block.def.id)}
+          onDelete={() => deleteBlock(editor.block.def.custom ? 'custom' : 'seed', editor.block.def.id)}
+        />
       )}
     </div>
   );
@@ -473,6 +560,18 @@ function BlockCard({
   onEdit?: () => void;
 }) {
   const spy63 = spy?.returns[63] ?? null;
+  const isBasket = block.def.type === 'basket';
+  // общая (equal-weight) доходность корзины по колонке, с учётом режима «Превышение SPY»
+  const aggVal = (key: number | 'ytd') => {
+    const raw = key === 'ytd' ? block.metrics.agg.ytd : block.metrics.agg.returns[key] ?? null;
+    if (raw == null) return null;
+    if (mode === 'excess') {
+      const b = key === 'ytd' ? spy?.ytd ?? null : spy?.returns[key] ?? null;
+      return b == null ? null : raw - b;
+    }
+    return raw;
+  };
+  const aggRs = block.metrics.agg.returns[63] != null && spy63 != null ? block.metrics.agg.returns[63]! - spy63 : null;
   return (
     <div className="rounded-fk border border-line bg-surface-elev shadow-fk-sm">
       <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-line px-3.5 py-3">
@@ -544,6 +643,19 @@ function BlockCard({
               </tr>
             );
           })}
+          {isBasket && (
+            <tr className="border-t-2 border-line-strong bg-surface-2 text-[12px] font-bold">
+              <td className="py-2 pl-2.5 pr-1 text-left" colSpan={2}>
+                Σ корзина <span className="font-normal text-ink-3">eq-weight</span>
+              </td>
+              {PCOLS.map((p) => (
+                <td key={p.label} className="px-1 py-2 text-right tabular-nums"><Pct v={aggVal(p.key)} dim={mode === 'excess'} /></td>
+              ))}
+              <td className="px-1 py-2 text-right tabular-nums"><Pct v={aggRs} /></td>
+              <td />
+              <td />
+            </tr>
+          )}
         </tbody>
       </table>
 
@@ -583,6 +695,24 @@ function BlockCard({
             </div>
           );
         })}
+        {isBasket && (
+          <div className="border-t-2 border-line-strong bg-surface-2 px-3.5 py-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[12px] font-bold">Σ корзина <span className="font-normal text-ink-3">eq-weight</span></span>
+              {aggVal(1) != null && <Delta value={aggVal(1)!} decimals={1} size="sm" />}
+            </div>
+            <div className="mt-1.5 flex flex-wrap gap-x-3.5 gap-y-1 text-[12px] font-semibold">
+              {(['5', '21', '63'] as const).map((k) => (
+                <span key={k} className="inline-flex items-baseline gap-1">
+                  <span className="text-[10px] uppercase text-ink-3">{k}D</span>
+                  <span className="tabular-nums"><Pct v={aggVal(Number(k))} dim={mode === 'excess'} /></span>
+                </span>
+              ))}
+              <span className="inline-flex items-baseline gap-1"><span className="text-[10px] uppercase text-ink-3">YTD</span><span className="tabular-nums"><Pct v={aggVal('ytd')} dim={mode === 'excess'} /></span></span>
+              <span className="inline-flex items-baseline gap-1"><span className="text-[10px] uppercase text-ink-3">vs SPY</span><span className="tabular-nums"><Pct v={aggRs} /></span></span>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -675,13 +805,23 @@ function CorrelationCard({ corr, groups, selected, onChange }: { corr: Correlati
   );
 }
 
-// Редактор состава виджета: ручной ввод + поиск (по тикеру / AI-подбор). Хранится на сервере.
-function BlockEditor({ block, busy, onClose, onSave }: {
+// Редактор виджета/корзины: название + состав (ручной ввод и поиск по тикеру / AI-подбор),
+// сброс к стандарту (для сид-блоков) или удаление (для корзин). Всё хранится на сервере.
+function BlockEditor({ block, mode: editMode, busy, onClose, onSave, onReset, onDelete }: {
   block: OverviewBlock;
+  mode: 'edit' | 'create';
   busy: boolean;
   onClose: () => void;
-  onSave: (members: string[] | null) => void;
+  onSave: (title: string, members: string[]) => void;
+  onReset: () => void;
+  onDelete: () => void;
 }) {
+  const isCustom = !!block.def.custom;
+  const isBasket = block.def.type === 'basket';
+  const isCreate = editMode === 'create';
+  const canReset = !isCustom && !isCreate; // сид-блок можно сбросить к стандарту
+  const canDelete = !isCreate && (isCustom || isBasket); // корзины (сид/кастом) можно удалить/скрыть
+  const [title, setTitle] = useState<string>(block.def.title);
   const [members, setMembers] = useState<string[]>(block.instruments.map((c) => c.def.symbol));
   const [manual, setManual] = useState('');
   const [q, setQ] = useState('');
@@ -719,24 +859,34 @@ function BlockEditor({ block, busy, onClose, onSave }: {
     setSearching(false);
   };
 
+  const titleOk = !isCustom || title.trim().length > 0; // у кастомной корзины название обязательно
   return (
     <Modal
       open
       onClose={onClose}
       size="lg"
-      title={`Состав виджета · ${block.def.title.replace('Корзина: ', '')}`}
-      description={block.def.benchmark ? `Бенчмарк блока — ${block.def.benchmark} (не редактируется). Добавляйте тикеры вручную или через поиск.` : 'Добавляйте тикеры вручную или через поиск.'}
+      title={isCreate ? 'Новая корзина' : `Редактировать · ${block.def.title.replace('Корзина: ', '')}`}
+      description={block.def.benchmark ? `Бенчмарк — ${block.def.benchmark} (не редактируется). Задайте название, состав вручную или через поиск.` : 'Задайте название и состав — вручную или через поиск.'}
       footer={
         <div className="flex w-full items-center justify-between gap-2">
-          <Button variant="ghost" size="sm" onClick={() => onSave(null)} disabled={busy}>Сбросить к стандартным</Button>
+          <div>
+            {canReset && <Button variant="ghost" size="sm" onClick={onReset} disabled={busy}>Сбросить к стандартным</Button>}
+            {canDelete && <Button variant="ghost" size="sm" onClick={onDelete} disabled={busy} className="text-down-strong hover:bg-down-soft">{isCustom ? 'Удалить корзину' : 'Скрыть блок'}</Button>}
+          </div>
           <div className="flex items-center gap-2">
             <Button variant="secondary" size="sm" onClick={onClose} disabled={busy}>Отмена</Button>
-            <Button variant="primary" size="sm" onClick={() => onSave(members)} loading={busy} disabled={members.length === 0}>Сохранить</Button>
+            <Button variant="primary" size="sm" onClick={() => onSave(title.trim(), members)} loading={busy} disabled={members.length === 0 || !titleOk}>{isCreate ? 'Создать' : 'Сохранить'}</Button>
           </div>
         </div>
       }
     >
       <div className="space-y-4">
+        {/* название */}
+        <div>
+          <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-ink-3">Название</div>
+          <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={isBasket ? 'Напр. AI-инфраструктура' : 'Название блока'} invalid={!titleOk} />
+        </div>
+
         {/* текущий состав */}
         <div>
           <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-ink-3">В виджете · {members.length}</div>

@@ -3,6 +3,9 @@
 // строка key='default'. Self-provisioning (§1), created_at, graceful без БД.
 import { libsqlClient } from '@/db/client';
 
+/** Пользовательская корзина (создаётся/редактируется/удаляется в UI). */
+export type CustomBasket = { id: string; title: string; members: string[] };
+
 export type TerminalConfig = {
   /** Виджет «Нормализованный перформанс»: избранные тикеры + период. */
   compare: { symbols: string[]; period: string };
@@ -12,6 +15,12 @@ export type TerminalConfig = {
   blocks: Record<string, string[]>;
   /** Вайт-лист (избранное): произвольные тикеры — задел под будущие фичи. */
   watchlist: string[];
+  /** Пользовательские корзины (поверх сида). */
+  customBaskets: CustomBasket[];
+  /** Скрытые блоки (id сид-блоков/корзин, убранных пользователем). */
+  hiddenBlocks: string[];
+  /** Переопределения названий блоков: blockId → название. */
+  blockTitles: Record<string, string>;
 };
 
 export const DEFAULT_CONFIG: TerminalConfig = {
@@ -19,6 +28,9 @@ export const DEFAULT_CONFIG: TerminalConfig = {
   corr: { symbols: ['SPY', 'QQQ', 'MCHI', 'EWG', 'EWJ', 'GLD', 'SLV', 'URA', 'XLK', 'XLE', 'XLF'] },
   blocks: {},
   watchlist: [],
+  customBaskets: [],
+  hiddenBlocks: [],
+  blockTitles: {},
 };
 
 const KEY = 'default';
@@ -46,15 +58,62 @@ function sanitizeSymbols(v: unknown, max: number): string[] {
   return out;
 }
 
+const BLOCK_ID_RE = /^[a-z0-9_-]{1,40}$/i;
+
 /** Санитизирует карту переопределений блоков: blockId(slug) → валидные тикеры. */
 function sanitizeBlocks(v: unknown): Record<string, string[]> {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
   const out: Record<string, string[]> = {};
   for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
     const id = String(k).trim();
-    if (!id || !/^[a-z0-9_-]{1,40}$/i.test(id)) continue;
+    if (!id || !BLOCK_ID_RE.test(id)) continue;
     const syms = sanitizeSymbols(val, 24);
     if (syms.length) out[id] = syms; // пустой оверрайд = «нет оверрайда» (вернётся сид)
+  }
+  return out;
+}
+
+function cleanTitle(v: unknown, fallback = ''): string {
+  const t = String(v ?? '').trim().replace(/\s+/g, ' ').slice(0, 60);
+  return t || fallback;
+}
+
+/** Санитизирует список пользовательских корзин (валидный id, непустой состав). */
+function sanitizeBaskets(v: unknown): CustomBasket[] {
+  if (!Array.isArray(v)) return [];
+  const out: CustomBasket[] = [];
+  const seenIds = new Set<string>();
+  for (const raw of v) {
+    const id = String((raw as any)?.id ?? '').trim();
+    if (!id || !BLOCK_ID_RE.test(id) || seenIds.has(id)) continue;
+    const members = sanitizeSymbols((raw as any)?.members, 24);
+    if (!members.length) continue; // корзина без бумаг не имеет смысла
+    seenIds.add(id);
+    out.push({ id, title: cleanTitle((raw as any)?.title, id), members });
+    if (out.length >= 24) break;
+  }
+  return out;
+}
+
+/** Санитизирует переопределения названий блоков: blockId → title. */
+function sanitizeTitles(v: unknown): Record<string, string> {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  const out: Record<string, string> = {};
+  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    const id = String(k).trim();
+    const title = cleanTitle(val);
+    if (id && BLOCK_ID_RE.test(id) && title) out[id] = title;
+  }
+  return out;
+}
+
+function sanitizeBlockIds(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  const out: string[] = [];
+  for (const x of v) {
+    const id = String(x ?? '').trim();
+    if (id && BLOCK_ID_RE.test(id) && !out.includes(id)) out.push(id);
+    if (out.length >= 64) break;
   }
   return out;
 }
@@ -69,6 +128,9 @@ export function normalizeConfig(raw: any): TerminalConfig {
     corr: { symbols: corrSyms.length ? corrSyms : DEFAULT_CONFIG.corr.symbols },
     blocks: sanitizeBlocks(raw?.blocks),
     watchlist: sanitizeSymbols(raw?.watchlist, 64),
+    customBaskets: sanitizeBaskets(raw?.customBaskets),
+    hiddenBlocks: sanitizeBlockIds(raw?.hiddenBlocks),
+    blockTitles: sanitizeTitles(raw?.blockTitles),
   };
 }
 

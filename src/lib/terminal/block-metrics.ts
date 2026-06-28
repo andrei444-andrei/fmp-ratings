@@ -2,12 +2,26 @@
 // членов блока (см. docs §4). Для малых корзин breadth вырождается — отдаём
 // equal-weight доходность + лучший/худший компонент.
 import { correlation } from './metrics';
+import { RET_WINDOWS } from './types';
 import type { BlockMetrics, InstrumentMetrics, MarketRegime } from './types';
 
 function pctTrue(flags: (boolean | null)[]): number | null {
   const known = flags.filter((f): f is boolean => f != null);
   if (!known.length) return null;
   return (known.filter(Boolean).length / known.length) * 100;
+}
+
+function mean(vals: (number | null | undefined)[]): number | null {
+  const ok = vals.filter((v): v is number => v != null && Number.isFinite(v));
+  if (!ok.length) return null;
+  return ok.reduce((a, b) => a + b, 0) / ok.length;
+}
+
+/** Общая (equal-weight) доходность блока: среднее доходностей членов по каждому окну + YTD. */
+function aggregateReturns(ok: InstrumentMetrics[]): BlockMetrics['agg'] {
+  const returns: Record<number, number | null> = {};
+  for (const w of RET_WINDOWS) returns[w] = mean(ok.map((m) => m.returns[w]));
+  return { returns, ytd: mean(ok.map((m) => m.ytd)) };
 }
 
 /** Агрегаты блока из метрик его инструментов (optional-бумаги без истории игнорируются). */
@@ -39,7 +53,7 @@ export function computeBlockMetrics(metrics: (InstrumentMetrics | null)[]): Bloc
     if (!worst || r < worst.ret63) worst = { symbol: m.symbol, ret63: r };
   }
 
-  return { breadthMA50, breadthMA200, advancers, decliners, composite, avgCorr: null, best, worst };
+  return { breadthMA50, breadthMA200, advancers, decliners, composite, avgCorr: null, best, worst, agg: aggregateReturns(ok) };
 }
 
 /** Средняя попарная корреляция набора рядов дневных лог-доходностей (выровнены по хвосту). */
