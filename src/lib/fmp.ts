@@ -122,3 +122,19 @@ export async function fmpTreasury(from: string, to: string) {
     `${BASE_STABLE}/treasury-rates?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&apikey=${encodeURIComponent(key)}`
   );
 }
+
+// Экономический календарь. Поля: date, country, event, currency, previous, estimate, actual, impact.
+export async function fmpEconomicCalendar(from: string, to: string) {
+  const key = getFmpKey();
+  return fmpGet(
+    `${BASE_STABLE}/economic-calendar?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&apikey=${encodeURIComponent(key)}`
+  );
+}
+
+// Календарь отчётностей. Поля: symbol, date, epsEstimated, epsActual, revenueEstimated, time.
+export async function fmpEarningsCalendar(from: string, to: string) {
+  const key = getFmpKey();
+  return fmpGet(
+    `${BASE_STABLE}/earnings-calendar?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&apikey=${encodeURIComponent(key)}`
+  );
+}
