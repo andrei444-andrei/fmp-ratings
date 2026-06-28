@@ -10,7 +10,7 @@ export type Getter = (name: string) => number | null;
 type Node = (get: Getter) => number | null;
 export type Compiled = { refs: string[]; eval: (get: Getter) => number | null };
 
-const FUNCS = new Set(['avg', 'min', 'max', 'sum', 'abs']);
+const FUNCS = new Set(['avg', 'min', 'max', 'sum', 'abs', 'sqrt', 'log', 'pow', 'sign']);
 
 type Tok = { t: 'num'; v: number } | { t: 'id'; v: string } | { t: 'op'; v: string } | { t: 'lp' } | { t: 'rp' } | { t: 'lb' } | { t: 'rb' } | { t: 'comma' };
 
@@ -82,20 +82,27 @@ export function compileFormula(src: string): Compiled {
       let name = tk.v;
       if (peek()?.t === 'lp') { // вызов функции
         const fn = name.toLowerCase();
-        if (!FUNCS.has(fn)) throw new Error(`Неизвестная функция: «${name}». Доступны: avg, min, max, sum, abs.`);
+        if (!FUNCS.has(fn)) throw new Error(`Неизвестная функция: «${name}». Доступны: avg, min, max, sum, abs, sqrt, log, pow, sign.`);
         eat(); const args = parseArgs();
         if (peek()?.t !== 'rp') throw new Error(`Не закрыта скобка функции «${name}».`); eat();
         if (!args.length) throw new Error(`Функция «${name}» требует хотя бы один аргумент.`);
-        if (fn === 'abs' && args.length !== 1) throw new Error('abs принимает ровно один аргумент.');
+        if ((fn === 'abs' || fn === 'sqrt' || fn === 'log' || fn === 'sign') && args.length !== 1) throw new Error(`${fn} принимает ровно один аргумент.`);
+        if (fn === 'pow' && args.length !== 2) throw new Error('pow принимает ровно два аргумента (основание, степень).');
         return (g) => {
           const vs = args.map((a) => a(g));
           if (vs.some((v) => v == null)) return null;
           const n = vs as number[];
-          if (fn === 'abs') return Math.abs(n[0]);
-          if (fn === 'min') return Math.min(...n);
-          if (fn === 'max') return Math.max(...n);
-          if (fn === 'sum') return n.reduce((a, b) => a + b, 0);
-          return n.reduce((a, b) => a + b, 0) / n.length; // avg
+          let res: number;
+          if (fn === 'abs') res = Math.abs(n[0]);
+          else if (fn === 'min') res = Math.min(...n);
+          else if (fn === 'max') res = Math.max(...n);
+          else if (fn === 'sum') res = n.reduce((a, b) => a + b, 0);
+          else if (fn === 'sqrt') res = n[0] < 0 ? NaN : Math.sqrt(n[0]);
+          else if (fn === 'log') res = n[0] <= 0 ? NaN : Math.log(n[0]);
+          else if (fn === 'pow') res = Math.pow(n[0], n[1]);
+          else if (fn === 'sign') res = Math.sign(n[0]);
+          else res = n.reduce((a, b) => a + b, 0) / n.length; // avg
+          return Number.isFinite(res) ? res : null; // домен-ошибки (sqrt(-), log(≤0), pow→NaN) → null
         };
       }
       if (peek()?.t === 'lb') { // параметрическая ссылка: momentum[252] → колонка momentum_252

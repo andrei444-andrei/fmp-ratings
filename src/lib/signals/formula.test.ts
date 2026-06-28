@@ -34,6 +34,17 @@ describe('formula — безопасный вычислитель', () => {
     expect(compileFormula('abs(xbench_21)').eval(G({ xbench_21: -7 }))).toBe(7);
   });
 
+  it('нелинейные функции sqrt/log/pow/sign + домен-ошибки → null', () => {
+    expect(compileFormula('sqrt(vol_21)').eval(G({ vol_21: 16 }))).toBe(4);
+    expect(compileFormula('pow(momentum_21, 2)').eval(G({ momentum_21: 3 }))).toBe(9);
+    expect(compileFormula('sign(xbench_21)').eval(G({ xbench_21: -7 }))).toBe(-1);
+    expect(compileFormula('log(vol_21)').eval(G({ vol_21: 1 }))).toBe(0);
+    expect(compileFormula('sqrt(momentum_21)').eval(G({ momentum_21: -4 }))).toBeNull(); // домен
+    expect(compileFormula('log(momentum_21)').eval(G({ momentum_21: 0 }))).toBeNull();
+    expect(() => compileFormula('pow(1)')).toThrow(/pow/);
+    expect(() => compileFormula('sqrt(1, 2)')).toThrow(/sqrt/);
+  });
+
   it('null-семантика: неопределённый фактор → null; деление на 0 → null', () => {
     expect(compileFormula('momentum_21 + momentum_63').eval(G({ momentum_21: 5, momentum_63: null }))).toBeNull();
     expect(compileFormula('avg(a, b)').eval(G({ a: 5, b: null }))).toBeNull();
