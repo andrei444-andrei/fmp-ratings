@@ -894,8 +894,10 @@ async def main():
         if m.empty or m['symbol'].nunique() < 1:
             return {'error': 'Недостаточно истории для скрин-панели — расширьте окно лет/вселенную.'}
         # Фиксированный набор метрик-столбцов (клиент берёт любые в условия/показ без перезагрузки).
-        METR = [('momentum', 21), ('momentum', 63), ('momentum', 126), ('momentum', 252),
-                ('vol', 21), ('vol', 63), ('dist_ath', 0), ('xbench', 63), ('sma_dist', 50), ('sma_dist', 200), ('rsi', 14)]
+        METR = [('momentum', 5), ('momentum', 21), ('momentum', 63), ('momentum', 126), ('momentum', 252),
+                ('vol', 21), ('vol', 63), ('dist_ath', 0),
+                ('xbench', 5), ('xbench', 21), ('xbench', 63), ('xbench', 126), ('xbench', 252),
+                ('sma_dist', 50), ('sma_dist', 200), ('rsi', 14)]
         cols = [f + '_' + str(p) for f, p in METR]
         for (f, p), cn in zip(METR, cols):
             fv = build_fval(px, bench, f, p, H, 0).rename(columns={'fval': cn})
