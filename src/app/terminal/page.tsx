@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { Delta, Sparkline, SegmentedControl, Badge, Skeleton, Modal, Button, Input, Spinner } from '@/components/ui';
 import { SEED_BLOCKS } from '@/lib/terminal/registry';
+import RotationCard from './RotationCard';
 import type { CorrelationMatrix, InstrumentMetrics, MarketOverview, OverviewBlock } from '@/lib/terminal/types';
 
 const PCOLS: { key: number | 'ytd'; label: string }[] = [
@@ -332,6 +333,10 @@ export default function TerminalPage() {
                 onToggleAvg={() => updateCfg({ ...cfg, compare: { ...cfg.compare, showAvg: !cfg.compare.showAvg } })}
               />
             )}
+          </div>
+          {/* Макро/ротация — компактные виджеты (≈50%); сюда же добавятся ставки/волатильность/события */}
+          <div className="mb-3.5 grid grid-cols-1 gap-3.5 xl:grid-cols-2">
+            <RotationCard />
           </div>
           <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
             {data.blocks.map((b) => (
