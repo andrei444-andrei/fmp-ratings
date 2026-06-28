@@ -16,7 +16,7 @@ const PCOLS: { key: number | 'ytd'; label: string }[] = [
 type Mode = 'abs' | 'excess';
 type CustomBasket = { id: string; title: string; members: string[] };
 type TermConfig = {
-  compare: { symbols: string[]; period: string };
+  compare: { symbols: string[]; period: string; showAvg: boolean };
   corr: { symbols: string[] };
   blocks: Record<string, string[]>;
   watchlist: string[];
@@ -26,7 +26,7 @@ type TermConfig = {
 };
 type SearchItem = { symbol: string; name: string; exchange?: string; note?: string };
 
-const EMPTY_CFG: TermConfig = { compare: { symbols: ['SPY', 'QQQ', 'DIA'], period: '1Г' }, corr: { symbols: [] }, blocks: {}, watchlist: [], customBaskets: [], hiddenBlocks: [], blockTitles: {} };
+const EMPTY_CFG: TermConfig = { compare: { symbols: ['SPY', 'QQQ', 'DIA'], period: '1Г', showAvg: false }, corr: { symbols: [] }, blocks: {}, watchlist: [], customBaskets: [], hiddenBlocks: [], blockTitles: {} };
 const SEED_TITLE: Record<string, string> = Object.fromEntries(SEED_BLOCKS.map((b) => [b.id, b.title]));
 const SYM_RE = /^[A-Z0-9.\-]{1,12}$/;
 
@@ -104,6 +104,7 @@ export default function TerminalPage() {
       .then((c) => alive && setCfg({
         ...EMPTY_CFG,
         ...c,
+        compare: { ...EMPTY_CFG.compare, ...(c?.compare ?? {}) },
         blocks: c?.blocks ?? {},
         watchlist: c?.watchlist ?? [],
         customBaskets: Array.isArray(c?.customBaskets) ? c.customBaskets : [],
@@ -125,10 +126,11 @@ export default function TerminalPage() {
     }, 600);
   };
 
-  // клик по заголовку блока → загрузить его инструменты в график сравнения и промотать к нему
-  const loadBlockToCompare = (symbols: string[]) => {
+  // клик по заголовку блока/корзины → загрузить инструменты в график сравнения, включить
+  // линию Σ (eq-weight) для корзин и промотать к графику
+  const loadBlockToCompare = (symbols: string[], isBasket = false) => {
     if (!cfg) return;
-    updateCfg({ ...cfg, compare: { ...cfg.compare, symbols: symbols.slice(0, 12) } });
+    updateCfg({ ...cfg, compare: { ...cfg.compare, symbols: symbols.slice(0, 12), showAvg: isBasket || cfg.compare.showAvg } });
     setTimeout(() => npfRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
   };
 
@@ -325,7 +327,9 @@ export default function TerminalPage() {
                 groups={groups}
                 symbols={cfg.compare.symbols}
                 period={cfg.compare.period}
-                onChange={(symbols, period) => updateCfg({ ...cfg, compare: { symbols, period } })}
+                showAvg={cfg.compare.showAvg}
+                onChange={(symbols, period) => updateCfg({ ...cfg, compare: { ...cfg.compare, symbols, period } })}
+                onToggleAvg={() => updateCfg({ ...cfg, compare: { ...cfg.compare, showAvg: !cfg.compare.showAvg } })}
               />
             )}
           </div>
@@ -342,6 +346,7 @@ export default function TerminalPage() {
                 onPick={(m, title) => setSel({ block: b, m, title })}
                 onCompare={loadBlockToCompare}
                 onEdit={() => setEditor({ block: b, mode: 'edit' })}
+                onDelete={() => deleteBlock(b.def.custom ? 'custom' : 'seed', b.def.id)}
               />
             ))}
             <button
@@ -548,6 +553,7 @@ function BlockCard({
   onPick,
   onCompare,
   onEdit,
+  onDelete,
 }: {
   block: OverviewBlock;
   mode: Mode;
@@ -556,8 +562,9 @@ function BlockCard({
   isFav: (sym: string) => boolean;
   onToggleFav: (sym: string) => void;
   onPick: (m: InstrumentMetrics, title: string) => void;
-  onCompare?: (symbols: string[]) => void;
+  onCompare?: (symbols: string[], isBasket?: boolean) => void;
   onEdit?: () => void;
+  onDelete?: () => void;
 }) {
   const spy63 = spy?.returns[63] ?? null;
   const isBasket = block.def.type === 'basket';
@@ -580,8 +587,8 @@ function BlockCard({
         <div className="flex items-center gap-2.5">
           <button
             type="button"
-            onClick={() => onCompare?.(block.instruments.map((c) => c.def.symbol))}
-            title="Показать инструменты блока в графике сравнения"
+            onClick={() => onCompare?.(block.instruments.map((c) => c.def.symbol), isBasket)}
+            title={isBasket ? 'Показать корзину на графике сравнения (с линией Σ)' : 'Показать инструменты блока в графике сравнения'}
             className="group flex items-center gap-1.5 text-[13px] font-bold text-ink hover:text-brand"
           >
             {block.def.title}
@@ -595,10 +602,25 @@ function BlockCard({
             <button
               type="button"
               onClick={onEdit}
-              title="Редактировать состав тикеров"
+              title="Редактировать название и состав"
               className="rounded-fk-sm border border-line-strong px-2 py-0.5 text-[11px] font-semibold text-ink-2 hover:border-brand-100 hover:bg-brand-50 hover:text-brand-700"
             >
               ✎ тикеры
+            </button>
+          )}
+          {isBasket && onDelete && (
+            <button
+              type="button"
+              onClick={() => {
+                const msg = block.def.custom
+                  ? `Удалить корзину «${block.def.title}» безвозвратно?`
+                  : `Скрыть корзину «${block.def.title}»? Вернуть можно из «Скрытые блоки».`;
+                if (window.confirm(msg)) onDelete();
+              }}
+              title="Удалить корзину"
+              className="rounded-fk-sm border border-line-strong px-2 py-0.5 text-[11px] font-semibold text-ink-3 hover:border-down hover:bg-down-soft hover:text-down-strong"
+            >
+              🗑
             </button>
           )}
         </div>
@@ -963,7 +985,25 @@ function BlockEditor({ block, mode: editMode, busy, onClose, onSave, onReset, on
   );
 }
 
-type CSeries = { sym: string; color: string; vals: number[] };
+type CSeries = { sym: string; color: string; vals: number[]; emphasis?: boolean };
+
+// Линия Σ (equal-weight): среднее нормализованных рядов по каждой точке.
+function avgSeries(series: CSeries[], label = 'Σ'): CSeries | null {
+  const real = series.filter((s) => s.vals.length);
+  if (real.length < 2) return null;
+  const n = Math.min(...real.map((s) => s.vals.length));
+  const vals: number[] = [];
+  for (let i = 0; i < n; i++) {
+    let sum = 0;
+    let k = 0;
+    for (const s of real) {
+      const v = s.vals[i];
+      if (v != null && isFinite(v)) { sum += v; k++; }
+    }
+    vals.push(k ? sum / k : 0);
+  }
+  return { sym: label, color: '#0f1729', vals, emphasis: true };
+}
 
 function periodCutoffISO(period: string): string {
   const days = COMPARE_PERIODS.find((p) => p.label === period)?.days ?? 370;
@@ -1045,7 +1085,7 @@ function MultiLineChart({ dates, series }: { dates: string[]; series: CSeries[] 
           );
         })}
         {xticks.map((i, k) => <text key={k} x={X(i).toFixed(1)} y={H - 6} fontSize="9.5" fill="#8b95a7" textAnchor="middle">{mon(dates[i])}</text>)}
-        {series.map((s) => <path key={s.sym} d={s.vals.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`).join(' ')} fill="none" stroke={s.color} strokeWidth={1.6} strokeLinejoin="round" />)}
+        {series.map((s) => <path key={s.sym} d={s.vals.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`).join(' ')} fill="none" stroke={s.color} strokeWidth={s.emphasis ? 3 : 1.6} strokeDasharray={s.emphasis ? '6 3' : undefined} strokeLinejoin="round" />)}
         {hov != null && <line x1={X(hov).toFixed(1)} x2={X(hov).toFixed(1)} y1={padT} y2={padT + plotH} stroke="var(--fk-line-strong)" />}
         {hov != null && series.map((s) => <circle key={s.sym} cx={X(hov).toFixed(1)} cy={Y(s.vals[hov]).toFixed(1)} r={3} fill={s.color} stroke="#fff" strokeWidth={1.3} />)}
         {ends.map((e) => (
@@ -1071,18 +1111,22 @@ function MultiLineChart({ dates, series }: { dates: string[]; series: CSeries[] 
   );
 }
 
-function NormalizedPerformance({ instrMap, groups, symbols, period, onChange }: {
+function NormalizedPerformance({ instrMap, groups, symbols, period, showAvg, onChange, onToggleAvg }: {
   instrMap: Map<string, { title: string; metrics: InstrumentMetrics | null }>;
   groups: Grp[];
   symbols: string[];
   period: string;
+  showAvg: boolean;
   onChange: (symbols: string[], period: string) => void;
+  onToggleAvg: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const { dates, series } = buildCompareSeries(symbols, instrMap, period);
   const remove = (s: string) => onChange(symbols.filter((x) => x !== s), period);
   const toggle = (s: string) => onChange(symbols.includes(s) ? symbols.filter((x) => x !== s) : [...symbols, s].slice(0, 10), period);
   const periodVal = COMPARE_PERIODS.some((p) => p.label === period) ? period : '1Г';
+  const avg = showAvg ? avgSeries(series) : null;
+  const chartSeries = avg ? [...series, avg] : series;
   return (
     <div className="mb-3.5 rounded-fk border border-line bg-surface-elev shadow-fk-sm">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-3.5 py-3">
@@ -1091,6 +1135,13 @@ function NormalizedPerformance({ instrMap, groups, symbols, period, onChange }: 
           <Badge variant="brand">избранное · ребейз к 0%</Badge>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            className={`rounded-fk-sm border px-2.5 py-1 text-[11px] font-semibold ${showAvg ? 'border-brand-100 bg-brand-50 text-brand-700' : 'border-line-strong text-ink-2'}`}
+            onClick={onToggleAvg}
+            title="Линия Σ — equal-weight среднее выбранных инструментов (доходность корзины)"
+          >
+            Σ среднее
+          </button>
           <SegmentedControl size="sm" value={periodVal} onChange={(p) => onChange(symbols, p)} options={COMPARE_PERIODS.map((p) => ({ label: p.label, value: p.label }))} />
           <button className={`rounded-fk-sm border px-2.5 py-1 text-[11px] font-semibold ${editing ? 'border-brand-100 bg-brand-50 text-brand-700' : 'border-line-strong text-ink-2'}`} onClick={() => setEditing((v) => !v)}>{editing ? '✓ готово' : '✎ тикеры'}</button>
         </div>
@@ -1106,11 +1157,17 @@ function NormalizedPerformance({ instrMap, groups, symbols, period, onChange }: 
             </span>
           );
         })}
+        {avg && (
+          <span className="inline-flex items-center gap-1.5 rounded-fk-pill border border-ink bg-surface-2 py-1 px-2.5 text-[12px] font-bold" title="equal-weight среднее (доходность корзины)">
+            <span className="h-2.5 w-2.5 rounded-fk-pill" style={{ background: avg.color }} />Σ корзина
+            <span className={`tabular-nums ${avg.vals[avg.vals.length - 1] >= 0 ? 'text-up-strong' : 'text-down-strong'}`}>{(avg.vals[avg.vals.length - 1] > 0 ? '+' : '') + avg.vals[avg.vals.length - 1].toFixed(1)}%</span>
+          </span>
+        )}
         {series.length === 0 && <span className="text-[12px] text-ink-3">Добавьте тикеры через «✎ тикеры»</span>}
       </div>
       {editing && <div className="mt-3"><TickerPicker groups={groups} selected={new Set(symbols)} onToggle={toggle} /></div>}
       <div className="px-3.5 py-3">
-        <MultiLineChart dates={dates} series={series} />
+        <MultiLineChart dates={dates} series={chartSeries} />
       </div>
     </div>
   );
