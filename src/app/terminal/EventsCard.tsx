@@ -51,39 +51,59 @@ function whenLabel(s: string): string {
   return hasTime ? `${wd} ${t.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}` : `${wd} ${t.getUTCDate()}.${t.getUTCMonth() + 1}`;
 }
 
+function EconRow({ e }: { e: EconEvent }) {
+  const hi = e.impact === 'High';
+  return (
+    <div className="flex items-center gap-2 border-b border-line py-1 text-[12px] last:border-0">
+      <span className="w-14 shrink-0 text-[11px] font-semibold text-ink-2">{whenLabel(e.date)}</span>
+      <span className="h-2 w-2 flex-none rounded-full" style={{ background: IMP_TONE[e.impact] }} title={e.impact} />
+      <span className={`min-w-0 flex-1 truncate ${hi ? 'font-bold text-ink' : 'text-ink-2'}`} title={e.event}>{e.event}</span>
+      {(e.estimate != null || e.previous != null) && (
+        <span className="shrink-0 tabular-nums text-[11px] text-ink-3">{e.estimate != null ? `прог ${e.estimate}` : ''}{e.estimate != null && e.previous != null ? ' · ' : ''}{e.previous != null ? `пред ${e.previous}` : ''}</span>
+      )}
+    </div>
+  );
+}
+
 function EventsBody({ d }: { d: EventsData }) {
   const empty = d.econ.length === 0 && d.earnings.length === 0;
   if (empty) {
     return <div className="px-2 py-8 text-center text-[12px] text-ink-3">{d.synthetic ? 'Календари недоступны (нет ключа FMP)' : 'На неделю значимых событий не найдено'}</div>;
   }
+  const noEarnings = d.earnings.length === 0;
+  // нет отчётов → макро занимает всю ширину в две колонки (без мёртвого места и обрезаний)
+  if (noEarnings) {
+    return (
+      <div>
+        <div className="mb-1.5 flex items-center gap-2 text-[10px] font-bold uppercase tracking-wide text-ink-3">
+          Макро · США
+          <span className="inline-flex items-center gap-1 normal-case font-normal text-ink-3"><span className="h-1.5 w-1.5 rounded-full" style={{ background: IMP_TONE.High }} />High <span className="h-1.5 w-1.5 rounded-full" style={{ background: IMP_TONE.Medium }} />Medium</span>
+        </div>
+        <div className="grid grid-cols-1 gap-x-6 sm:grid-cols-2">
+          {d.econ.map((e, i) => <EconRow key={i} e={e} />)}
+        </div>
+        <div className="mt-2 text-[11px] text-ink-3">Отчётностей мегакапов на этой неделе нет — следующий пик в сезон отчётов.</div>
+      </div>
+    );
+  }
   return (
-    <div className="grid grid-cols-1 gap-x-5 gap-y-3 sm:grid-cols-2">
-      {/* макро */}
+    <div className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
       <div>
         <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-ink-3">Макро · США</div>
         <div className="space-y-0.5">
           {d.econ.length === 0 && <div className="py-2 text-[12px] text-ink-3">—</div>}
-          {d.econ.map((e, i) => (
-            <div key={i} className="flex items-center gap-2 border-b border-line py-1 text-[12px] last:border-0">
-              <span className="w-16 shrink-0 text-[11px] font-semibold text-ink-2">{whenLabel(e.date)}</span>
-              <span className="h-2 w-2 flex-none rounded-full" style={{ background: IMP_TONE[e.impact] }} title={e.impact} />
-              <span className="min-w-0 flex-1 truncate" title={e.event}>{e.event}</span>
-              {e.estimate != null && <span className="shrink-0 tabular-nums text-ink-3">прог {e.estimate}</span>}
-            </div>
-          ))}
+          {d.econ.slice(0, 12).map((e, i) => <EconRow key={i} e={e} />)}
         </div>
       </div>
-      {/* отчёты */}
       <div>
         <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-ink-3">Отчёты мегакапов</div>
         <div className="space-y-0.5">
-          {d.earnings.length === 0 && <div className="py-2 text-[12px] text-ink-3">—</div>}
           {d.earnings.map((e, i) => (
             <div key={i} className="flex items-center gap-2 border-b border-line py-1 text-[12px] last:border-0">
-              <span className="w-16 shrink-0 text-[11px] font-semibold text-ink-2">{whenLabel(e.date)}</span>
+              <span className="w-14 shrink-0 text-[11px] font-semibold text-ink-2">{whenLabel(e.date)}</span>
               <span className="h-2 w-2 flex-none rounded-full bg-brand" />
               <b className="min-w-0 flex-1 truncate text-ink">{e.symbol}</b>
-              {e.epsEstimated != null && <span className="shrink-0 tabular-nums text-ink-3">EPS≈{e.epsEstimated}</span>}
+              {e.epsEstimated != null && <span className="shrink-0 tabular-nums text-[11px] text-ink-3">EPS≈{e.epsEstimated}</span>}
             </div>
           ))}
         </div>

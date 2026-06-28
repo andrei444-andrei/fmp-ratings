@@ -4,10 +4,11 @@
 // graceful: нет ключей → синтетика + флаг.
 import { getPrices } from '@/lib/research/prices';
 import { syntheticSeries } from '@/lib/research/metrics';
+import { fmpQuote } from '@/lib/fmp';
 import { logAppError } from '@/lib/app-errors';
 import { readSnapshot, writeSnapshot, isFresh } from './store';
 
-const RISK_KEY = 'risk_v2'; // v2: VIX через EODHD-индексы (VIX.INDX)
+const RISK_KEY = 'risk_v3'; // v3: VIX через FMP quote (^VIX) + EOD-фолбэки
 
 export type VolPoint = { date: string; v: number };
 export type RiskData = {
@@ -84,6 +85,19 @@ async function lastTwoAny(syms: string[]): Promise<{ last: number | null; prev: 
   return { last: null, prev: null };
 }
 
+/** Текущая котировка индекса через FMP quote (для ^VIX/^VIX3M — EOD-история их не отдаёт). */
+async function quoteVal(sym: string): Promise<{ last: number | null; chg: number | null }> {
+  try {
+    const r = await fmpQuote(sym);
+    const row = Array.isArray(r) ? r[0] : null;
+    const price = Number(row?.price);
+    if (Number.isFinite(price)) return { last: price, chg: Number.isFinite(Number(row?.change)) ? Number(row?.change) : null };
+  } catch {
+    /* нет котировки */
+  }
+  return { last: null, chg: null };
+}
+
 export async function computeRisk(): Promise<RiskData> {
   const spy = await loadCloses('SPY', 320);
   const rets = [] as number[];
@@ -100,14 +114,21 @@ export async function computeRisk(): Promise<RiskData> {
   const lastC = spy.closes[spy.closes.length - 1] ?? 0;
   const drawdown = maxC > 0 ? ((lastC - maxC) / maxC) * 100 : null;
 
-  // VIX / VIX3M — EODHD-индексы (VIX.INDX), с фолбэками
-  const [vixTwo, vix3mTwo] = await Promise.all([
-    lastTwoAny(['VIX.INDX', '^VIX']),
-    lastTwoAny(['VIX3M.INDX', 'VXV.INDX', '^VIX3M']),
-  ]);
-  const vix = vixTwo.last;
-  const vixChg = vix != null && vixTwo.prev != null ? +(vix - vixTwo.prev).toFixed(2) : null;
-  const vix3m = vix3mTwo.last;
+  // VIX / VIX3M — сперва FMP quote (^VIX), затем EOD-индексы EODHD как фолбэк
+  let vix: number | null = null;
+  let vixChg: number | null = null;
+  let vix3m: number | null = null;
+  const vq = await quoteVal('^VIX');
+  if (vq.last != null) {
+    vix = +vq.last.toFixed(2);
+    vixChg = vq.chg != null ? +vq.chg.toFixed(2) : null;
+  } else {
+    const t = await lastTwoAny(['VIX.INDX', '^VIX']);
+    vix = t.last;
+    vixChg = t.last != null && t.prev != null ? +(t.last - t.prev).toFixed(2) : null;
+  }
+  const vq3 = await quoteVal('^VIX3M');
+  vix3m = vq3.last != null ? +vq3.last.toFixed(2) : (await lastTwoAny(['VIX3M.INDX', 'VXV.INDX'])).last;
   const termRatio = vix != null && vix3m != null && vix3m > 0 ? +(vix / vix3m).toFixed(3) : null;
 
   // режим: по VIX, иначе по реализованной 63д; бэквардация усиливает
