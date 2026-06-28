@@ -7,8 +7,8 @@ import { libsqlClient } from '@/db/client';
 export type CustomBasket = { id: string; title: string; members: string[] };
 
 export type TerminalConfig = {
-  /** Виджет «Нормализованный перформанс»: избранные тикеры + период. */
-  compare: { symbols: string[]; period: string };
+  /** Виджет «Нормализованный перформанс»: избранные тикеры + период + линия Σ (eq-weight). */
+  compare: { symbols: string[]; period: string; showAvg: boolean };
   /** Корреляционная матрица: выбранные тикеры. */
   corr: { symbols: string[] };
   /** Переопределения состава блоков-виджетов: blockId → список тикеров. Пусто = сид. */
@@ -24,7 +24,7 @@ export type TerminalConfig = {
 };
 
 export const DEFAULT_CONFIG: TerminalConfig = {
-  compare: { symbols: ['SPY', 'QQQ', 'DIA'], period: '1Г' },
+  compare: { symbols: ['SPY', 'QQQ', 'DIA'], period: '1Г', showAvg: false },
   corr: { symbols: ['SPY', 'QQQ', 'MCHI', 'EWG', 'EWJ', 'GLD', 'SLV', 'URA', 'XLK', 'XLE', 'XLF'] },
   blocks: {},
   watchlist: [],
@@ -124,7 +124,7 @@ export function normalizeConfig(raw: any): TerminalConfig {
   const corrSyms = sanitizeSymbols(raw?.corr?.symbols, 16);
   const period = typeof raw?.compare?.period === 'string' ? raw.compare.period : DEFAULT_CONFIG.compare.period;
   return {
-    compare: { symbols: compareSyms.length ? compareSyms : DEFAULT_CONFIG.compare.symbols, period },
+    compare: { symbols: compareSyms.length ? compareSyms : DEFAULT_CONFIG.compare.symbols, period, showAvg: !!raw?.compare?.showAvg },
     corr: { symbols: corrSyms.length ? corrSyms : DEFAULT_CONFIG.corr.symbols },
     blocks: sanitizeBlocks(raw?.blocks),
     watchlist: sanitizeSymbols(raw?.watchlist, 64),
