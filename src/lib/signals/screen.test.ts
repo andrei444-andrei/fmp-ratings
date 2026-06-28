@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { matchRow, screenByTicker, screenByYear, screenDeals, dealStats, colIndex, totalConds, OUTN, type ScreenPanel, type Block, type Formulas } from './screen';
+import { matchRow, screenByTicker, screenByYear, screenDeals, screenAllDeals, dealStats, colIndex, totalConds, OUTN, type ScreenPanel, type Block, type Formulas } from './screen';
 import { compileFormula } from './formula';
 
 // Панель: 2 тикера × 5 лет × 4 наблюдения, cols mom_63, vol_21. Детерминированно.
@@ -113,6 +113,19 @@ describe('screen — конструктор условий', () => {
     const aaa = got.find((g) => g.symbol === 'AAA')!;
     const refRows = P.rows.filter((r) => r[0] === 0);
     expect(aaa.disp[0]).toBeCloseTo(refRows.reduce((a, r) => a + ref(r), 0) / refRows.length, 9);
+  });
+
+  it('сводно: все матч-сделки = сумме по годам; сводная статистика согласована', () => {
+    const blocks: Block[] = [{ conds: [{ col: 'vol_21', cmp: 'le', val: 35 }] }];
+    const all = screenAllDeals(P, blocks);
+    const yrs = screenByYear(P, blocks);
+    expect(all.length).toBe(yrs.reduce((a, y) => a + y.n, 0));
+    const st = dealStats(all);
+    expect(st.n).toBe(all.length);
+    expect(st.tickers).toBe(new Set(all.map((d) => d.symbol)).size);
+    expect(st.avgRet).toBeCloseTo(all.reduce((a, d) => a + d.ret, 0) / all.length, 9);
+    // окно лет отсекает и в своде
+    expect(screenAllDeals(P, blocks, 2023).every((d) => +d.date.slice(0, 4) >= 2023)).toBe(true);
   });
 
   it('провал в сделки: по тикеру возвращает только его матч-сделки с метриками и исходами', () => {

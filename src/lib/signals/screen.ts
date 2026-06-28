@@ -164,7 +164,25 @@ export function screenDeals(panel: ScreenPanel, blocks: Block[], kind: 't' | 'y'
   return out.sort((a, b) => (a.date < b.date ? -1 : 1));
 }
 
-// Сводка по списку сделок (для drawer). Собирает синтетические строки в формате панели и считает те же метрики.
+// ВСЕ матч-сделки вселенной (для сводного вида и графика) — без разреза по тикеру/году, в окне лет.
+export function screenAllDeals(panel: ScreenPanel, blocks: Block[], minYear?: number, formulas?: Formulas): Deal[] {
+  const ci = colIndex(panel);
+  const out: Deal[] = [];
+  for (const row of panel.rows) {
+    if (outOfWindow(panel, row, minYear) || !matchRow(row, blocks, ci, formulas)) continue;
+    const vals: Record<string, number | null> = {};
+    panel.cols.forEach((c, i) => (vals[c] = row[FAC_OFF + i] as number | null));
+    if (formulas?.size) { const get = rowGetter(row, ci); for (const [name, fn] of formulas) vals[name] = fn(get); }
+    out.push({
+      date: panel.dates[row[1] as number], symbol: panel.symbols[row[0] as number],
+      ret: row[RET] as number, exc: row[EXC] as number, mfe: row[MFE] as number, mae: row[MAE] as number, mdd: row[MDD] as number,
+      vals,
+    });
+  }
+  return out.sort((a, b) => (a.date < b.date ? -1 : 1));
+}
+
+// Сводка по списку сделок (для drawer/свода). Собирает синтетические строки в формате панели и считает те же метрики.
 export function dealStats(deals: Deal[]): OutStats & { n: number; tickers: number } {
   const a = newAgg();
   for (const d of deals) pushOut(a, [0, 0, d.ret, d.exc, d.mfe, d.mae, d.mdd]);
