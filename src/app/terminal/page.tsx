@@ -5,6 +5,8 @@ import { Delta, Sparkline, SegmentedControl, Badge, Skeleton, Modal, Button, Inp
 import { SEED_BLOCKS } from '@/lib/terminal/registry';
 import RotationCard from './RotationCard';
 import RatesCard from './RatesCard';
+import RiskCard from './RiskCard';
+import EventsCard from './EventsCard';
 import type { CorrelationMatrix, InstrumentMetrics, MarketOverview, OverviewBlock } from '@/lib/terminal/types';
 
 const PCOLS: { key: number | 'ytd'; label: string }[] = [
@@ -339,6 +341,8 @@ export default function TerminalPage() {
           <div className="mb-3.5 grid grid-cols-1 gap-3.5 xl:grid-cols-2">
             <RotationCard />
             <RatesCard />
+            <RiskCard />
+            <EventsCard />
           </div>
           <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
             {data.blocks.map((b) => (
