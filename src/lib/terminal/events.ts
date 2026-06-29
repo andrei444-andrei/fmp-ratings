@@ -3,10 +3,12 @@
 // Snapshot-кэш (§6), graceful: нет ключа → пустые списки + флаг synthetic.
 import { fmpEconomicCalendar, fmpEarningsCalendar } from '@/lib/fmp';
 import { logAppError } from '@/lib/app-errors';
+import { lookupIndicator } from './indicator-info';
 import { readSnapshot, writeSnapshot, isFresh } from './store';
 
-const EVENTS_KEY = 'events_v1';
-const HORIZON_DAYS = 8;
+const EVENTS_KEY = 'events_v2'; // v2: окно включает завершённые события (прошлые дни) + actual
+const HORIZON_DAYS = 8; // вперёд
+const PAST_DAYS = 4; // назад — показываем недавно вышедшие (с фактом)
 
 // мегакапы, чьи отчёты двигают рынок — их выделяем в радаре
 const MEGA = new Set([
@@ -14,7 +16,7 @@ const MEGA = new Set([
   'UNH', 'XOM', 'LLY', 'WMT', 'COST', 'NFLX', 'AMD', 'CRM', 'ORCL', 'JNJ', 'HD', 'BAC', 'PG',
 ]);
 
-export type EconEvent = { date: string; event: string; country: string; impact: 'High' | 'Medium' | 'Low'; estimate: string | null; previous: string | null; actual: string | null };
+export type EconEvent = { date: string; event: string; country: string; impact: 'High' | 'Medium' | 'Low'; estimate: string | null; previous: string | null; actual: string | null; goodHigh?: boolean | null };
 export type EarningsEvent = { date: string; symbol: string; epsEstimated: number | null; time: string | null };
 export type EventsData = { asOf: string; econ: EconEvent[]; earnings: EarningsEvent[]; synthetic: boolean };
 
@@ -39,7 +41,7 @@ const numOrNull = (v: any): number | null => (v == null || v === '' ? null : Num
 const strOrNull = (v: any): string | null => (v == null || v === '' ? null : String(v));
 
 export async function computeEvents(): Promise<EventsData> {
-  const from = isoDaysAgo(0);
+  const from = isoDaysAgo(PAST_DAYS);
   const to = isoDaysAhead(HORIZON_DAYS);
   let econRaw: any[] = [];
   let earnRaw: any[] = [];
@@ -63,17 +65,21 @@ export async function computeEvents(): Promise<EventsData> {
       const imp = normImpact(r?.impact);
       return (c === 'US' || c === 'USA' || c === 'UNITED STATES') && (imp === 'High' || imp === 'Medium');
     })
-    .map((r) => ({
-      date: String(r?.date ?? '').slice(0, 16),
-      event: String(r?.event ?? '').slice(0, 80),
-      country: 'US',
-      impact: normImpact(r?.impact),
-      estimate: strOrNull(r?.estimate),
-      previous: strOrNull(r?.previous),
-      actual: strOrNull(r?.actual),
-    }))
+    .map((r) => {
+      const event = String(r?.event ?? '').slice(0, 80);
+      return {
+        date: String(r?.date ?? '').slice(0, 16),
+        event,
+        country: 'US' as const,
+        impact: normImpact(r?.impact),
+        estimate: strOrNull(r?.estimate),
+        previous: strOrNull(r?.previous),
+        actual: strOrNull(r?.actual),
+        goodHigh: lookupIndicator(event)?.betterWhenHigher ?? null,
+      };
+    })
     .sort((a, b) => a.date.localeCompare(b.date))
-    .slice(0, 14);
+    .slice(0, 48);
 
   // отчёты: только мегакапы, по возрастанию даты
   const seen = new Set<string>();
