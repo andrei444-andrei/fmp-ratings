@@ -27,6 +27,8 @@ test.describe('Скринер /researcher', () => {
     await page.getByRole('button', { name: 'По тикерам' }).click();
     await page.locator('table tbody tr').first().click();
     await expect(page.getByText('матч-сделки по текущим условиям')).toBeVisible();
+    // В drawer тоже график цены с периодами сделок (линия).
+    await expect(page.locator('.rsx-drawer').getByTestId('deal-line').first()).toBeVisible({ timeout: 60000 });
   });
 
   // Создание корзины: модалка → ручной ввод тикеров → сохранение → персист в БД → удаление.
