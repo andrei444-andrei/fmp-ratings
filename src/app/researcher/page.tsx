@@ -793,7 +793,10 @@ function AssetDetail({ sym, series, deals, horizon, minYear, onClose }: { sym: s
   const [dom, setDom] = useState<[number, number]>(full);
   const [sel, setSel] = useState<[number, number] | null>(null);
   const [drag, setDrag] = useState<[number, number] | null>(null);
+  // Перетаскивание окна на полосе-скруббере: move — двигаем целиком, l/r — тянем край.
+  const [scrub, setScrub] = useState<{ mode: 'move' | 'l' | 'r'; startT: number; startSel: [number, number] } | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const stripRef = useRef<SVGSVGElement>(null);
   const W = 900, H = 380, mL = 52, mR = 14, mT = 16, mB = 26;
   const iw = W - mL - mR, ih = H - mT - mB;
   const [d0, d1] = dom;
@@ -804,6 +807,14 @@ function AssetDetail({ sym, series, deals, horizon, minYear, onClose }: { sym: s
     const frac = Math.min(1, Math.max(0, ((clientX - rect.left) / rect.width * W - mL) / iw));
     return d0 + frac * (d1 - d0);
   }, [d0, d1, iw]);
+
+  // Полоса-скруббер мапит ВЕСЬ период (full) на свою ширину (без полей — согласовано с sToTime).
+  const sToTime = useCallback((clientX: number) => {
+    const el = stripRef.current; if (!el) return full[0];
+    const rect = el.getBoundingClientRect();
+    const frac = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    return full[0] + frac * (full[1] - full[0]);
+  }, [full[0], full[1]]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Сброс окна/выделения при смене ряда (асинхронный до-фетч цен, пока окно открыто): иначе домен/оси
   // остались бы от прошлого ряда. Смена символа и так ремоунтит компонент (key=detailSym).
@@ -835,6 +846,46 @@ function AssetDetail({ sym, series, deals, horizon, minYear, onClose }: { sym: s
   const onMove = (e: { clientX: number }) => { setDrag((dr) => (dr ? [dr[0], xToTime(e.clientX)] : dr)); };
   const onUp = () => { if (!drag) return; const lo = Math.min(drag[0], drag[1]), hi = Math.max(drag[0], drag[1]); setSel(hi - lo > (d1 - d0) * 0.01 ? [lo, hi] : null); setDrag(null); };
   const zoomOut = () => { const c = (d0 + d1) / 2, h = (d1 - d0) * 0.75; setDom([Math.max(full[0], c - h), Math.min(full[1], c + h)]); };
+
+  // Скруббер: тянем окно/края по всему периоду. Глобальные listener-ы — чтобы тащить и за пределами полосы.
+  useEffect(() => {
+    if (!scrub) return;
+    const MIN = 6 * 864e5;
+    const onMM = (e: MouseEvent) => {
+      const t = sToTime(e.clientX);
+      const [a0, b0] = scrub.startSel;
+      if (scrub.mode === 'move') {
+        const width = b0 - a0, dt = t - scrub.startT;
+        let a = a0 + dt, b = b0 + dt;
+        if (a < full[0]) { a = full[0]; b = a + width; }
+        if (b > full[1]) { b = full[1]; a = b - width; }
+        setSel([a, b]);
+      } else if (scrub.mode === 'l') {
+        setSel([Math.max(full[0], Math.min(t, b0 - MIN)), b0]);
+      } else {
+        setSel([a0, Math.min(full[1], Math.max(t, a0 + MIN))]);
+      }
+    };
+    const onMU = () => setScrub(null);
+    window.addEventListener('mousemove', onMM);
+    window.addEventListener('mouseup', onMU);
+    return () => { window.removeEventListener('mousemove', onMM); window.removeEventListener('mouseup', onMU); };
+  }, [scrub, full[0], full[1], sToTime]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const sDown = (e: { clientX: number }) => {
+    const el = stripRef.current; if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const toPx = (tt: number) => ((tt - full[0]) / (full[1] - full[0] || 1)) * rect.width;
+    const px = e.clientX - rect.left, HANDLE = 10;
+    // Есть выделение → двигаем окно / тянем край. Нет (окно = весь период) → тянем новое выделение.
+    if (sel) {
+      const lpx = toPx(sel[0]), rpx = toPx(sel[1]);
+      if (Math.abs(px - lpx) <= HANDLE) { setScrub({ mode: 'l', startT: sToTime(e.clientX), startSel: sel }); return; }
+      if (Math.abs(px - rpx) <= HANDLE) { setScrub({ mode: 'r', startT: sToTime(e.clientX), startSel: sel }); return; }
+      if (px > lpx && px < rpx) { setScrub({ mode: 'move', startT: sToTime(e.clientX), startSel: sel }); return; }
+    }
+    const t = sToTime(e.clientX); setSel([t, t]); setScrub({ mode: 'r', startT: t, startSel: [t, t] });
+  };
 
   const vis = allPts.filter((p) => p.t >= d0 && p.t <= d1);
   // Узкий зум может оставить в окне <2 точек (разреженный/даунсэмпленный ряд). Тогда берём окно + по
@@ -872,6 +923,16 @@ function AssetDetail({ sym, series, deals, horizon, minYear, onClose }: { sym: s
   const t3 = 'var(--fk-text-3)', line = 'var(--fk-line)', up = 'var(--fk-up,#12b981)', down = 'var(--fk-down,#f43f5e)', brand = 'var(--fk-brand-700,#2563eb)';
   const brush = drag || sel;
 
+  // Полоса-скруббер: весь период с мини-спарклайном и подвижным окном (= sel, либо весь период).
+  const SW = 900, SH = 30;
+  const sX = (t: number) => ((t - full[0]) / (full[1] - full[0] || 1)) * SW;
+  const sWin = sel ?? full;
+  const swx0 = sX(sWin[0]), swx1 = sX(sWin[1]);
+  let sfmin = Infinity, sfmax = -Infinity;
+  for (const p of allPts) { if (p.c < sfmin) sfmin = p.c; if (p.c > sfmax) sfmax = p.c; }
+  const sStep = Math.max(1, Math.ceil(allPts.length / 220));
+  const sparkPath = allPts.filter((_, i) => i % sStep === 0).map((p, i) => `${i ? 'L' : 'M'}${sX(p.t).toFixed(1)} ${(3 + (SH - 6) * (1 - (p.c - sfmin) / ((sfmax - sfmin) || 1))).toFixed(1)}`).join(' ');
+
   return (
     <div className="rsx">
       <div className="rsx-scrim" style={{ zIndex: 70 }} onClick={onClose} />
@@ -901,6 +962,19 @@ function AssetDetail({ sym, series, deals, horizon, minYear, onClose }: { sym: s
               <path d={path} fill="none" data-testid="detail-line" style={{ stroke: 'var(--fk-text-2,#475569)', strokeWidth: 1.4 }} />
               {bands.map((b, i) => (b.te >= d0 && b.te <= d1) ? <circle key={`m${i}`} cx={X(b.te)} cy={Y(closeAt(b.te))} r={3.2} style={{ fill: b.up ? up : down, stroke: '#fff', strokeWidth: 0.8 }} /> : null)}
             </svg>
+          )}
+          {allPts.length >= 2 && (
+            <div style={{ marginTop: 8 }}>
+              <svg ref={stripRef} viewBox={`0 0 ${SW} ${SH}`} data-testid="asset-detail-scrubber" preserveAspectRatio="none"
+                style={{ display: 'block', width: '100%', height: 30, cursor: 'ew-resize', touchAction: 'none', userSelect: 'none' }} onMouseDown={sDown}>
+                <rect x={0} y={2} width={SW} height={SH - 4} rx={4} style={{ fill: 'var(--fk-surface-2)' }} />
+                <path d={sparkPath} fill="none" vectorEffect="non-scaling-stroke" style={{ stroke: t3, strokeWidth: 1, opacity: 0.65 }} />
+                <rect x={Math.min(swx0, swx1)} y={1} width={Math.max(2, Math.abs(swx1 - swx0))} height={SH - 2} rx={3} style={{ fill: brand, fillOpacity: 0.14, stroke: brand, strokeWidth: 1 }} vectorEffect="non-scaling-stroke" />
+                <rect x={swx0 - 2.5} y={4} width={5} height={SH - 8} rx={2} style={{ fill: brand }} />
+                <rect x={swx1 - 2.5} y={4} width={5} height={SH - 8} rx={2} style={{ fill: brand }} />
+              </svg>
+              <div className="sub" style={{ marginTop: 3 }}>Полоса периода: тяните окно или его края — метрики ниже считаются за выбранный период{sel ? '' : ' (сейчас — весь период)'}.</div>
+            </div>
           )}
           <div className="statgrid" style={{ marginTop: 14 }} data-testid="detail-stats">
             {st.n === 0

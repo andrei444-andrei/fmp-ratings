@@ -138,4 +138,30 @@ test.describe('Скринер /researcher', () => {
     await page.getByTestId('detail-zoom-sel').click();
     await expect(page.getByRole('button', { name: 'Сбросить масштаб' })).toBeEnabled();
   });
+
+  // Полоса-скруббер под графиком: тянем → выбирается период, метрики пересчитываются.
+  test('детальный график: полоса-скруббер выбирает период', async ({ page }) => {
+    await page.goto('/researcher');
+    await expect(page.getByTestId('panel-meta')).toBeVisible({ timeout: 120000 });
+    await page.getByText('удалить блок').click();
+    const card = page.getByTestId('deal-line-chart').first();
+    await expect(card).toBeVisible({ timeout: 60000 });
+    await card.click();
+
+    const strip = page.getByTestId('asset-detail-scrubber');
+    await expect(strip).toBeVisible();
+    await expect(page.getByTestId('asset-detail').getByText(/Весь период/)).toBeVisible();
+
+    // тянем по полосе → создаётся окно периода
+    const sb = (await strip.boundingBox())!;
+    await page.mouse.move(sb.x + sb.width * 0.35, sb.y + sb.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(sb.x + sb.width * 0.62, sb.y + sb.height / 2, { steps: 12 });
+    await page.mouse.up();
+
+    // период выбран (появилась кнопка приблизить + заголовок «Период …»), метрики на месте
+    await expect(page.getByTestId('detail-zoom-sel')).toBeVisible();
+    await expect(page.getByTestId('asset-detail').getByText(/Период\s+20\d\d/)).toBeVisible();
+    await expect(page.getByTestId('detail-stats')).toBeVisible();
+  });
 });
