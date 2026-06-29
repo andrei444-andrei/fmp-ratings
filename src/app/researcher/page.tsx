@@ -118,6 +118,7 @@ export default function Researcher() {
   const [presetSave, setPresetSave] = useState<{ name: string; description: string } | null>(null); // форма сохранения пресета
   const [priceSeries, setPriceSeries] = useState<Record<string, { date: string; close: number }[]>>({}); // дневные цены для графиков сделок
   const [pricesLoading, setPricesLoading] = useState(false);
+  const [detailSym, setDetailSym] = useState<string | null>(null); // открытый детальный график актива (зум + метрики периода)
 
   const universe = useMemo(() => [...new Set(uniText.toUpperCase().split(/[^A-Z0-9.\-]+/).filter(Boolean))].slice(0, 40), [uniText]);
   const [applied, setApplied] = useState<{ uni: string; horizon: number } | null>(null);
@@ -594,7 +595,7 @@ export default function Researcher() {
                 <span className="card-t">График сделок · цена актива по годам</span>
                 <span className="sub">{pricesLoading ? 'загрузка цен…' : `${new Set(allDeals.map((d) => d.symbol)).size} активов со сделками`}</span>
               </div>
-              <PriceLines series={priceSeries} deals={allDeals} horizon={panel.horizon || horizon} minYear={minYear} />
+              <PriceLines series={priceSeries} deals={allDeals} horizon={panel.horizon || horizon} minYear={minYear} onExpand={setDetailSym} />
               <p className="sub" style={{ marginTop: 6 }}>Карточка на актив со сделками: линия — цена по годам; <span className="up">зелёная</span>/<span className="down">красная</span> полоса отмечает период сделки (вход … +{panel.horizon || horizon}д), цвет — знак форварда; точка — вход.</p>
             </div>
           ) : view === 'tickers' ? (
@@ -633,7 +634,9 @@ export default function Researcher() {
         </div>
       </div>
 
-      {drill && panel && <Drawer panel={panel} blocks={blk} drill={drill} horizon={panel.horizon || horizon} minYear={minYear} formulas={fmap} display={displayCols} colLabel={colLabel} series={priceSeries} onClose={() => setDrill(null)} />}
+      {drill && panel && <Drawer panel={panel} blocks={blk} drill={drill} horizon={panel.horizon || horizon} minYear={minYear} formulas={fmap} display={displayCols} colLabel={colLabel} series={priceSeries} onExpand={setDetailSym} onClose={() => setDrill(null)} />}
+
+      {detailSym && <AssetDetail key={detailSym} sym={detailSym} series={priceSeries[detailSym] || []} deals={allDeals.filter((d) => d.symbol === detailSym)} horizon={(panel?.horizon) || horizon} minYear={minYear} onClose={() => setDetailSym(null)} />}
 
       {basketModal && <BasketModal existing={baskets} onSave={saveBasket} onClose={() => setBasketModal(false)} />}
 
@@ -645,7 +648,7 @@ export default function Researcher() {
   );
 }
 
-function Drawer({ panel, blocks, drill, horizon, minYear, formulas, display, colLabel, series, onClose }: { panel: ScreenPanel; blocks: Block[]; drill: { kind: 't' | 'y'; kv: string }; horizon: number; minYear?: number; formulas: Formulas; display: string[]; colLabel: (k: string) => string; series: Record<string, { date: string; close: number }[]>; onClose: () => void }) {
+function Drawer({ panel, blocks, drill, horizon, minYear, formulas, display, colLabel, series, onExpand, onClose }: { panel: ScreenPanel; blocks: Block[]; drill: { kind: 't' | 'y'; kv: string }; horizon: number; minYear?: number; formulas: Formulas; display: string[]; colLabel: (k: string) => string; series: Record<string, { date: string; close: number }[]>; onExpand?: (sym: string) => void; onClose: () => void }) {
   const deals = screenDeals(panel, blocks, drill.kind, drill.kv, minYear, formulas);
   const st = dealStats(deals);
   // Окно графика: для разреза по году — только этот год; для тикера — текущее окно лет (с minYear).
@@ -681,7 +684,7 @@ function Drawer({ panel, blocks, drill, horizon, minYear, formulas, display, col
           {deals.length > 0 && (
             <div style={{ marginBottom: 14 }}>
               <div className="chart-head"><span className="card-t">Цена{drill.kind === 'y' ? ` · ${drill.kv}` : ' по годам'} и периоды сделок</span></div>
-              <PriceLines series={series} deals={deals} horizon={horizon} minYear={chartMinYear} winEnd={chartWinEnd} />
+              <PriceLines series={series} deals={deals} horizon={horizon} minYear={chartMinYear} winEnd={chartWinEnd} onExpand={onExpand} />
             </div>
           )}
           <div style={{ overflowX: 'auto' }}>
@@ -709,7 +712,7 @@ function Drawer({ panel, blocks, drill, horizon, minYear, formulas, display, col
 
 // График сделок: на каждый актив со сделками — карточка с ценой по годам (линия) и периодами сделок
 // (полупрозрачные полосы [вход … вход+горизонт], цвет = знак форварда). Чистый SVG, без зависимостей.
-function PriceLines({ series, deals, horizon, minYear, winEnd }: { series: Record<string, { date: string; close: number }[]>; deals: Deal[]; horizon: number; minYear?: number; winEnd?: number }) {
+function PriceLines({ series, deals, horizon, minYear, winEnd, onExpand }: { series: Record<string, { date: string; close: number }[]>; deals: Deal[]; horizon: number; minYear?: number; winEnd?: number; onExpand?: (sym: string) => void }) {
   const bySym = useMemo(() => {
     const m = new Map<string, Deal[]>();
     for (const d of deals) { const a = m.get(d.symbol); if (a) a.push(d); else m.set(d.symbol, [d]); }
@@ -720,12 +723,12 @@ function PriceLines({ series, deals, horizon, minYear, winEnd }: { series: Recor
   const winEndMs = winEnd ?? Infinity;
   return (
     <div className="pl-grid" data-testid="deal-line-charts">
-      {bySym.map(([sym, ds]) => <AssetChart key={sym} sym={sym} series={series[sym] || []} deals={ds} horizon={horizon} winStart={winStart} winEnd={winEndMs} />)}
+      {bySym.map(([sym, ds]) => <AssetChart key={sym} sym={sym} series={series[sym] || []} deals={ds} horizon={horizon} winStart={winStart} winEnd={winEndMs} onExpand={onExpand} />)}
     </div>
   );
 }
 
-function AssetChart({ sym, series, deals, horizon, winStart, winEnd }: { sym: string; series: { date: string; close: number }[]; deals: Deal[]; horizon: number; winStart: number; winEnd: number }) {
+function AssetChart({ sym, series, deals, horizon, winStart, winEnd, onExpand }: { sym: string; series: { date: string; close: number }[]; deals: Deal[]; horizon: number; winStart: number; winEnd: number; onExpand?: (sym: string) => void }) {
   const pts = useMemo(() => series
     .map((r) => ({ t: Date.parse(r.date + 'T00:00:00Z'), c: r.close }))
     .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.c) && p.t >= winStart && p.t <= winEnd)
@@ -757,8 +760,8 @@ function AssetChart({ sym, series, deals, horizon, winStart, winEnd }: { sym: st
   const step = Math.max(1, Math.ceil(yearsArr.length / 6));
   const t3 = 'var(--fk-text-3)', line = 'var(--fk-line)', up = 'var(--fk-up,#12b981)', down = 'var(--fk-down,#f43f5e)';
   return (
-    <div className="pl-card" data-testid="deal-line-chart">
-      <div className="pl-h"><span className="sy">{sym}</span><span className="sub">{deals.length} сделок</span></div>
+    <div className={`pl-card${onExpand ? ' click' : ''}`} data-testid="deal-line-chart" onClick={onExpand ? () => onExpand(sym) : undefined} title={onExpand ? 'Открыть крупно — зум и метрики выбранного периода' : undefined}>
+      <div className="pl-h"><span className="sy">{sym}</span><span className="sub">{deals.length} сделок{onExpand ? ' · ⤢' : ''}</span></div>
       <svg viewBox={`0 0 ${W} ${H}`} style={{ display: 'block', width: '100%', height: 'auto' }}>
         {bands.map((b, i) => (
           <rect key={`b${i}`} x={Math.min(b.x0, b.x1)} y={mT} width={Math.max(1.4, Math.abs(b.x1 - b.x0))} height={ih} style={{ fill: b.up ? up : down, fillOpacity: 0.16 }} />
@@ -773,6 +776,139 @@ function AssetChart({ sym, series, deals, horizon, winStart, winEnd }: { sym: st
         <path d={path} data-testid="deal-line" fill="none" style={{ stroke: 'var(--fk-text-2,#475569)', strokeWidth: 1.3 }} />
         {bands.map((b, i) => (b.te >= t0 && b.te <= t1) ? <circle key={`m${i}`} cx={X(b.te)} cy={Y(closeAt(b.te))} r={2.2} style={{ fill: b.up ? up : down }} /> : null)}
       </svg>
+    </div>
+  );
+}
+
+// Детальный просмотр актива: крупный график с зумом (колесо мыши + кнопки) и выделением периода
+// перетаскиванием → метрики (return/MaxDD/MAE/MFE, hit-rate, t-стат, p-value) именно за выбранный отрезок.
+// Чистый SVG + ручной маппинг пиксель↔время; никаких зависимостей.
+function AssetDetail({ sym, series, deals, horizon, minYear, onClose }: { sym: string; series: { date: string; close: number }[]; deals: Deal[]; horizon: number; minYear?: number; onClose: () => void }) {
+  const winStart = minYear ? Date.parse(`${minYear}-01-01T00:00:00Z`) : -Infinity;
+  const allPts = useMemo(() => series
+    .map((r) => ({ t: Date.parse(r.date + 'T00:00:00Z'), c: r.close }))
+    .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.c) && p.t >= winStart)
+    .sort((a, b) => a.t - b.t), [series, winStart]);
+  const full: [number, number] = allPts.length ? [allPts[0].t, allPts[allPts.length - 1].t] : [0, 1];
+  const [dom, setDom] = useState<[number, number]>(full);
+  const [sel, setSel] = useState<[number, number] | null>(null);
+  const [drag, setDrag] = useState<[number, number] | null>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const W = 900, H = 380, mL = 52, mR = 14, mT = 16, mB = 26;
+  const iw = W - mL - mR, ih = H - mT - mB;
+  const [d0, d1] = dom;
+
+  const xToTime = useCallback((clientX: number) => {
+    const el = svgRef.current; if (!el) return d0;
+    const rect = el.getBoundingClientRect();
+    const frac = Math.min(1, Math.max(0, ((clientX - rect.left) / rect.width * W - mL) / iw));
+    return d0 + frac * (d1 - d0);
+  }, [d0, d1, iw]);
+
+  // Сброс окна/выделения при смене ряда (асинхронный до-фетч цен, пока окно открыто): иначе домен/оси
+  // остались бы от прошлого ряда. Смена символа и так ремоунтит компонент (key=detailSym).
+  useEffect(() => { setDom([full[0], full[1]]); setSel(null); setDrag(null); }, [full[0], full[1]]);
+
+  // Колесо мыши = масштаб по времени, центрированный на курсоре. Нативный listener — на passive React
+  // onWheel preventDefault не сработал бы (страница бы скроллилась).
+  useEffect(() => {
+    const el = svgRef.current; if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const tc = xToTime(e.clientX);
+      const f = e.deltaY > 0 ? 1.25 : 0.8;
+      let n0 = tc - (tc - d0) * f, n1 = tc + (d1 - tc) * f;
+      // Зум-аут: переполнение за край перекидываем на противоположную сторону, чтобы окно всегда
+      // расширялось (иначе у прижатого края и курсора на нём колесо «застревало»).
+      if (f > 1) {
+        if (n0 < full[0]) { n1 = Math.min(full[1], n1 + (full[0] - n0)); n0 = full[0]; }
+        if (n1 > full[1]) { n0 = Math.max(full[0], n0 - (n1 - full[1])); n1 = full[1]; }
+      }
+      n0 = Math.max(full[0], n0); n1 = Math.min(full[1], n1);
+      if (n1 - n0 > 6 * 864e5 && (n0 !== d0 || n1 !== d1)) setDom([n0, n1]);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [d0, d1, full[0], full[1], xToTime]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onDown = (e: { clientX: number }) => { const t = xToTime(e.clientX); setDrag([t, t]); setSel(null); };
+  const onMove = (e: { clientX: number }) => { setDrag((dr) => (dr ? [dr[0], xToTime(e.clientX)] : dr)); };
+  const onUp = () => { if (!drag) return; const lo = Math.min(drag[0], drag[1]), hi = Math.max(drag[0], drag[1]); setSel(hi - lo > (d1 - d0) * 0.01 ? [lo, hi] : null); setDrag(null); };
+  const zoomOut = () => { const c = (d0 + d1) / 2, h = (d1 - d0) * 0.75; setDom([Math.max(full[0], c - h), Math.min(full[1], c + h)]); };
+
+  const vis = allPts.filter((p) => p.t >= d0 && p.t <= d1);
+  // Узкий зум может оставить в окне <2 точек (разреженный/даунсэмпленный ряд). Тогда берём окно + по
+  // одному соседу с каждой стороны — линия и ось Y отражают ВИДИМЫЙ участок, а не весь ряд.
+  const useP = vis.length >= 2 ? vis : (() => {
+    let lo = allPts.findIndex((p) => p.t >= d0); if (lo < 0) lo = allPts.length - 1;
+    return allPts.slice(Math.max(0, lo - 1), Math.min(allPts.length, lo + 2));
+  })();
+  const fmtD = (t: number) => new Date(t).toISOString().slice(0, 10);
+
+  const selDeals = sel ? deals.filter((d) => { const te = Date.parse(d.date + 'T00:00:00Z'); return te >= sel[0] && te <= sel[1]; }) : deals;
+  const st = dealStats(selDeals);
+  const stats: [string, string, string][] = [
+    ['Сделок', String(st.n), ''], ['Доля +', st.hitPct.toFixed(0) + '%', ''],
+    ['Ср. return', fnum(st.avgRet) + '%', cls(st.avgRet)], ['Медиана', fnum(st.medRet) + '%', cls(st.medRet)],
+    ['Просадка', fnum(st.avgMdd) + '%', 'down'], ['MAE', fnum(st.avgMae) + '%', 'down'], ['MFE', fnum(st.avgMfe) + '%', 'up'],
+    ['vs SPY', fnum(st.avgExc) + '%', cls(st.avgExc)],
+    ['t-стат', st.tstat.toFixed(2), Math.abs(st.tstat) >= 2 ? 'up' : ''], ['p-value', st.pval.toFixed(3), st.pval <= 0.05 ? 'up' : ''],
+  ];
+
+  // Масштабы (Y по видимому окну — детали цены видны при зуме)
+  let cmin = Infinity, cmax = -Infinity;
+  for (const p of useP) { if (p.c < cmin) cmin = p.c; if (p.c > cmax) cmax = p.c; }
+  if (!Number.isFinite(cmin) || cmin === cmax) { cmin = (cmin || 0) - 1; cmax = (cmax || 0) + 1; }
+  const padc = (cmax - cmin) * 0.08; cmin -= padc; cmax += padc;
+  const X = (t: number) => mL + (d1 === d0 ? iw / 2 : ((Math.min(Math.max(t, d0), d1) - d0) / (d1 - d0)) * iw);
+  const Y = (v: number) => mT + ((cmax - v) / (cmax - cmin)) * ih;
+  const closeAt = (t: number) => { let best = useP[0]; for (const p of useP) if (Math.abs(p.t - t) < Math.abs(best.t - t)) best = p; return best.c; };
+  const path = useP.map((p, i) => `${i ? 'L' : 'M'}${X(p.t).toFixed(1)} ${Y(p.c).toFixed(1)}`).join(' ');
+  const winMs = horizon * (7 / 5) * 864e5;
+  const bands = deals.map((d) => { const te = Date.parse(d.date + 'T00:00:00Z'); return { te, up: d.ret > 0 }; }).filter((b) => Number.isFinite(b.te) && b.te + winMs >= d0 && b.te <= d1);
+  const y0 = new Date(d0).getUTCFullYear(), y1 = new Date(d1).getUTCFullYear();
+  const yearsArr: number[] = []; for (let yy = y0; yy <= y1; yy++) yearsArr.push(yy);
+  const ystep = Math.max(1, Math.ceil(yearsArr.length / 9));
+  const t3 = 'var(--fk-text-3)', line = 'var(--fk-line)', up = 'var(--fk-up,#12b981)', down = 'var(--fk-down,#f43f5e)', brand = 'var(--fk-brand-700,#2563eb)';
+  const brush = drag || sel;
+
+  return (
+    <div className="rsx">
+      <div className="rsx-scrim" style={{ zIndex: 70 }} onClick={onClose} />
+      <div className="rsx-detail" data-testid="asset-detail">
+        <div className="dr-h">
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>{sym} · цена и сделки</div>
+            <div className="sub" style={{ marginTop: 3 }}>{sel ? `Период ${fmtD(sel[0])} … ${fmtD(sel[1])} · ${st.n} сделок` : 'Весь период · выделите участок мышью для метрик периода'}</div>
+          </div>
+          <span className="x" onClick={onClose}>✕</span>
+        </div>
+        <div className="dt-b">
+          <div className="dt-ctrl">
+            <button type="button" className="btn sm ghost" onClick={() => setDom(full)} disabled={d0 === full[0] && d1 === full[1]}>Сбросить масштаб</button>
+            <button type="button" className="btn sm ghost" onClick={zoomOut} disabled={d0 === full[0] && d1 === full[1]}>− Отдалить</button>
+            {sel && <button type="button" className="btn sm" data-testid="detail-zoom-sel" onClick={() => { const MIN = 6 * 864e5; let [a, b] = sel; if (b - a < MIN) { const c = (a + b) / 2; a = Math.max(full[0], c - MIN / 2); b = Math.min(full[1], c + MIN / 2); } setDom([a, b]); }}>Приблизить к выделению</button>}
+            {sel && <button type="button" className="btn sm ghost" onClick={() => setSel(null)}>Снять выделение</button>}
+            <span className="sub">колесо мыши — масштаб · перетаскивание — выделить период</span>
+          </div>
+          {allPts.length < 2 ? <p className="sub" style={{ padding: '40px 0', textAlign: 'center' }}>Нет ценового ряда для «{sym}».</p> : (
+            <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} data-testid="asset-detail-svg" style={{ display: 'block', width: '100%', height: 'auto', cursor: 'crosshair', touchAction: 'none', userSelect: 'none' }}
+              onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}>
+              {bands.map((b, i) => { const x = X(b.te), x2 = X(b.te + winMs); return <rect key={`b${i}`} x={Math.min(x, x2)} y={mT} width={Math.max(1.6, Math.abs(x2 - x))} height={ih} style={{ fill: b.up ? up : down, fillOpacity: 0.16 }} />; })}
+              {yearsArr.filter((yy) => (yy - y0) % ystep === 0).map((yy) => { const xx = X(Date.parse(`${yy}-01-01T00:00:00Z`)); return <g key={`y${yy}`}><line x1={xx} x2={xx} y1={mT} y2={H - mB} style={{ stroke: line }} /><text x={xx} y={H - 8} textAnchor="middle" fontSize="10" style={{ fill: t3 }}>{yy}</text></g>; })}
+              {[cmax, (cmin + cmax) / 2, cmin].map((v, i) => <g key={`p${i}`}><line x1={mL} x2={W - mR} y1={Y(v)} y2={Y(v)} style={{ stroke: line }} /><text x={mL - 6} y={Y(v) + 3} textAnchor="end" fontSize="10" style={{ fill: t3 }}>{Math.abs(v) >= 1000 ? v.toFixed(0) : v.toFixed(1)}</text></g>)}
+              {brush && (() => { const a = X(Math.min(brush[0], brush[1])), b = X(Math.max(brush[0], brush[1])); return <rect x={a} y={mT} width={Math.max(1, b - a)} height={ih} style={{ fill: brand, fillOpacity: 0.1, stroke: brand, strokeDasharray: '4 3' }} />; })()}
+              <path d={path} fill="none" data-testid="detail-line" style={{ stroke: 'var(--fk-text-2,#475569)', strokeWidth: 1.4 }} />
+              {bands.map((b, i) => (b.te >= d0 && b.te <= d1) ? <circle key={`m${i}`} cx={X(b.te)} cy={Y(closeAt(b.te))} r={3.2} style={{ fill: b.up ? up : down, stroke: '#fff', strokeWidth: 0.8 }} /> : null)}
+            </svg>
+          )}
+          <div className="statgrid" style={{ marginTop: 14 }} data-testid="detail-stats">
+            {st.n === 0
+              ? <div className="sub" style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '6px 0' }}>В выбранном периоде нет сделок — выделите участок с точками входа.</div>
+              : stats.map(([k, v, t]) => <div className="stat" key={k}><div className="k">{k}</div><div className={`v ${t}`}>{v}</div></div>)}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

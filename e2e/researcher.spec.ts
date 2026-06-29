@@ -107,4 +107,35 @@ test.describe('Скринер /researcher', () => {
     await expect(page.getByTestId('deal-line-chart').first()).toBeVisible();
     await expect(page.getByTestId('deal-line').first()).toBeVisible({ timeout: 60000 });
   });
+
+  // Детальный график: клик по карточке → крупный график; выделение мышью → метрики периода.
+  test('детальный график актива: открытие, зум, метрики выделенного периода', async ({ page }) => {
+    await page.goto('/researcher');
+    await expect(page.getByTestId('panel-meta')).toBeVisible({ timeout: 120000 });
+    await page.getByText('удалить блок').click();
+
+    const card = page.getByTestId('deal-line-chart').first();
+    await expect(card).toBeVisible({ timeout: 60000 });
+    await card.click();
+
+    // открылся детальный просмотр с крупным графиком
+    await expect(page.getByTestId('asset-detail')).toBeVisible();
+    const svg = page.getByTestId('asset-detail-svg');
+    await expect(svg).toBeVisible();
+    await expect(page.getByTestId('detail-stats')).toBeVisible();
+
+    // выделяем участок графика перетаскиванием → метрики именно этого периода
+    const box = (await svg.boundingBox())!;
+    await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.5);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * 0.65, box.y + box.height * 0.5, { steps: 10 });
+    await page.mouse.up();
+
+    // появилась кнопка «Приблизить к выделению» (значит выделение зарегистрировано) и метрики на месте
+    await expect(page.getByTestId('detail-zoom-sel')).toBeVisible();
+    await expect(page.getByTestId('detail-stats')).toBeVisible();
+    // зум к выделению работает
+    await page.getByTestId('detail-zoom-sel').click();
+    await expect(page.getByRole('button', { name: 'Сбросить масштаб' })).toBeEnabled();
+  });
 });
