@@ -28,4 +28,81 @@ test.describe('Скринер /researcher', () => {
     await page.locator('table tbody tr').first().click();
     await expect(page.getByText('матч-сделки по текущим условиям')).toBeVisible();
   });
+
+  // Создание корзины: модалка → ручной ввод тикеров → сохранение → персист в БД → удаление.
+  test('создание корзины через модалку (ручной ввод + сохранение в БД)', async ({ page }) => {
+    await page.goto('/researcher');
+    await expect(page.getByTestId('panel-meta')).toBeVisible({ timeout: 120000 });
+
+    const name = `E2E-Корзина-${Date.now()}`;
+    await page.getByTestId('basket-create-open').click();
+    await expect(page.getByTestId('basket-modal')).toBeVisible();
+    await page.getByTestId('basket-modal-name').fill(name);
+    await page.getByTestId('basket-modal-manual').fill('AAA, BBB, CCC');
+    await page.getByTestId('basket-modal-add').click();
+    // состав показывается чипами
+    await expect(page.getByTestId('basket-modal-draft')).toContainText('AAA');
+    await expect(page.getByTestId('basket-modal-draft')).toContainText('CCC');
+    await page.getByTestId('basket-modal-save').click();
+
+    // чип корзины появляется в карточке «Вселенная»
+    const chip = page.getByTestId('basket-chip').filter({ hasText: name });
+    await expect(chip).toBeVisible();
+
+    // персист в БД: после перезагрузки корзина на месте
+    await page.reload();
+    await expect(page.getByTestId('panel-meta')).toBeVisible({ timeout: 120000 });
+    const chip2 = page.getByTestId('basket-chip').filter({ hasText: name });
+    await expect(chip2).toBeVisible();
+
+    // чистим за собой — удаляем корзину
+    await chip2.locator('.bx').click();
+    await expect(page.getByTestId('basket-chip').filter({ hasText: name })).toHaveCount(0);
+  });
+
+  // Пресет настроек: сохранить условия → удалить блок → загрузить пресет (условия восстановлены) → персист в БД.
+  test('сохранение и загрузка пресета условий', async ({ page }) => {
+    await page.goto('/researcher');
+    await expect(page.getByTestId('panel-meta')).toBeVisible({ timeout: 120000 });
+
+    // дефолтные условия содержат строки-условия
+    expect(await page.locator('.cond').count()).toBeGreaterThan(0);
+
+    const name = `E2E-Пресет-${Date.now()}`;
+    await page.getByTestId('preset-save-open').click();
+    await page.getByTestId('preset-name-input').fill(name);
+    await page.getByTestId('preset-desc-input').fill('импульс + низкая вола');
+    await page.getByTestId('preset-save-confirm').click();
+    const pchip = page.getByTestId('preset-chip').filter({ hasText: name });
+    await expect(pchip).toBeVisible();
+
+    // удаляем блок условий → строк-условий не остаётся
+    await page.getByText('удалить блок').click();
+    await expect(page.locator('.cond')).toHaveCount(0);
+
+    // загрузка пресета восстанавливает условия
+    await pchip.click();
+    await expect.poll(async () => await page.locator('.cond').count()).toBeGreaterThan(0);
+
+    // персист в БД: пресет доступен после перезагрузки
+    await page.reload();
+    await expect(page.getByTestId('panel-meta')).toBeVisible({ timeout: 120000 });
+    const pchip2 = page.getByTestId('preset-chip').filter({ hasText: name });
+    await expect(pchip2).toBeVisible();
+    await pchip2.locator('.bx').click();
+    await expect(page.getByTestId('preset-chip').filter({ hasText: name })).toHaveCount(0);
+  });
+
+  // График сделок: линии цены по активам с периодами сделок (а не точки).
+  test('график сделок рисует линии цены по активам', async ({ page }) => {
+    await page.goto('/researcher');
+    await expect(page.getByTestId('panel-meta')).toBeVisible({ timeout: 120000 });
+
+    // вид «Сводно» (дефолт) показывает график; убираем условия → сделки есть у всех активов
+    await page.getByText('удалить блок').click();
+    await expect(page.getByTestId('deal-line-charts')).toBeVisible({ timeout: 60000 });
+    // есть хотя бы одна карточка актива и линия цены (SVG path), а не одни точки
+    await expect(page.getByTestId('deal-line-chart').first()).toBeVisible();
+    await expect(page.getByTestId('deal-line').first()).toBeVisible({ timeout: 60000 });
+  });
 });
