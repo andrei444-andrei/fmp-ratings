@@ -633,7 +633,7 @@ export default function Researcher() {
         </div>
       </div>
 
-      {drill && panel && <Drawer panel={panel} blocks={blk} drill={drill} horizon={panel.horizon || horizon} minYear={minYear} formulas={fmap} display={displayCols} colLabel={colLabel} onClose={() => setDrill(null)} />}
+      {drill && panel && <Drawer panel={panel} blocks={blk} drill={drill} horizon={panel.horizon || horizon} minYear={minYear} formulas={fmap} display={displayCols} colLabel={colLabel} series={priceSeries} onClose={() => setDrill(null)} />}
 
       {basketModal && <BasketModal existing={baskets} onSave={saveBasket} onClose={() => setBasketModal(false)} />}
 
@@ -645,9 +645,13 @@ export default function Researcher() {
   );
 }
 
-function Drawer({ panel, blocks, drill, horizon, minYear, formulas, display, colLabel, onClose }: { panel: ScreenPanel; blocks: Block[]; drill: { kind: 't' | 'y'; kv: string }; horizon: number; minYear?: number; formulas: Formulas; display: string[]; colLabel: (k: string) => string; onClose: () => void }) {
+function Drawer({ panel, blocks, drill, horizon, minYear, formulas, display, colLabel, series, onClose }: { panel: ScreenPanel; blocks: Block[]; drill: { kind: 't' | 'y'; kv: string }; horizon: number; minYear?: number; formulas: Formulas; display: string[]; colLabel: (k: string) => string; series: Record<string, { date: string; close: number }[]>; onClose: () => void }) {
   const deals = screenDeals(panel, blocks, drill.kind, drill.kv, minYear, formulas);
   const st = dealStats(deals);
+  // Окно графика: для разреза по году — только этот год; для тикера — текущее окно лет (с minYear).
+  const drillYear = drill.kind === 'y' ? +drill.kv : undefined;
+  const chartMinYear = drillYear ?? minYear;
+  const chartWinEnd = drillYear ? Date.parse(`${drillYear + 1}-01-01T00:00:00Z`) : undefined;
   const stats: [string, string, string][] = [
     ['Сделок', String(st.n), ''],
     ['Доля +', st.hitPct.toFixed(0) + '%', ''],
@@ -674,6 +678,12 @@ function Drawer({ panel, blocks, drill, horizon, minYear, formulas, display, col
               <div className="stat" key={k}><div className="k">{k}</div><div className={`v ${tone}`}>{v}</div></div>
             ))}
           </div>
+          {deals.length > 0 && (
+            <div style={{ marginBottom: 14 }}>
+              <div className="chart-head"><span className="card-t">Цена{drill.kind === 'y' ? ` · ${drill.kv}` : ' по годам'} и периоды сделок</span></div>
+              <PriceLines series={series} deals={deals} horizon={horizon} minYear={chartMinYear} winEnd={chartWinEnd} />
+            </div>
+          )}
           <div style={{ overflowX: 'auto' }}>
             <table>
               <thead><tr><th className="l">Дата</th>{drill.kind === 'y' && <th className="l">Тикер</th>}{display.map((k) => <th key={k}>{colLabel(k)}</th>)}<th>Return</th><th>MFE</th><th>MAE</th><th>Просадка</th><th>vs SPY</th></tr></thead>
@@ -699,7 +709,7 @@ function Drawer({ panel, blocks, drill, horizon, minYear, formulas, display, col
 
 // График сделок: на каждый актив со сделками — карточка с ценой по годам (линия) и периодами сделок
 // (полупрозрачные полосы [вход … вход+горизонт], цвет = знак форварда). Чистый SVG, без зависимостей.
-function PriceLines({ series, deals, horizon, minYear }: { series: Record<string, { date: string; close: number }[]>; deals: Deal[]; horizon: number; minYear?: number }) {
+function PriceLines({ series, deals, horizon, minYear, winEnd }: { series: Record<string, { date: string; close: number }[]>; deals: Deal[]; horizon: number; minYear?: number; winEnd?: number }) {
   const bySym = useMemo(() => {
     const m = new Map<string, Deal[]>();
     for (const d of deals) { const a = m.get(d.symbol); if (a) a.push(d); else m.set(d.symbol, [d]); }
@@ -707,18 +717,19 @@ function PriceLines({ series, deals, horizon, minYear }: { series: Record<string
   }, [deals]);
   if (!bySym.length) return <p className="sub" style={{ padding: '20px 0' }}>Нет сделок — ослабьте условия или расширьте окно лет.</p>;
   const winStart = minYear ? Date.parse(`${minYear}-01-01T00:00:00Z`) : -Infinity;
+  const winEndMs = winEnd ?? Infinity;
   return (
     <div className="pl-grid" data-testid="deal-line-charts">
-      {bySym.map(([sym, ds]) => <AssetChart key={sym} sym={sym} series={series[sym] || []} deals={ds} horizon={horizon} winStart={winStart} />)}
+      {bySym.map(([sym, ds]) => <AssetChart key={sym} sym={sym} series={series[sym] || []} deals={ds} horizon={horizon} winStart={winStart} winEnd={winEndMs} />)}
     </div>
   );
 }
 
-function AssetChart({ sym, series, deals, horizon, winStart }: { sym: string; series: { date: string; close: number }[]; deals: Deal[]; horizon: number; winStart: number }) {
+function AssetChart({ sym, series, deals, horizon, winStart, winEnd }: { sym: string; series: { date: string; close: number }[]; deals: Deal[]; horizon: number; winStart: number; winEnd: number }) {
   const pts = useMemo(() => series
     .map((r) => ({ t: Date.parse(r.date + 'T00:00:00Z'), c: r.close }))
-    .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.c) && p.t >= winStart)
-    .sort((a, b) => a.t - b.t), [series, winStart]);
+    .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.c) && p.t >= winStart && p.t <= winEnd)
+    .sort((a, b) => a.t - b.t), [series, winStart, winEnd]);
   const W = 460, H = 190, mL = 38, mR = 8, mT = 18, mB = 18;
   const iw = W - mL - mR, ih = H - mT - mB;
   if (pts.length < 2) return (
