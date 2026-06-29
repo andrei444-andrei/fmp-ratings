@@ -805,6 +805,10 @@ function AssetDetail({ sym, series, deals, horizon, minYear, onClose }: { sym: s
     return d0 + frac * (d1 - d0);
   }, [d0, d1, iw]);
 
+  // Сброс окна/выделения при смене ряда (асинхронный до-фетч цен, пока окно открыто): иначе домен/оси
+  // остались бы от прошлого ряда. Смена символа и так ремоунтит компонент (key=detailSym).
+  useEffect(() => { setDom([full[0], full[1]]); setSel(null); setDrag(null); }, [full[0], full[1]]);
+
   // Колесо мыши = масштаб по времени, центрированный на курсоре. Нативный listener — на passive React
   // onWheel preventDefault не сработал бы (страница бы скроллилась).
   useEffect(() => {
@@ -814,8 +818,14 @@ function AssetDetail({ sym, series, deals, horizon, minYear, onClose }: { sym: s
       const tc = xToTime(e.clientX);
       const f = e.deltaY > 0 ? 1.25 : 0.8;
       let n0 = tc - (tc - d0) * f, n1 = tc + (d1 - tc) * f;
+      // Зум-аут: переполнение за край перекидываем на противоположную сторону, чтобы окно всегда
+      // расширялось (иначе у прижатого края и курсора на нём колесо «застревало»).
+      if (f > 1) {
+        if (n0 < full[0]) { n1 = Math.min(full[1], n1 + (full[0] - n0)); n0 = full[0]; }
+        if (n1 > full[1]) { n0 = Math.max(full[0], n0 - (n1 - full[1])); n1 = full[1]; }
+      }
       n0 = Math.max(full[0], n0); n1 = Math.min(full[1], n1);
-      if (n1 - n0 > 6 * 864e5) setDom([n0, n1]);
+      if (n1 - n0 > 6 * 864e5 && (n0 !== d0 || n1 !== d1)) setDom([n0, n1]);
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
@@ -827,7 +837,12 @@ function AssetDetail({ sym, series, deals, horizon, minYear, onClose }: { sym: s
   const zoomOut = () => { const c = (d0 + d1) / 2, h = (d1 - d0) * 0.75; setDom([Math.max(full[0], c - h), Math.min(full[1], c + h)]); };
 
   const vis = allPts.filter((p) => p.t >= d0 && p.t <= d1);
-  const useP = vis.length >= 2 ? vis : allPts;
+  // Узкий зум может оставить в окне <2 точек (разреженный/даунсэмпленный ряд). Тогда берём окно + по
+  // одному соседу с каждой стороны — линия и ось Y отражают ВИДИМЫЙ участок, а не весь ряд.
+  const useP = vis.length >= 2 ? vis : (() => {
+    let lo = allPts.findIndex((p) => p.t >= d0); if (lo < 0) lo = allPts.length - 1;
+    return allPts.slice(Math.max(0, lo - 1), Math.min(allPts.length, lo + 2));
+  })();
   const fmtD = (t: number) => new Date(t).toISOString().slice(0, 10);
 
   const selDeals = sel ? deals.filter((d) => { const te = Date.parse(d.date + 'T00:00:00Z'); return te >= sel[0] && te <= sel[1]; }) : deals;
@@ -872,7 +887,7 @@ function AssetDetail({ sym, series, deals, horizon, minYear, onClose }: { sym: s
           <div className="dt-ctrl">
             <button type="button" className="btn sm ghost" onClick={() => setDom(full)} disabled={d0 === full[0] && d1 === full[1]}>Сбросить масштаб</button>
             <button type="button" className="btn sm ghost" onClick={zoomOut} disabled={d0 === full[0] && d1 === full[1]}>− Отдалить</button>
-            {sel && <button type="button" className="btn sm" data-testid="detail-zoom-sel" onClick={() => setDom([sel[0], sel[1]])}>Приблизить к выделению</button>}
+            {sel && <button type="button" className="btn sm" data-testid="detail-zoom-sel" onClick={() => { const MIN = 6 * 864e5; let [a, b] = sel; if (b - a < MIN) { const c = (a + b) / 2; a = Math.max(full[0], c - MIN / 2); b = Math.min(full[1], c + MIN / 2); } setDom([a, b]); }}>Приблизить к выделению</button>}
             {sel && <button type="button" className="btn sm ghost" onClick={() => setSel(null)}>Снять выделение</button>}
             <span className="sub">колесо мыши — масштаб · перетаскивание — выделить период</span>
           </div>
@@ -888,7 +903,9 @@ function AssetDetail({ sym, series, deals, horizon, minYear, onClose }: { sym: s
             </svg>
           )}
           <div className="statgrid" style={{ marginTop: 14 }} data-testid="detail-stats">
-            {stats.map(([k, v, t]) => <div className="stat" key={k}><div className="k">{k}</div><div className={`v ${t}`}>{v}</div></div>)}
+            {st.n === 0
+              ? <div className="sub" style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '6px 0' }}>В выбранном периоде нет сделок — выделите участок с точками входа.</div>
+              : stats.map(([k, v, t]) => <div className="stat" key={k}><div className="k">{k}</div><div className={`v ${t}`}>{v}</div></div>)}
           </div>
         </div>
       </div>
