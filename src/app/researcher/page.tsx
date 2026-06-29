@@ -43,6 +43,9 @@ type UCond = { col: string; cmp: Cmp; val: number; not: boolean };
 type UBlock = { conds: UCond[] };
 // Формула: name/expr — черновик (правится), savedName/savedExpr — применённое (по кнопке «Сохранить»).
 type FormulaDef = { id: string; name: string; expr: string; savedName: string; savedExpr: string };
+// Пресет настроек скринера: условия + столбцы + горизонт/окно/вид (config), с именем и описанием.
+type PresetCfg = { blocks?: UBlock[]; display?: string[]; horizon?: number; years?: number; view?: 'all' | 'tickers' | 'years' };
+type PresetDef = { id: string; name: string; description: string; config: PresetCfg };
 
 // Разбор ключа колонки: базовый фактор (fid+период) или имя формулы.
 function parseCol(col: string): { kind: 'base'; id: string; p: number } | { kind: 'formula'; name: string } {
@@ -100,7 +103,6 @@ export default function Researcher() {
   const [display, setDisplay] = useState<string[]>([...DEF_DISPLAY]);
   const [view, setView] = useState<'all' | 'tickers' | 'years'>('all');
   const [rf, setRf] = useState({ minN: 0, minHit: 0, minRet: -1e9 }); // realtime-фильтры результата
-  const [chartCol, setChartCol] = useState<string>(''); // метрика для графика ('' = авто по первому условию)
   const [colDraft, setColDraft] = useState('vol_21'); // конструктор столбца (фактор+период) для кнопки «+»
   const [baskets, setBaskets] = useState<{ id: string; name: string; tickers: string[] }[]>([]); // сохранённые корзины (БД)
   const [saveName, setSaveName] = useState<string | null>(null); // null=скрыто; строка=поле имени корзины открыто
@@ -111,6 +113,11 @@ export default function Researcher() {
   const [drill, setDrill] = useState<{ kind: 't' | 'y'; kv: string } | null>(null);
   const loadedRef = useRef(false);          // настройки восстановлены (можно начинать персист)
   const [cfgNonce, setCfgNonce] = useState(0); // ремоунт uncontrolled-инпутов после восстановления/сброса
+  const [basketModal, setBasketModal] = useState(false); // модалка «Создать корзину» (ручной ввод + AI)
+  const [presets, setPresets] = useState<PresetDef[]>([]); // пресеты настроек скринера (БД, навсегда)
+  const [presetSave, setPresetSave] = useState<{ name: string; description: string } | null>(null); // форма сохранения пресета
+  const [priceSeries, setPriceSeries] = useState<Record<string, { date: string; close: number }[]>>({}); // дневные цены для графиков сделок
+  const [pricesLoading, setPricesLoading] = useState(false);
 
   const universe = useMemo(() => [...new Set(uniText.toUpperCase().split(/[^A-Z0-9.\-]+/).filter(Boolean))].slice(0, 40), [uniText]);
   const [applied, setApplied] = useState<{ uni: string; horizon: number } | null>(null);
@@ -174,17 +181,45 @@ export default function Researcher() {
   // Корзины тикеров (БД, навсегда).
   const saveBasket = useCallback(async (name: string, tickers: string[]) => {
     const nm = name.trim(); if (!nm || !tickers.length) return;
-    const id = newId();
+    const id = baskets.find((x) => x.name === nm)?.id ?? newId(); // то же имя → перезапись (тот же id), без дублей в БД
     setBaskets((p) => [...p.filter((x) => x.name !== nm), { id, name: nm, tickers }]);
-    setSaveName(null);
+    setSaveName(null); setBasketModal(false);
     try {
       const r = await fetch('/api/researcher/baskets', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, name: nm, tickers }) });
       const j = await r.json().catch(() => ({})); if (j?.error) throw new Error(j.error);
     } catch (e: any) { setErr(`корзина не сохранена в БД: ${e?.message || e}`); }
-  }, []);
+  }, [baskets]);
   const removeBasket = useCallback(async (id: string) => {
     setBaskets((p) => p.filter((x) => x.id !== id));
     try { await fetch(`/api/researcher/baskets?id=${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch { /* */ }
+  }, []);
+
+  // Пресеты настроек скринера (условия + столбцы + горизонт/окно/вид) — БД, навсегда.
+  const savePreset = useCallback(async (name: string, description: string) => {
+    const nm = name.trim(); if (!nm) return;
+    const id = presets.find((x) => x.name === nm)?.id ?? newId(); // то же имя → перезапись (тот же id)
+    const config: PresetCfg = { blocks, display, horizon, years, view };
+    const desc = description.trim();
+    setPresets((p) => [...p.filter((x) => x.name !== nm), { id, name: nm, description: desc, config }]);
+    setPresetSave(null);
+    try {
+      const r = await fetch('/api/researcher/presets', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, name: nm, description: desc, config }) });
+      const j = await r.json().catch(() => ({})); if (j?.error) throw new Error(j.error);
+    } catch (e: any) { setErr(`пресет не сохранён в БД: ${e?.message || e}`); }
+  }, [presets, blocks, display, horizon, years, view]);
+  const removePreset = useCallback(async (id: string) => {
+    setPresets((p) => p.filter((x) => x.id !== id));
+    try { await fetch(`/api/researcher/presets?id=${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch { /* */ }
+  }, []);
+  // Загрузка пресета: восстанавливаем условия/столбцы/горизонт/окно/вид. Горизонт меняет панель → станет «применить».
+  const loadPreset = useCallback((p: PresetDef) => {
+    const c = p.config || {};
+    if (Array.isArray(c.blocks) && c.blocks.length) setBlocks(structuredClone(c.blocks));
+    if (Array.isArray(c.display)) setDisplay([...c.display]);
+    if (typeof c.horizon === 'number') setHorizon(c.horizon);
+    if (typeof c.years === 'number') setYears(c.years);
+    if (c.view === 'all' || c.view === 'tickers' || c.view === 'years') setView(c.view);
+    setCfgNonce((n) => n + 1); // ремоунт uncontrolled-инпутов значений условий
   }, []);
 
   // Восстановление настроек (UI — из localStorage; формулы — из БД, навсегда) + первичная загрузка панели. Один раз.
@@ -216,6 +251,11 @@ export default function Researcher() {
         const j = await r.json().catch(() => ({}));
         if (Array.isArray(j?.baskets)) setBaskets(j.baskets.map((b: any) => ({ id: String(b.id), name: String(b.name), tickers: Array.isArray(b.tickers) ? b.tickers : [] })));
       } catch { /* нет БД — без сохранённых корзин */ }
+      try {
+        const r = await fetch('/api/researcher/presets');
+        const j = await r.json().catch(() => ({}));
+        if (Array.isArray(j?.presets)) setPresets(j.presets.map((p: any) => ({ id: String(p.id), name: String(p.name), description: String(p.description ?? ''), config: p.config && typeof p.config === 'object' ? p.config : { blocks: [] } })));
+      } catch { /* нет БД — без сохранённых пресетов */ }
     })();
     loadedRef.current = true;
     setCfgNonce((n) => n + 1);
@@ -227,6 +267,24 @@ export default function Researcher() {
     if (!loadedRef.current) return;
     try { localStorage.setItem(CFG_KEY, JSON.stringify({ uniText, group, horizon, years, blocks, display, view })); } catch { /* квота/приватный режим */ }
   }, [uniText, group, horizon, years, blocks, display, view]);
+
+  // Дневные цены ПРИМЕНЁННОЙ вселенной — для графиков сделок (линия цены + периоды сделок). Грузим при смене
+  // применённой вселенной, не на каждый ввод: условия/окно меняют набор сделок мгновенно поверх готовых цен.
+  useEffect(() => {
+    const syms = applied ? applied.uni.split(',').filter(Boolean) : [];
+    if (!syms.length) { setPriceSeries({}); return; }
+    let cancelled = false;
+    setPricesLoading(true);
+    (async () => {
+      try {
+        const r = await fetch('/api/researcher/prices', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ symbols: syms }) });
+        const j = await r.json().catch(() => ({}));
+        if (!cancelled) setPriceSeries(j?.series && typeof j.series === 'object' ? j.series : {});
+      } catch { if (!cancelled) setPriceSeries({}); }
+      finally { if (!cancelled) setPricesLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [applied]);
 
   // Сброс UI-настроек к дефолтам (формулы в БД не трогаем — они постоянные).
   const resetAll = () => {
@@ -260,11 +318,6 @@ export default function Researcher() {
   const matchedN = consol.n;
   const setB = (f: (b: UBlock[]) => UBlock[]) => setBlocks((prev) => f(structuredClone(prev)));
   const tColSpan = 10 + display.length;
-  // Метрика для графика: выбранная (если валидна) → первое условие → первый столбец.
-  const condCols = [...new Set(blk.flatMap((b) => b.conds.map((c) => c.col)))];
-  const chartOpts = [...new Set([...condCols, ...display])];
-  const chartMetric = (chartCol && chartOpts.includes(chartCol)) ? chartCol : (condCols[0] || display[0] || 'momentum_63');
-  const chartThresholds = blk.flatMap((b) => b.conds).filter((c) => c.col === chartMetric).map((c) => ({ cmp: c.cmp, val: c.val }));
 
   const outHead = (
     <>
@@ -340,7 +393,7 @@ export default function Researcher() {
               </button>
             ))}
             {baskets.map((b) => (
-              <button key={b.id} type="button" className={`chip bskt${group === b.name ? ' on' : ''}`} title={b.tickers.join(', ')} onClick={() => { setGroup(b.name); setUniText(b.tickers.join(', ')); }}>
+              <button key={b.id} type="button" data-testid="basket-chip" className={`chip bskt${group === b.name ? ' on' : ''}`} title={b.tickers.join(', ')} onClick={() => { setGroup(b.name); setUniText(b.tickers.join(', ')); }}>
                 {b.name}<span className="n">{b.tickers.length}</span>
                 <span className="bx" onClick={(e) => { e.stopPropagation(); removeBasket(b.id); }} title="удалить корзину">✕</span>
               </button>
@@ -348,6 +401,7 @@ export default function Researcher() {
           </div>
           <textarea className="uni" value={uniText} spellCheck={false} onChange={(e) => { setUniText(e.target.value); setGroup(''); }} />
           <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            <button type="button" className="btn sm ghost" data-testid="basket-create-open" onClick={() => setBasketModal(true)}>➕ Создать корзину</button>
             <button type="button" className={`btn sm ghost${uniChatOpen ? ' on' : ''}`} onClick={() => setUniChatOpen((o) => !o)}>✨ AI-подбор тикеров</button>
             {saveName === null
               ? <button type="button" className="btn sm ghost" disabled={universe.length < 1} onClick={() => setSaveName(group && !GROUPS[group] ? group : '')}>💾 Сохранить как корзину</button>
@@ -391,6 +445,27 @@ export default function Researcher() {
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
             <span className="card-t">2 · Условия отбора</span>
             <span className="sub">блоки = <b style={{ color: 'var(--fk-brand-700)' }}>ИЛИ</b> · внутри блока — <b>И</b> / <b style={{ color: 'var(--fk-down-text,#c81e3c)' }}>НЕ</b> · колонка = фактор или формула</span>
+          </div>
+          {/* пресеты настроек (условия + столбцы + горизонт/окно/вид) — в БД навсегда */}
+          <div className="presetbar">
+            <span className="lbl">Пресеты:</span>
+            {presets.map((p) => (
+              <button key={p.id} type="button" data-testid="preset-chip" className="chip preset" title={p.description || 'без описания — клик загружает условия'} onClick={() => loadPreset(p)}>
+                {p.name}
+                <span className="bx" onClick={(e) => { e.stopPropagation(); removePreset(p.id); }} title="удалить пресет">✕</span>
+              </button>
+            ))}
+            {presetSave === null
+              ? <button type="button" className="btn sm ghost" data-testid="preset-save-open" onClick={() => setPresetSave({ name: group && !GROUPS[group] ? group : '', description: '' })}>💾 Сохранить пресет</button>
+              : (
+                <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <input className="rfin" style={{ width: 150, textAlign: 'left' }} autoFocus placeholder="имя пресета" data-testid="preset-name-input" value={presetSave.name} onChange={(e) => setPresetSave((s) => (s ? { ...s, name: e.target.value } : s))} onKeyDown={(e) => { if (e.key === 'Enter' && presetSave.name.trim()) savePreset(presetSave.name, presetSave.description); }} />
+                  <input className="rfin" style={{ width: 230, textAlign: 'left' }} placeholder="описание (необязательно)" data-testid="preset-desc-input" value={presetSave.description} onChange={(e) => setPresetSave((s) => (s ? { ...s, description: e.target.value } : s))} />
+                  <button type="button" className="btn sm" data-testid="preset-save-confirm" disabled={!presetSave.name.trim()} onClick={() => savePreset(presetSave.name, presetSave.description)}>Сохранить</button>
+                  <button type="button" className="btn sm ghost" onClick={() => setPresetSave(null)}>отмена</button>
+                </span>
+              )}
+            {presets.length === 0 && presetSave === null && <span className="sub">нет сохранённых — настройте условия и нажмите «Сохранить пресет»</span>}
           </div>
           <div className="blocks">
             {blocks.map((b, bi) => (
@@ -516,11 +591,11 @@ export default function Researcher() {
                 ))}
               </div>
               <div className="chart-head">
-                <span className="card-t">График сделок</span>
-                <label className="sub">метрика по Y: <select value={chartMetric} onChange={(e) => setChartCol(e.target.value)}>{chartOpts.map((k) => <option key={k} value={k}>{colLabel(k)}</option>)}</select></label>
+                <span className="card-t">График сделок · цена актива по годам</span>
+                <span className="sub">{pricesLoading ? 'загрузка цен…' : `${new Set(allDeals.map((d) => d.symbol)).size} активов со сделками`}</span>
               </div>
-              <DealChart deals={allDeals} metric={chartMetric} label={colLabel(chartMetric)} thresholds={chartThresholds} />
-              <p className="sub" style={{ marginTop: 6 }}>Точка = сделка: X — дата входа (периоды сделок), Y — «{colLabel(chartMetric)}»; <span className="up">зелёная</span>/<span className="down">красная</span> — знак форварда; пунктир — порог условия.</p>
+              <PriceLines series={priceSeries} deals={allDeals} horizon={panel.horizon || horizon} minYear={minYear} />
+              <p className="sub" style={{ marginTop: 6 }}>Карточка на актив со сделками: линия — цена по годам; <span className="up">зелёная</span>/<span className="down">красная</span> полоса отмечает период сделки (вход … +{panel.horizon || horizon}д), цвет — знак форварда; точка — вход.</p>
             </div>
           ) : view === 'tickers' ? (
             <div style={{ overflowX: 'auto' }}>
@@ -554,11 +629,13 @@ export default function Researcher() {
               </table>
             </div>
           )}
-          {panel && <p className="foot">Клик по строке → провал внутрь сделок. Панель: {panel.meta?.obs} сделок, {panel.symbols.length} тикеров, {panel.meta?.first} … {panel.meta?.last} · форвард {panel.horizon}д · окно {years} лет{minYear ? ` (с ${minYear})` : ''}.</p>}
+          {panel && <p className="foot" data-testid="panel-meta">Клик по строке → провал внутрь сделок. Панель: {panel.meta?.obs} сделок, {panel.symbols.length} тикеров, {panel.meta?.first} … {panel.meta?.last} · форвард {panel.horizon}д · окно {years} лет{minYear ? ` (с ${minYear})` : ''}.</p>}
         </div>
       </div>
 
       {drill && panel && <Drawer panel={panel} blocks={blk} drill={drill} horizon={panel.horizon || horizon} minYear={minYear} formulas={fmap} display={displayCols} colLabel={colLabel} onClose={() => setDrill(null)} />}
+
+      {basketModal && <BasketModal existing={baskets} onSave={saveBasket} onClose={() => setBasketModal(false)} />}
 
       <FormulaChat
         factors={MID.map((id) => ({ id, label: METRICS[id].label, periods: METRICS[id].periods }))}
@@ -620,50 +697,70 @@ function Drawer({ panel, blocks, drill, horizon, minYear, formulas, display, col
   );
 }
 
-// График сделок: scatter (X — дата входа, Y — значение метрики отбора), цвет — знак форварда,
-// пунктир — пороги условий по этой метрике. Чистый SVG, без зависимостей.
-function DealChart({ deals, metric, label, thresholds }: { deals: Deal[]; metric: string; label: string; thresholds: { cmp: 'ge' | 'le'; val: number }[] }) {
-  const pts = deals
-    .map((d) => ({ t: Date.parse(d.date + 'T00:00:00Z'), y: d.vals[metric] as number | null, ret: d.ret }))
-    .filter((p) => Number.isFinite(p.t) && p.y != null && Number.isFinite(p.y)) as { t: number; y: number; ret: number }[];
-  if (pts.length < 2) return <p className="sub" style={{ padding: '20px 0' }}>Недостаточно сделок с метрикой «{label}» для графика.</p>;
-  const W = 920, H = 300, mL = 48, mR = 16, mT = 14, mB = 26;
-  const iw = W - mL - mR, ih = H - mT - mB;
-  const ts = pts.map((p) => p.t), ys = pts.map((p) => p.y);
-  const thr = thresholds.map((t) => t.val);
-  const t0 = Math.min(...ts), t1 = Math.max(...ts);
-  let ymin = Math.min(...ys, ...thr), ymax = Math.max(...ys, ...thr);
-  if (ymin === ymax) { ymin -= 1; ymax += 1; }
-  const padY = (ymax - ymin) * 0.08; ymin -= padY; ymax += padY;
-  const X = (t: number) => mL + (t1 === t0 ? iw / 2 : ((t - t0) / (t1 - t0)) * iw);
-  const Y = (v: number) => mT + ((ymax - v) / (ymax - ymin)) * ih;
-  const y0 = new Date(t0).getUTCFullYear(), y1 = new Date(t1).getUTCFullYear();
-  const years: number[] = []; for (let yy = y0; yy <= y1; yy++) years.push(yy);
-  const step = Math.ceil(years.length / 12);
-  const yticks = [ymin, (ymin + ymax) / 2, ymax];
-  const line = 'var(--fk-line)', line2 = 'var(--fk-line-strong)', t3 = 'var(--fk-text-3)', brand = 'var(--fk-brand-700,#2563eb)';
+// График сделок: на каждый актив со сделками — карточка с ценой по годам (линия) и периодами сделок
+// (полупрозрачные полосы [вход … вход+горизонт], цвет = знак форварда). Чистый SVG, без зависимостей.
+function PriceLines({ series, deals, horizon, minYear }: { series: Record<string, { date: string; close: number }[]>; deals: Deal[]; horizon: number; minYear?: number }) {
+  const bySym = useMemo(() => {
+    const m = new Map<string, Deal[]>();
+    for (const d of deals) { const a = m.get(d.symbol); if (a) a.push(d); else m.set(d.symbol, [d]); }
+    return [...m.entries()].sort((a, b) => b[1].length - a[1].length);
+  }, [deals]);
+  if (!bySym.length) return <p className="sub" style={{ padding: '20px 0' }}>Нет сделок — ослабьте условия или расширьте окно лет.</p>;
+  const winStart = minYear ? Date.parse(`${minYear}-01-01T00:00:00Z`) : -Infinity;
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <svg width={W} height={H} style={{ display: 'block' }}>
-        {yticks.map((v, i) => (
-          <g key={`y${i}`}>
-            <line x1={mL} x2={W - mR} y1={Y(v)} y2={Y(v)} style={{ stroke: line }} />
-            <text x={mL - 6} y={Y(v) + 3} textAnchor="end" fontSize="10" style={{ fill: t3 }}>{v.toFixed(1)}</text>
-          </g>
+    <div className="pl-grid" data-testid="deal-line-charts">
+      {bySym.map(([sym, ds]) => <AssetChart key={sym} sym={sym} series={series[sym] || []} deals={ds} horizon={horizon} winStart={winStart} />)}
+    </div>
+  );
+}
+
+function AssetChart({ sym, series, deals, horizon, winStart }: { sym: string; series: { date: string; close: number }[]; deals: Deal[]; horizon: number; winStart: number }) {
+  const pts = useMemo(() => series
+    .map((r) => ({ t: Date.parse(r.date + 'T00:00:00Z'), c: r.close }))
+    .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.c) && p.t >= winStart)
+    .sort((a, b) => a.t - b.t), [series, winStart]);
+  const W = 460, H = 190, mL = 38, mR = 8, mT = 18, mB = 18;
+  const iw = W - mL - mR, ih = H - mT - mB;
+  if (pts.length < 2) return (
+    <div className="pl-card" data-testid="deal-line-chart">
+      <div className="pl-h"><span className="sy">{sym}</span><span className="sub">{deals.length} сделок · нет цен</span></div>
+      <div className="sub" style={{ padding: '34px 0', textAlign: 'center' }}>нет ценового ряда</div>
+    </div>
+  );
+  const ts = pts.map((p) => p.t), cs = pts.map((p) => p.c);
+  const t0 = ts[0], t1 = ts[ts.length - 1];
+  let cmin = Math.min(...cs), cmax = Math.max(...cs);
+  if (cmin === cmax) { cmin -= 1; cmax += 1; }
+  const pad = (cmax - cmin) * 0.08; cmin -= pad; cmax += pad;
+  const X = (t: number) => mL + (t1 === t0 ? iw / 2 : ((Math.min(Math.max(t, t0), t1) - t0) / (t1 - t0)) * iw);
+  const Y = (v: number) => mT + ((cmax - v) / (cmax - cmin)) * ih;
+  const closeAt = (t: number) => { let best = pts[0]; for (const p of pts) if (Math.abs(p.t - t) < Math.abs(best.t - t)) best = p; return best.c; };
+  const path = pts.map((p, i) => `${i ? 'L' : 'M'}${X(p.t).toFixed(1)} ${Y(p.c).toFixed(1)}`).join(' ');
+  const winMs = horizon * (7 / 5) * 864e5; // горизонт в торговых днях ≈ календарные (5 торговых ≈ 7 календарных)
+  const bands = deals.map((d) => {
+    const te = Date.parse(d.date + 'T00:00:00Z');
+    return { x0: X(te), x1: X(te + winMs), up: d.ret > 0, te };
+  }).filter((b) => Number.isFinite(b.x0));
+  const y0 = new Date(t0).getUTCFullYear(), y1 = new Date(t1).getUTCFullYear();
+  const yearsArr: number[] = []; for (let yy = y0; yy <= y1; yy++) yearsArr.push(yy);
+  const step = Math.max(1, Math.ceil(yearsArr.length / 6));
+  const t3 = 'var(--fk-text-3)', line = 'var(--fk-line)', up = 'var(--fk-up,#12b981)', down = 'var(--fk-down,#f43f5e)';
+  return (
+    <div className="pl-card" data-testid="deal-line-chart">
+      <div className="pl-h"><span className="sy">{sym}</span><span className="sub">{deals.length} сделок</span></div>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ display: 'block', width: '100%', height: 'auto' }}>
+        {bands.map((b, i) => (
+          <rect key={`b${i}`} x={Math.min(b.x0, b.x1)} y={mT} width={Math.max(1.4, Math.abs(b.x1 - b.x0))} height={ih} style={{ fill: b.up ? up : down, fillOpacity: 0.16 }} />
         ))}
-        {ymin < 0 && ymax > 0 && <line x1={mL} x2={W - mR} y1={Y(0)} y2={Y(0)} style={{ stroke: line2 }} />}
-        {thresholds.map((t, i) => (
-          <g key={`t${i}`}>
-            <line x1={mL} x2={W - mR} y1={Y(t.val)} y2={Y(t.val)} style={{ stroke: brand }} strokeDasharray="5 4" />
-            <text x={W - mR} y={Y(t.val) - 3} textAnchor="end" fontSize="10" style={{ fill: brand }}>{(t.cmp === 'ge' ? '≥ ' : '≤ ') + t.val}</text>
-          </g>
+        {yearsArr.filter((yy) => (yy - y0) % step === 0).map((yy) => {
+          const xx = X(Date.parse(`${yy}-01-01T00:00:00Z`));
+          return <g key={`y${yy}`}><line x1={xx} x2={xx} y1={mT} y2={H - mB} style={{ stroke: line }} /><text x={xx} y={H - 5} textAnchor="middle" fontSize="9" style={{ fill: t3 }}>{yy}</text></g>;
+        })}
+        {[cmax, (cmin + cmax) / 2, cmin].map((v, i) => (
+          <text key={`p${i}`} x={mL - 5} y={Y(v) + 3} textAnchor="end" fontSize="9" style={{ fill: t3 }}>{Math.abs(v) >= 1000 ? v.toFixed(0) : v.toFixed(1)}</text>
         ))}
-        {years.filter((yy) => (yy - y0) % step === 0).map((yy) => (
-          <text key={`x${yy}`} x={X(Date.parse(`${yy}-01-01T00:00:00Z`))} y={H - 8} textAnchor="middle" fontSize="10" style={{ fill: t3 }}>{yy}</text>
-        ))}
-        {pts.map((p, i) => (
-          <circle key={i} cx={X(p.t)} cy={Y(p.y)} r={2.6} style={{ fill: p.ret > 0 ? 'var(--fk-up,#12b981)' : 'var(--fk-down,#f43f5e)', fillOpacity: 0.72 }} />
-        ))}
+        <path d={path} data-testid="deal-line" fill="none" style={{ stroke: 'var(--fk-text-2,#475569)', strokeWidth: 1.3 }} />
+        {bands.map((b, i) => (b.te >= t0 && b.te <= t1) ? <circle key={`m${i}`} cx={X(b.te)} cy={Y(closeAt(b.te))} r={2.2} style={{ fill: b.up ? up : down }} /> : null)}
       </svg>
     </div>
   );
@@ -818,10 +915,59 @@ function TickerPick({ tickers, onApply }: { tickers: string[]; onApply: (t: stri
       </div>
       {done ? <div className="fok">✓ {done}</div> : (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <button type="button" className="btn sm" disabled={!arr.length} onClick={() => { onApply(arr, false); setDone(`добавлено ${arr.length} в вселенную`); }}>Добавить выбранные</button>
-          <button type="button" className="btn sm ghost" disabled={!arr.length} onClick={() => { onApply(arr, true); setDone(`вселенная заменена (${arr.length})`); }}>Заменить вселенную</button>
+          <button type="button" className="btn sm" disabled={!arr.length} onClick={() => { onApply(arr, false); setDone(`добавлено ${arr.length}`); }}>Добавить выбранные</button>
+          <button type="button" className="btn sm ghost" disabled={!arr.length} onClick={() => { onApply(arr, true); setDone(`список заменён (${arr.length})`); }}>Заменить список</button>
         </div>
       )}
+    </div>
+  );
+}
+
+// Модалка «Создать корзину»: собираем список тикеров ВРУЧНУЮ (ввод + «Добавить») или через AI-подбор,
+// видим состав чипами (клик убирает), задаём имя и сохраняем в БД. Не трогает текущую вселенную скринера.
+function BasketModal({ existing, onSave, onClose }: { existing: { name: string }[]; onSave: (name: string, tickers: string[]) => void; onClose: () => void }) {
+  const [name, setName] = useState('');
+  const [draft, setDraft] = useState<string[]>([]);
+  const [manual, setManual] = useState('');
+  const [ai, setAi] = useState(false);
+  const merge = (ts: string[], replace: boolean) => setDraft((d) => [...new Set([...(replace ? [] : d), ...ts.map((t) => t.toUpperCase())])].slice(0, 40));
+  const addManual = () => { const add = parseUni(manual); if (add.length) merge(add, false); setManual(''); };
+  const dup = !!name.trim() && existing.some((b) => b.name === name.trim());
+  const canAddManual = parseUni(manual).length > 0;
+  return (
+    <div className="rsx">
+      <div className="rsx-scrim" onClick={onClose} />
+      <div className="rsx-modal" data-testid="basket-modal">
+        <div className="dr-h">
+          <div style={{ fontSize: 15, fontWeight: 700 }}>Создать корзину</div>
+          <span className="x" onClick={onClose}>✕</span>
+        </div>
+        <div className="md-b">
+          <label className="mlbl">Название корзины</label>
+          <input className="min" data-testid="basket-modal-name" autoFocus placeholder="например, Полупроводники" value={name} onChange={(e) => setName(e.target.value)} />
+          {dup && <span className="sub" style={{ color: 'var(--fk-warn-text,#b5740a)', fontWeight: 600 }}>Корзина «{name.trim()}» уже есть — будет перезаписана.</span>}
+
+          <label className="mlbl" style={{ marginTop: 12 }}>Тикеры вручную</label>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input className="min" data-testid="basket-modal-manual" placeholder="SMH, SOXX, NVDA…" value={manual}
+              onChange={(e) => setManual(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addManual(); } }} />
+            <button type="button" className="btn sm" data-testid="basket-modal-add" disabled={!canAddManual} onClick={addManual}>+ Добавить</button>
+          </div>
+          <button type="button" className={`btn sm ghost${ai ? ' on' : ''}`} style={{ marginTop: 8 }} onClick={() => setAi((o) => !o)}>✨ AI-подбор тикеров</button>
+          {ai && <UniverseChat onApply={merge} onClose={() => setAi(false)} />}
+
+          <label className="mlbl" style={{ marginTop: 12 }}>Состав корзины · {draft.length}</label>
+          <div className="grp" data-testid="basket-modal-draft" style={{ marginBottom: 0 }}>
+            {draft.length
+              ? draft.map((t) => <button key={t} type="button" className="chip bskt on" title="убрать" onClick={() => setDraft((d) => d.filter((x) => x !== t))}>{t}<span className="bx">✕</span></button>)
+              : <span className="sub">пусто — добавьте тикеры вручную или через AI</span>}
+          </div>
+        </div>
+        <div className="md-f">
+          <button type="button" className="btn apply on" data-testid="basket-modal-save" disabled={!name.trim() || !draft.length} onClick={() => onSave(name, draft)}>Сохранить корзину</button>
+          <button type="button" className="btn ghost sm" onClick={onClose}>Отмена</button>
+        </div>
+      </div>
     </div>
   );
 }
