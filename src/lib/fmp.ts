@@ -144,3 +144,18 @@ export async function fmpQuote(symbol: string) {
   const key = getFmpKey();
   return fmpGet(`${BASE_STABLE}/quote?symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(key)}`);
 }
+
+// Пакетные котировки для многих символов разом (near-real-time обновление дашборда).
+// Поля строки: symbol, price, change, changePercentage, timestamp. Чанкуем по 50.
+export async function fmpBatchQuote(symbols: string[]) {
+  const key = getFmpKey();
+  const uniq = [...new Set(symbols.map((s) => String(s).toUpperCase()))].filter(Boolean);
+  const out: any[] = [];
+  const CHUNK = 50;
+  for (let i = 0; i < uniq.length; i += CHUNK) {
+    const part = uniq.slice(i, i + CHUNK);
+    const data = await fmpGet(`${BASE_STABLE}/batch-quote?symbols=${encodeURIComponent(part.join(','))}&apikey=${encodeURIComponent(key)}`);
+    if (Array.isArray(data)) out.push(...data);
+  }
+  return out;
+}

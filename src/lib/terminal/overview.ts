@@ -3,21 +3,58 @@
 // не валит экран (graceful, §5). Snapshot-first: getOverview отдаёт тёплый снапшот мгновенно.
 import { getPrices } from '@/lib/research/prices';
 import { syntheticSeries } from '@/lib/research/metrics';
+import { fmpBatchQuote } from '@/lib/fmp';
 import { logAppError } from '@/lib/app-errors';
 import { computeInstrumentMetrics, dailyLogReturns, annualizedVol, correlation, type Bar } from './metrics';
 import { computeBlockMetrics, averagePairwiseCorrelation, computeRegime } from './block-metrics';
 import { SEED_BLOCKS, SEED_INSTRUMENTS, instrumentDef, allSymbols, effectiveBlocks } from './registry';
-import { readSnapshot, writeSnapshot, isFresh } from './store';
+import { readSnapshot, writeSnapshot } from './store';
 import { readConfig } from './config-store';
 import type { BlockDef, InstrumentMetrics, MarketOverview, OverviewBlock } from './types';
 
 const OVERVIEW_KEY = 'overview';
 const LOOKBACK_DAYS = 400; // ~252 торговых + запас на праздники/MA200
+const OVERVIEW_TTL_MS = 10 * 60 * 1000; // near-real-time: освежаем не реже раза в ~10 мин
 
 function isoDaysAgo(n: number): string {
   const d = new Date();
   d.setUTCDate(d.getUTCDate() - n);
   return d.toISOString().slice(0, 10);
+}
+
+type Quote = { chgPct: number; day: string };
+
+/** Текущие котировки вселенной (FMP batch-quote) для near-real-time точки «сегодня».
+ *  Graceful: нет ключа/эндпоинта → пустая карта → дашборд остаётся EOD. */
+async function loadQuotes(symbols: string[]): Promise<Map<string, Quote>> {
+  const out = new Map<string, Quote>();
+  if (!process.env.FMP_API_KEY) return out; // нет ключа (e2e/локально) — без live, остаёмся на EOD
+  try {
+    const rows = await fmpBatchQuote(symbols);
+    for (const r of Array.isArray(rows) ? rows : []) {
+      const sym = String(r?.symbol ?? '').toUpperCase();
+      const chg = Number(r?.changePercentage ?? r?.changesPercentage);
+      if (!sym || !Number.isFinite(chg)) continue;
+      const ts = Number(r?.timestamp);
+      const day = Number.isFinite(ts) ? new Date(ts * 1000).toISOString().slice(0, 10) : '';
+      out.set(sym, { chgPct: chg, day });
+    }
+  } catch {
+    /* нет ключа FMP / эндпоинт недоступен — работаем по EOD */
+  }
+  return out;
+}
+
+/** Подмешивает точку «сегодня» в ряд: к последнему скорр. close применяем дневной % из котировки.
+ *  Так уровень согласован с adjusted-историей. Возвращает true, если точка добавлена. */
+function spliceTodayQuote(bars: Bar[], q: Quote | undefined, today: string): boolean {
+  if (!q || q.day !== today || bars.length === 0) return false;
+  const last = bars[bars.length - 1];
+  if (last.date >= today) return false; // сегодня уже есть в EOD — не дублируем
+  const close = last.close * (1 + q.chgPct / 100);
+  if (!Number.isFinite(close) || close <= 0) return false;
+  bars.push({ date: today, close });
+  return true;
 }
 
 async function loadBars(sym: string, from: string, to: string): Promise<{ bars: Bar[]; synthetic: boolean }> {
@@ -45,16 +82,21 @@ export async function computeOverview(blocks: BlockDef[] = SEED_BLOCKS): Promise
   const symbols = allSymbols(blocks);
   const from = isoDaysAgo(LOOKBACK_DAYS);
   const to = isoDaysAgo(0);
+  const today = to;
 
   const metricsMap = new Map<string, InstrumentMetrics | null>();
   const retsMap = new Map<string, number[]>();
   const closesMap = new Map<string, number[]>();
   let anySynthetic = false;
+  let live = false;
+
+  const quoteMap = await loadQuotes(symbols);
 
   await inChunks(symbols, 6, async (sym) => {
     try {
       const { bars, synthetic } = await loadBars(sym, from, to);
       if (synthetic) anySynthetic = true;
+      else if (spliceTodayQuote(bars, quoteMap.get(sym), today)) live = true;
       const m = computeInstrumentMetrics(bars);
       if (m) {
         m.symbol = sym;
@@ -100,7 +142,7 @@ export async function computeOverview(blocks: BlockDef[] = SEED_BLOCKS): Promise
   const asOf = maxAsOf(metricsMap);
   const uniq = [...new Set(blocks.flatMap((b) => b.members))];
   const correlationMx = buildCorrelation(retsMap, uniq);
-  return { asOf, blocks: outBlocks, regime, correlation: correlationMx, synthetic: anySynthetic };
+  return { asOf, blocks: outBlocks, regime, correlation: correlationMx, synthetic: anySynthetic, live };
 }
 
 // Полная кросс-ассет корреляция (63д) по ВСЕМ тикерам вселенной — клиент сам выбирает
@@ -149,7 +191,7 @@ export async function getOverview(): Promise<MarketOverview> {
   const blocks = effectiveBlocks(cfg);
   const sig = blocksSignature(blocks);
   const cached = await readSnapshot<MarketOverview>(OVERVIEW_KEY);
-  if (cached && isFresh(cached.refreshedAt) && cached.payload.cfgSig === sig) return cached.payload;
+  if (cached && Date.now() - cached.refreshedAt < OVERVIEW_TTL_MS && cached.payload.cfgSig === sig) return cached.payload;
   try {
     const fresh = await computeOverview(blocks);
     fresh.cfgSig = sig;

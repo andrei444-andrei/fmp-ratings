@@ -322,7 +322,12 @@ export default function TerminalPage() {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <h1 className="text-lg font-bold text-ink">Рыночный терминал</h1>
-          {data && <span className="text-xs text-ink-3">обновлено {data.asOf} · EOD</span>}
+          {data && (
+            <span className="inline-flex items-center gap-1.5 text-xs text-ink-3">
+              {data.live && <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-up" title="котировки в реальном времени" />}
+              обновлено {data.asOf} · {data.live ? 'live' : 'EOD'}
+            </span>
+          )}
           {data?.synthetic && <Badge variant="warn">демо-данные · не рыночная картина</Badge>}
         </div>
         <div className="flex items-center gap-2">
@@ -384,7 +389,7 @@ export default function TerminalPage() {
                 ) : null,
               blocks: (
                 <div>
-                  <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
                     {data.blocks.map((b) => (
                       <BlockCard
                         key={b.def.id}
