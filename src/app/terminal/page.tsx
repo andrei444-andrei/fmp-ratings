@@ -27,10 +27,33 @@ type TermConfig = {
   customBaskets: CustomBasket[];
   hiddenBlocks: string[];
   blockTitles: Record<string, string>;
+  layout: string[];
+  hiddenWidgets: string[];
 };
+
+// Настраиваемые виджеты дашборда (порядок = дефолтная раскладка); wide → во всю ширину.
+const WIDGET_KEYS = ['pulse', 'watchlist', 'compare', 'rotation', 'rates', 'risk', 'events', 'correlation', 'blocks'] as const;
+const WIDGET_META: Record<string, { title: string; wide: boolean }> = {
+  pulse: { title: 'Пульс рынка · лидеры/аутсайдеры', wide: true },
+  watchlist: { title: 'Избранное', wide: true },
+  compare: { title: 'Нормализованная доходность', wide: true },
+  rotation: { title: 'Ротация секторов (RRG)', wide: false },
+  rates: { title: 'Кривая доходности · ставки', wide: false },
+  risk: { title: 'Волатильность · риск-режим', wide: false },
+  events: { title: 'Радар событий', wide: false },
+  correlation: { title: 'Корреляции', wide: true },
+  blocks: { title: 'Блоки и корзины', wide: true },
+};
+function reconcileLayout(v: unknown): string[] {
+  const allowed = new Set<string>(WIDGET_KEYS as readonly string[]);
+  const out: string[] = [];
+  if (Array.isArray(v)) for (const x of v) { const k = String(x); if (allowed.has(k) && !out.includes(k)) out.push(k); }
+  for (const k of WIDGET_KEYS) if (!out.includes(k)) out.push(k);
+  return out;
+}
 type SearchItem = { symbol: string; name: string; exchange?: string; note?: string };
 
-const EMPTY_CFG: TermConfig = { compare: { symbols: ['SPY', 'QQQ', 'DIA'], period: '1Г', showAvg: false }, corr: { symbols: [] }, blocks: {}, watchlist: [], customBaskets: [], hiddenBlocks: [], blockTitles: {} };
+const EMPTY_CFG: TermConfig = { compare: { symbols: ['SPY', 'QQQ', 'DIA'], period: '1Г', showAvg: false }, corr: { symbols: [] }, blocks: {}, watchlist: [], customBaskets: [], hiddenBlocks: [], blockTitles: {}, layout: [...WIDGET_KEYS], hiddenWidgets: [] };
 const SEED_TITLE: Record<string, string> = Object.fromEntries(SEED_BLOCKS.map((b) => [b.id, b.title]));
 const SYM_RE = /^[A-Z0-9.\-]{1,12}$/;
 
@@ -96,6 +119,7 @@ export default function TerminalPage() {
   const [cfg, setCfg] = useState<TermConfig | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const npfRef = useRef<HTMLDivElement>(null);
+  const [showLayout, setShowLayout] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -114,6 +138,8 @@ export default function TerminalPage() {
         customBaskets: Array.isArray(c?.customBaskets) ? c.customBaskets : [],
         hiddenBlocks: Array.isArray(c?.hiddenBlocks) ? c.hiddenBlocks : [],
         blockTitles: c?.blockTitles ?? {},
+        layout: reconcileLayout(c?.layout),
+        hiddenWidgets: Array.isArray(c?.hiddenWidgets) ? c.hiddenWidgets.filter((k: string) => (WIDGET_KEYS as readonly string[]).includes(k)) : [],
       }))
       .catch(() => alive && setCfg(EMPTY_CFG));
     return () => {
@@ -299,93 +325,103 @@ export default function TerminalPage() {
           {data && <span className="text-xs text-ink-3">обновлено {data.asOf} · EOD</span>}
           {data?.synthetic && <Badge variant="warn">демо-данные · не рыночная картина</Badge>}
         </div>
-        <SegmentedControl<Mode>
-          size="sm"
-          value={mode}
-          onChange={setMode}
-          options={[
-            { label: 'Абсолют %', value: 'abs' },
-            { label: 'Превышение SPY', value: 'excess' },
-          ]}
-        />
+        <div className="flex items-center gap-2">
+          <SegmentedControl<Mode>
+            size="sm"
+            value={mode}
+            onChange={setMode}
+            options={[
+              { label: 'Абсолют %', value: 'abs' },
+              { label: 'Превышение SPY', value: 'excess' },
+            ]}
+          />
+          {cfg && (
+            <button
+              type="button"
+              onClick={() => setShowLayout(true)}
+              className="inline-flex items-center gap-1.5 rounded-fk border border-line px-2.5 py-1.5 text-[12px] font-semibold text-ink-2 transition-colors hover:border-brand hover:text-brand"
+              title="Показать/скрыть и переставить виджеты"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 6h10M4 12h16M4 18h7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><circle cx="18" cy="6" r="2.4" stroke="currentColor" strokeWidth="2" /><circle cx="15" cy="18" r="2.4" stroke="currentColor" strokeWidth="2" /></svg>
+              Настроить
+            </button>
+          )}
+        </div>
       </div>
 
       {!data ? (
         <LoadingState />
       ) : (
         <>
-          <RegimePulse data={data} movers={movers} />
-          {cfg && cfg.watchlist.length > 0 && (
-            <WatchlistBar
-              watchlist={cfg.watchlist}
-              instrMap={instrMap}
-              onOpen={openSymbol}
-              onRemove={toggleFav}
-              onCompareAll={() => loadBlockToCompare(cfg.watchlist)}
-            />
-          )}
-          <div ref={npfRef} className="scroll-mt-3">
-            {cfg && (
-              <NormalizedPerformance
-                instrMap={instrMap}
-                groups={groups}
-                symbols={cfg.compare.symbols}
-                period={cfg.compare.period}
-                showAvg={cfg.compare.showAvg}
-                onChange={(symbols, period) => updateCfg({ ...cfg, compare: { ...cfg.compare, symbols, period } })}
-                onToggleAvg={() => updateCfg({ ...cfg, compare: { ...cfg.compare, showAvg: !cfg.compare.showAvg } })}
-              />
-            )}
-          </div>
-          {/* Макро/ротация — компактные виджеты (≈50%); сюда же добавятся волатильность/события */}
-          <div className="mb-3.5 grid grid-cols-1 gap-3.5 xl:grid-cols-2">
-            <RotationCard />
-            <RatesCard />
-            <RiskCard />
-            <EventsCard />
-          </div>
-          <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
-            {data.blocks.map((b) => (
-              <BlockCard
-                key={b.def.id}
-                block={b}
-                mode={mode}
-                cell={cell}
-                spy={spy}
-                isFav={isFav}
-                onToggleFav={toggleFav}
-                onPick={(m, title) => setSel({ block: b, m, title })}
-                onCompare={loadBlockToCompare}
-                onEdit={() => setEditor({ block: b, mode: 'edit' })}
-                onDelete={() => deleteBlock(b.def.custom ? 'custom' : 'seed', b.def.id)}
-              />
-            ))}
-            <button
-              type="button"
-              onClick={openCreateBasket}
-              className="flex min-h-[120px] items-center justify-center gap-2 rounded-fk border-2 border-dashed border-line-strong text-[13px] font-semibold text-ink-2 transition-colors hover:border-brand hover:bg-brand-50 hover:text-brand-700"
-            >
-              ＋ Создать корзину
-            </button>
-          </div>
-          {cfg && cfg.hiddenBlocks.length > 0 && (
-            <div className="mt-3 flex flex-wrap items-center gap-2 text-[12px] text-ink-3">
-              <span>Скрытые блоки:</span>
-              {cfg.hiddenBlocks.map((id) => (
-                <button key={id} onClick={() => restoreHidden(id)} disabled={busyBlock} className="rounded-fk-pill border border-line px-2.5 py-0.5 font-semibold hover:border-brand hover:text-brand" title="Восстановить блок">
-                  {SEED_TITLE[id] ?? id} ↩
-                </button>
-              ))}
-            </div>
-          )}
-          {data.correlation && cfg && (
-            <CorrelationCard
-              corr={data.correlation}
-              groups={groups}
-              selected={cfg.corr.symbols}
-              onChange={(symbols) => updateCfg({ ...cfg, corr: { symbols } })}
-            />
-          )}
+          <DashboardGrid
+            cfg={cfg}
+            nodes={{
+              pulse: <RegimePulse data={data} movers={movers} />,
+              watchlist:
+                cfg && cfg.watchlist.length > 0 ? (
+                  <WatchlistBar watchlist={cfg.watchlist} instrMap={instrMap} onOpen={openSymbol} onRemove={toggleFav} onCompareAll={() => loadBlockToCompare(cfg.watchlist)} />
+                ) : null,
+              compare: cfg ? (
+                <div ref={npfRef} className="scroll-mt-3">
+                  <NormalizedPerformance
+                    instrMap={instrMap}
+                    groups={groups}
+                    symbols={cfg.compare.symbols}
+                    period={cfg.compare.period}
+                    showAvg={cfg.compare.showAvg}
+                    onChange={(symbols, period) => updateCfg({ ...cfg, compare: { ...cfg.compare, symbols, period } })}
+                    onToggleAvg={() => updateCfg({ ...cfg, compare: { ...cfg.compare, showAvg: !cfg.compare.showAvg } })}
+                  />
+                </div>
+              ) : null,
+              rotation: <RotationCard />,
+              rates: <RatesCard />,
+              risk: <RiskCard />,
+              events: <EventsCard />,
+              correlation:
+                data.correlation && cfg ? (
+                  <CorrelationCard corr={data.correlation} groups={groups} selected={cfg.corr.symbols} onChange={(symbols) => updateCfg({ ...cfg, corr: { symbols } })} />
+                ) : null,
+              blocks: (
+                <div>
+                  <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
+                    {data.blocks.map((b) => (
+                      <BlockCard
+                        key={b.def.id}
+                        block={b}
+                        mode={mode}
+                        cell={cell}
+                        spy={spy}
+                        isFav={isFav}
+                        onToggleFav={toggleFav}
+                        onPick={(m, title) => setSel({ block: b, m, title })}
+                        onCompare={loadBlockToCompare}
+                        onEdit={() => setEditor({ block: b, mode: 'edit' })}
+                        onDelete={() => deleteBlock(b.def.custom ? 'custom' : 'seed', b.def.id)}
+                      />
+                    ))}
+                    <button
+                      type="button"
+                      onClick={openCreateBasket}
+                      className="flex min-h-[120px] items-center justify-center gap-2 rounded-fk border-2 border-dashed border-line-strong text-[13px] font-semibold text-ink-2 transition-colors hover:border-brand hover:bg-brand-50 hover:text-brand-700"
+                    >
+                      ＋ Создать корзину
+                    </button>
+                  </div>
+                  {cfg && cfg.hiddenBlocks.length > 0 && (
+                    <div className="mt-3 flex flex-wrap items-center gap-2 text-[12px] text-ink-3">
+                      <span>Скрытые блоки:</span>
+                      {cfg.hiddenBlocks.map((id) => (
+                        <button key={id} onClick={() => restoreHidden(id)} disabled={busyBlock} className="rounded-fk-pill border border-line px-2.5 py-0.5 font-semibold hover:border-brand hover:text-brand" title="Восстановить блок">
+                          {SEED_TITLE[id] ?? id} ↩
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ),
+            }}
+          />
         </>
       )}
 
@@ -411,7 +447,112 @@ export default function TerminalPage() {
           onDelete={() => deleteBlock(editor.block.def.custom ? 'custom' : 'seed', editor.block.def.id)}
         />
       )}
+      {showLayout && cfg && (
+        <LayoutEditor
+          order={reconcileLayout(cfg.layout)}
+          hidden={cfg.hiddenWidgets}
+          onChange={(layout, hiddenWidgets) => updateCfg({ ...cfg, layout, hiddenWidgets })}
+          onReset={() => updateCfg({ ...cfg, layout: [...WIDGET_KEYS], hiddenWidgets: [] })}
+          onClose={() => setShowLayout(false)}
+        />
+      )}
     </div>
+  );
+}
+
+function DashboardGrid({ cfg, nodes }: { cfg: TermConfig | null; nodes: Record<string, React.ReactNode> }) {
+  const order = cfg ? reconcileLayout(cfg.layout) : [...WIDGET_KEYS];
+  const hidden = new Set(cfg?.hiddenWidgets ?? []);
+  return (
+    <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
+      {order
+        .filter((k) => !hidden.has(k))
+        .map((k) => {
+          const n = nodes[k];
+          if (!n) return null;
+          return (
+            <div key={k} className={WIDGET_META[k]?.wide ? 'xl:col-span-2' : ''}>
+              {n}
+            </div>
+          );
+        })}
+    </div>
+  );
+}
+
+function LayoutEditor({
+  order,
+  hidden,
+  onChange,
+  onReset,
+  onClose,
+}: {
+  order: string[];
+  hidden: string[];
+  onChange: (order: string[], hidden: string[]) => void;
+  onReset: () => void;
+  onClose: () => void;
+}) {
+  const [drag, setDrag] = useState<number | null>(null);
+  const hiddenSet = new Set(hidden);
+  const move = (from: number, to: number) => {
+    if (from === to || from < 0 || to < 0 || to >= order.length) return;
+    const a = [...order];
+    const [x] = a.splice(from, 1);
+    a.splice(to, 0, x);
+    onChange(a, hidden);
+  };
+  const toggle = (key: string) => {
+    const next = hiddenSet.has(key) ? hidden.filter((k) => k !== key) : [...hidden, key];
+    onChange(order, next);
+  };
+  const visibleCount = order.filter((k) => !hiddenSet.has(k)).length;
+  return (
+    <Modal open onClose={onClose} size="md" title="Настроить дашборд" description="Перетащите за ручку, чтобы изменить порядок. Глаз — показать/скрыть виджет.">
+      <div className="flex flex-col gap-1.5">
+        {order.map((key, i) => {
+          const isHidden = hiddenSet.has(key);
+          const meta = WIDGET_META[key];
+          return (
+            <div
+              key={key}
+              draggable
+              onDragStart={() => setDrag(i)}
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (drag != null && drag !== i) {
+                  move(drag, i);
+                  setDrag(i);
+                }
+              }}
+              onDragEnd={() => setDrag(null)}
+              className={`flex items-center gap-2.5 rounded-fk-sm border px-2.5 py-2 transition-colors ${drag === i ? 'border-brand bg-brand-50' : 'border-line bg-surface'} ${isHidden ? 'opacity-55' : ''}`}
+            >
+              <span className="cursor-grab select-none text-ink-3 active:cursor-grabbing" title="Перетащить" aria-hidden="true">⠿</span>
+              <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-ink">{meta?.title ?? key}</span>
+              {meta?.wide && <span className="rounded-fk-pill bg-surface-2 px-1.5 py-0.5 text-[9px] font-bold uppercase text-ink-3">широкий</span>}
+              <button
+                type="button"
+                onClick={() => toggle(key)}
+                className={`inline-flex h-7 w-7 items-center justify-center rounded-fk transition-colors hover:bg-black/5 ${isHidden ? 'text-ink-3' : 'text-brand'}`}
+                title={isHidden ? 'Показать' : 'Скрыть'}
+                aria-label={isHidden ? 'Показать' : 'Скрыть'}
+              >
+                {isHidden ? (
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M3 3l18 18M10.6 10.7a2 2 0 002.8 2.8M9.4 5.2A9.3 9.3 0 0112 5c5 0 9 4.5 9 7 0 1-.7 2.2-1.9 3.4M6.3 6.4C3.9 7.9 3 10.2 3 11c0 1.3 4 7 9 7 1 0 2-.2 2.9-.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
+                ) : (
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /><circle cx="12" cy="12" r="2.6" stroke="currentColor" strokeWidth="1.8" /></svg>
+                )}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-4 flex items-center justify-between">
+        <button type="button" onClick={onReset} className="text-[12px] font-semibold text-ink-3 hover:text-brand">Сбросить по умолчанию</button>
+        <span className="text-[11px] text-ink-3">{visibleCount} из {order.length} показано</span>
+      </div>
+    </Modal>
   );
 }
 
@@ -438,7 +579,7 @@ function RegimePulse({ data, movers }: { data: MarketOverview; movers: { up: any
     </div>
   );
   return (
-    <div className="mb-3.5 grid grid-cols-1 gap-3.5 lg:grid-cols-[1.05fr_2fr]">
+    <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-[1.05fr_2fr]">
       <div className="rounded-fk border border-line bg-surface-elev shadow-fk-sm">
         <div className="flex items-center justify-between border-b border-line px-4 py-3">
           <span className="text-[11px] font-bold uppercase tracking-wide text-ink-3">Режим рынка</span>

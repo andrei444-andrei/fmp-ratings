@@ -6,6 +6,10 @@ import { libsqlClient } from '@/db/client';
 /** Пользовательская корзина (создаётся/редактируется/удаляется в UI). */
 export type CustomBasket = { id: string; title: string; members: string[] };
 
+/** Канонический список настраиваемых виджетов дашборда (порядок = дефолтная раскладка). */
+export const WIDGET_KEYS = ['pulse', 'watchlist', 'compare', 'rotation', 'rates', 'risk', 'events', 'correlation', 'blocks'] as const;
+export type WidgetKey = (typeof WIDGET_KEYS)[number];
+
 export type TerminalConfig = {
   /** Виджет «Нормализованный перформанс»: избранные тикеры + период + линия Σ (eq-weight). */
   compare: { symbols: string[]; period: string; showAvg: boolean };
@@ -21,6 +25,10 @@ export type TerminalConfig = {
   hiddenBlocks: string[];
   /** Переопределения названий блоков: blockId → название. */
   blockTitles: Record<string, string>;
+  /** Раскладка дашборда: порядок виджетов (ключи из WIDGET_KEYS). */
+  layout: string[];
+  /** Скрытые виджеты дашборда (ключи из WIDGET_KEYS). */
+  hiddenWidgets: string[];
 };
 
 export const DEFAULT_CONFIG: TerminalConfig = {
@@ -31,6 +39,8 @@ export const DEFAULT_CONFIG: TerminalConfig = {
   customBaskets: [],
   hiddenBlocks: [],
   blockTitles: {},
+  layout: [...WIDGET_KEYS],
+  hiddenWidgets: [],
 };
 
 const KEY = 'default';
@@ -118,6 +128,33 @@ function sanitizeBlockIds(v: unknown): string[] {
   return out;
 }
 
+/** Порядок виджетов: только известные ключи, без дублей, недостающие дописываем в конец. */
+function sanitizeLayout(v: unknown): string[] {
+  const allowed = new Set<string>(WIDGET_KEYS);
+  const out: string[] = [];
+  if (Array.isArray(v)) {
+    for (const x of v) {
+      const k = String(x ?? '');
+      if (allowed.has(k) && !out.includes(k)) out.push(k);
+    }
+  }
+  for (const k of WIDGET_KEYS) if (!out.includes(k)) out.push(k);
+  return out;
+}
+
+/** Скрытые виджеты: только известные ключи, без дублей. */
+function sanitizeWidgetKeys(v: unknown): string[] {
+  const allowed = new Set<string>(WIDGET_KEYS);
+  const out: string[] = [];
+  if (Array.isArray(v)) {
+    for (const x of v) {
+      const k = String(x ?? '');
+      if (allowed.has(k) && !out.includes(k)) out.push(k);
+    }
+  }
+  return out;
+}
+
 /** Нормализует произвольный объект к валидному TerminalConfig, подставляя дефолты. */
 export function normalizeConfig(raw: any): TerminalConfig {
   const compareSyms = sanitizeSymbols(raw?.compare?.symbols, 12);
@@ -131,6 +168,8 @@ export function normalizeConfig(raw: any): TerminalConfig {
     customBaskets: sanitizeBaskets(raw?.customBaskets),
     hiddenBlocks: sanitizeBlockIds(raw?.hiddenBlocks),
     blockTitles: sanitizeTitles(raw?.blockTitles),
+    layout: sanitizeLayout(raw?.layout),
+    hiddenWidgets: sanitizeWidgetKeys(raw?.hiddenWidgets),
   };
 }
 
