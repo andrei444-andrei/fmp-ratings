@@ -14,10 +14,14 @@ const WD = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
 const MON = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
 const MONF = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
 
+// Самые главные индикаторы экономики (курируемый набор для тумблера «Главные»):
+// инфляция (CPI/Core CPI/Core PCE), рынок труда (NFP/безработица), ставка ФРС, ВВП, розница.
+const HEADLINE = new Set(['cpi', 'core_cpi', 'core_pce', 'nfp', 'unemployment', 'fomc_rate', 'gdp', 'retail']);
+
 export default function EventsCard() {
   const [data, setData] = useState<RadarData | null>(null);
   const [err, setErr] = useState(false);
-  const [onlyTop, setOnlyTop] = useState(false);
+  const [onlyHeadline, setOnlyHeadline] = useState(false);
   const [detail, setDetail] = useState<RadarEntry | null>(null);
 
   useEffect(() => {
@@ -32,24 +36,37 @@ export default function EventsCard() {
   }, []);
 
   return (
-    <div className="rounded-fk border border-line bg-surface-elev shadow-fk-sm">
+    <div className="flex h-full flex-col rounded-fk border border-line bg-surface-elev shadow-fk-sm">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-3.5 py-3">
         <div className="flex items-center gap-2.5">
           <span className="text-[13px] font-bold text-ink">Радар событий</span>
           <Badge variant="brand">лента</Badge>
         </div>
-        <label className="inline-flex cursor-pointer items-center gap-1.5 text-[11px] text-ink-2">
-          <input type="checkbox" checked={onlyTop} onChange={(e) => setOnlyTop(e.target.checked)} className="accent-brand" />
-          только важное
-        </label>
+        <div className="inline-flex items-center gap-1 rounded-fk-pill bg-surface-2 p-0.5 text-[11px] font-bold">
+          <button
+            type="button"
+            onClick={() => setOnlyHeadline(false)}
+            className={`rounded-fk-pill px-2.5 py-1 transition-colors ${!onlyHeadline ? 'bg-surface-elev text-ink shadow-fk-sm' : 'text-ink-3 hover:text-ink-2'}`}
+          >
+            Все
+          </button>
+          <button
+            type="button"
+            onClick={() => setOnlyHeadline(true)}
+            title="Только самые главные индикаторы экономики"
+            className={`rounded-fk-pill px-2.5 py-1 transition-colors ${onlyHeadline ? 'bg-brand text-white shadow-fk-sm' : 'text-ink-3 hover:text-ink-2'}`}
+          >
+            ★ Главные
+          </button>
+        </div>
       </div>
-      <div className="p-0">
+      <div className="flex min-h-0 flex-1 flex-col p-0">
         {err ? (
           <div className="px-2 py-10 text-center text-[12px] text-ink-3">Не удалось загрузить события</div>
         ) : !data ? (
           <div className="p-3.5"><Skeleton className="h-[300px] w-full rounded-fk" /></div>
         ) : (
-          <Timeline data={data} onlyTop={onlyTop} onOpen={setDetail} />
+          <Timeline data={data} onlyHeadline={onlyHeadline} onOpen={setDetail} />
         )}
       </div>
       {detail && <IndicatorModal entry={detail} onClose={() => setDetail(null)} />}
@@ -93,25 +110,29 @@ function canOpen(e: RadarEntry): boolean {
   return Boolean(e.id) || e.kind === 'earnings';
 }
 
-function Timeline({ data, onlyTop, onOpen }: { data: RadarData; onlyTop: boolean; onOpen: (e: RadarEntry) => void }) {
+function Timeline({ data, onlyHeadline, onOpen }: { data: RadarData; onlyHeadline: boolean; onOpen: (e: RadarEntry) => void }) {
   const feedRef = useRef<HTMLDivElement>(null);
   const { today } = data;
 
   const list = useMemo(() => {
     return [...data.entries]
-      .filter((e) => !onlyTop || e.importance === 1)
+      .filter((e) => !onlyHeadline || (e.id != null && HEADLINE.has(e.id)))
       .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.importance - b.importance));
-  }, [data.entries, onlyTop]);
+  }, [data.entries, onlyHeadline]);
 
   const months = useMemo(() => [...new Set(list.map((e) => monthOf(e.date)))], [list]);
   const curMonth = monthOf(today);
 
-  // прокрутка к «сегодня» при загрузке/смене фильтра
-  useEffect(() => {
+  const scrollToToday = (smooth = true) => {
     const f = feedRef.current;
     if (!f) return;
     const el = f.querySelector('[data-today]') as HTMLElement | null;
-    if (el) f.scrollTop = Math.max(0, el.offsetTop - 6);
+    if (el) f.scrollTo({ top: Math.max(0, el.offsetTop - 6), behavior: smooth ? 'smooth' : 'auto' });
+  };
+
+  // прокрутка к «сегодня» при загрузке/смене фильтра
+  useEffect(() => {
+    scrollToToday(false);
   }, [list]);
 
   const scrollToMonth = (m: number) => {
@@ -159,8 +180,17 @@ function Timeline({ data, onlyTop, onOpen }: { data: RadarData; onlyTop: boolean
   }
 
   return (
-    <div>
+    <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-1.5 overflow-x-auto border-b border-line bg-surface px-3.5 py-2">
+        <button
+          type="button"
+          onClick={() => scrollToToday(true)}
+          title="Вернуться к текущему моменту"
+          className="shrink-0 rounded-fk-pill border border-brand bg-brand-50 px-2.5 py-1 text-[11px] font-bold text-brand-700 transition-colors hover:bg-brand hover:text-white"
+        >
+          ● Сегодня
+        </button>
+        <span className="shrink-0 text-line-strong" aria-hidden="true">|</span>
         {months.map((m) => (
           <button
             key={m}
@@ -179,7 +209,7 @@ function Timeline({ data, onlyTop, onOpen }: { data: RadarData; onlyTop: boolean
         <span className="inline-flex items-center gap-1"><i className="h-1.5 w-1.5 rounded-full" style={{ background: BRAND }} /> ФРС / отчёт</span>
         <span className="ml-auto text-ink-3">клик — динамика за годы</span>
       </div>
-      <div ref={feedRef} className="relative max-h-[360px] overflow-y-auto">
+      <div ref={feedRef} className="relative min-h-[300px] max-h-[640px] flex-1 overflow-y-auto">
         {rows}
       </div>
     </div>

@@ -41,7 +41,7 @@ const WIDGET_META: Record<string, { title: string; wide: boolean }> = {
   rates: { title: 'Кривая доходности · ставки', wide: false },
   risk: { title: 'Волатильность · риск-режим', wide: false },
   events: { title: 'Радар событий', wide: false },
-  correlation: { title: 'Корреляции', wide: true },
+  correlation: { title: 'Корреляции', wide: false },
   blocks: { title: 'Блоки и корзины', wide: true },
 };
 function reconcileLayout(v: unknown): string[] {
@@ -562,7 +562,13 @@ function MasonryBand({ keys, nodes }: { keys: string[]; nodes: Record<string, Re
       });
     };
     relayout();
-    const ro = new ResizeObserver(relayout);
+    // «events» (радар) растягивается, заполняя свою колонку → его собственное изменение высоты
+    // НЕ должно вызывать пересчёт (иначе обратная связь). Реагируем на ширину контейнера и
+    // высоты остальных карточек.
+    const ro = new ResizeObserver((entries) => {
+      const grow = els.current.get('events');
+      if (entries.some((e) => e.target !== grow)) relayout();
+    });
     ro.observe(node);
     els.current.forEach((el) => ro.observe(el));
     return () => {
@@ -573,12 +579,13 @@ function MasonryBand({ keys, nodes }: { keys: string[]; nodes: Record<string, Re
 
   if (!keys.length) return null;
   return (
-    <div ref={ref} data-testid="masonry-band" className="flex flex-col gap-3.5 lg:flex-row lg:items-start">
+    <div ref={ref} data-testid="masonry-band" className="flex flex-col gap-3.5 lg:flex-row lg:items-stretch">
       {columns.map((colKeys, ci) => (
         <div key={ci} className="flex min-w-0 flex-1 flex-col gap-3.5">
           {colKeys.map((k) => (
             <div
               key={k}
+              className={k === 'events' ? 'lg:flex lg:min-h-0 lg:flex-1 lg:flex-col' : undefined}
               ref={(el) => {
                 if (el) els.current.set(k, el);
                 else els.current.delete(k);
