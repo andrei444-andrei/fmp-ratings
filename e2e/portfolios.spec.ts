@@ -73,6 +73,14 @@ test.describe('Портфели /portfolios', () => {
     await expect(page.getByTestId('pf-week-meta')).toBeVisible();
     await expect(page.getByTestId('pf-week-positions')).toBeVisible();
 
+    // сделки по ребалансам/входам: список + долевая полоса при выборе сделки
+    await expect(page.getByTestId('pf-reb-table')).toBeVisible();
+    const rrow = page.getByTestId('pf-reb-row').first();
+    await expect(rrow).toBeVisible();
+    await rrow.click();
+    await expect(page.getByTestId('pf-reb-positions')).toBeVisible();
+    await expect(page.getByTestId('pf-stack').first()).toBeVisible();
+
     await request.delete(`/api/researcher/setups?id=${encodeURIComponent(setupId)}`);
   });
 

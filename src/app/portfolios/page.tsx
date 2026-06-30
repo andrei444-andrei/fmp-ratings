@@ -136,6 +136,25 @@ function PeriodChart({ periods, hovered, onHover }: { periods: Period[]; hovered
   );
 }
 
+const SEG_COLORS = ['#2563eb', '#0a8a60', '#b5740a', '#c81e3c', '#7c3aed', '#0891b2', '#be185d', '#65a30d', '#0d9488', '#9333ea', '#ea580c', '#0369a1'];
+
+// Наглядная долевая полоса состава: ширина сегмента ∝ доля тикера.
+function StackedBar({ positions }: { positions: { symbol: string; weight: number }[] }) {
+  if (!positions.length) return <div className="pf-stack empty">в паркинге — позиций нет</div>;
+  return (
+    <div className="pf-stack" data-testid="pf-stack">
+      {positions.map((p, i) => {
+        const w = Math.max(0, p.weight * 100);
+        return (
+          <div key={p.symbol} className="seg" style={{ width: `${w}%`, background: SEG_COLORS[i % SEG_COLORS.length] }} title={`${p.symbol} ${w.toFixed(1)}%`}>
+            {w > 7 ? `${p.symbol} ${w.toFixed(0)}%` : ''}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function PortfoliosPage() {
   const [setups, setSetups] = useState<SetupItem[]>([]);
   const [saved, setSaved] = useState<SavedPortfolio[]>([]);
@@ -156,6 +175,8 @@ export default function PortfoliosPage() {
   const [gran, setGran] = useState<Gran>('year');
   const [hoverP, setHoverP] = useState<number>(-1);
   const [selWeek, setSelWeek] = useState<string | null>(null); // выбранная неделя (drill-down)
+  const [selReb, setSelReb] = useState<number>(-1); // индекс выбранного ребаланса/входа
+  const [rebFilter, setRebFilter] = useState(''); // фильтр сделок по тикеру
 
   const loadSetups = useCallback(async () => {
     try {
@@ -350,6 +371,15 @@ export default function PortfoliosPage() {
   const hp = hoverP >= 0 && hoverP < periods.length ? periods[hoverP] : null;
   const weekDetail = useMemo(() => (result && selWeek ? result.weeks.find((w) => w.start === selWeek) || null : null), [result, selWeek]);
   useEffect(() => { setSelWeek(null); }, [result, gran]);
+
+  // сделки по ребалансам/входам: список (новые сверху) с фильтром по тикеру
+  const rebList = useMemo(() => {
+    const all = result?.rebalances ? [...result.rebalances].map((r, idx) => ({ r, idx })).reverse() : [];
+    const f = rebFilter.trim().toUpperCase();
+    return f ? all.filter(({ r }) => r.positions.some((p) => p.symbol.includes(f))) : all;
+  }, [result, rebFilter]);
+  const selRebEvent = useMemo(() => (result?.rebalances && selReb >= 0 ? result.rebalances[selReb] || null : null), [result, selReb]);
+  useEffect(() => { setSelReb(-1); setRebFilter(''); }, [result]);
 
   const canNext = step === 1 ? selected.size > 0 : true;
   const selectedNames = setups.filter((s) => selected.has(s.id)).map((s) => s.name);
@@ -622,6 +652,52 @@ export default function PortfoliosPage() {
                   </tbody>
                 </table>
               </div>
+            </div></div>
+          )}
+
+          {/* Состав по ребалансам / входам: какие тикеры взяты и в каких долях */}
+          {ran && result && result.rebalances.length > 0 && (
+            <div className="card"><div className="card-b">
+              <div className="pf-period-head">
+                <div className="card-t">Состав по ребалансам / входам ({result.rebalances.length})</div>
+                <input className="nin" placeholder="Фильтр по тикеру…" data-testid="pf-reb-filter" value={rebFilter} onChange={(e) => setRebFilter(e.target.value)} />
+              </div>
+              {selRebEvent ? (
+                <>
+                  <div className="pf-week-meta" data-testid="pf-reb-sel">
+                    <b>{selRebEvent.date}</b> · {selRebEvent.kind === 'rebalance' ? 'ребаланс' : 'вход (транш)'} · доля решения {pct(selRebEvent.scope, 0)} · имён {selRebEvent.positions.length}
+                  </div>
+                  <StackedBar positions={selRebEvent.positions} />
+                  <div className="pf-ptable-wrap" style={{ marginTop: 10, maxHeight: 220 }}>
+                    <table className="pf-ptable" data-testid="pf-reb-positions">
+                      <thead><tr><th className="l">Тикер</th><th>Доля</th><th className="l">Сетапы</th></tr></thead>
+                      <tbody>
+                        {selRebEvent.positions.map((p) => (<tr key={p.symbol}><td className="l sy">{p.symbol}</td><td>{pct(p.weight, 1)}</td><td className="l">{p.setups.join(', ')}</td></tr>))}
+                        {!selRebEvent.positions.length && <tr><td className="l" colSpan={3}>в паркинге — позиций нет</td></tr>}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              ) : (
+                <div className="pf-period-sel muted">кликни сделку ниже — наглядно доли тикеров в этом ребалансе/входе</div>
+              )}
+              <div className="pf-ptable-wrap" style={{ marginTop: 12 }}>
+                <table className="pf-ptable" data-testid="pf-reb-table">
+                  <thead><tr><th className="l">Дата</th><th className="l">Тип</th><th>Доля</th><th>Имён</th><th className="l">Состав (доли)</th></tr></thead>
+                  <tbody>
+                    {rebList.slice(0, 300).map(({ r, idx }) => (
+                      <tr key={idx} data-testid="pf-reb-row" className={`click${idx === selReb ? ' sel' : ''}`} onClick={() => setSelReb(idx)}>
+                        <td className="l">{r.date}</td>
+                        <td className="l">{r.kind === 'rebalance' ? 'ребаланс' : 'вход'}</td>
+                        <td>{pct(r.scope, 0)}</td>
+                        <td>{r.positions.length}</td>
+                        <td className="l" style={{ minWidth: 220 }}><StackedBar positions={r.positions.slice(0, 12)} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {rebList.length > 300 && <div className="pf-note">Показаны первые 300 из {rebList.length}. Уточни фильтром по тикеру.</div>}
             </div></div>
           )}
         </>

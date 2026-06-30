@@ -70,6 +70,15 @@ export type WeekSnapshot = {
   setupsActive: string[]; // сетапы, давшие имена на этой неделе (причина экспозиции)
 };
 
+// Состав, взятый в конкретный ребаланс (периодический) или вход-транш (лестница): тикеры с долями.
+export type RebalancePos = { symbol: string; weight: number; setups: string[] };
+export type RebalanceEvent = {
+  date: string;
+  kind: 'rebalance' | 'tranche'; // ребаланс (100%) или дневной вход лестницы (1/N капитала)
+  scope: number; // доля капитала этого решения (1 для ребаланса, 1/N для лестницы)
+  positions: RebalancePos[]; // доли ВНУТРИ решения (сумма ≈ 1)
+};
+
 export type PortfolioResult = {
   metrics: PortfolioMetrics;
   equity: DayPoint[];
@@ -77,6 +86,7 @@ export type PortfolioResult = {
   deployment: number[]; // доля развёрнутого капитала по дням (для графика загрузки)
   inMarket: boolean[]; // по дням: открыта ли ≥1 реальная позиция (для разбивки загрузки по периодам)
   weeks: WeekSnapshot[]; // понедельные снимки состава (для drill-down: что держится + % + причины)
+  rebalances: RebalanceEvent[]; // состав по каждому ребалансу/входу (тикеры + доли)
 };
 
 const TRADING_DAYS = 252;
@@ -165,7 +175,7 @@ export function buildPortfolio(
   bil: Bar[] | null,
   panel: PricePanel,
 ): PortfolioResult {
-  const empty: PortfolioResult = { metrics: emptyMetrics(setups.length), equity: [], benchEquity: [], deployment: [], inMarket: [], weeks: [] };
+  const empty: PortfolioResult = { metrics: emptyMetrics(setups.length), equity: [], benchEquity: [], deployment: [], inMarket: [], weeks: [], rebalances: [] };
 
   const cal = dedupSortBars(spy);
   if (cal.length < 2 || !setups.length) return empty;
@@ -262,6 +272,8 @@ export function buildPortfolio(
   const deployment: number[] = [0];
   const dayWeights: Map<string, number>[] = [new Map()]; // по дням: тикер → вес в портфеле
   const dayParking: number[] = [1]; // по дням: доля в паркинге
+  const rebalances: RebalanceEvent[] = []; // состав по ребалансам/входам
+  const setupsOf = (s: string): string[] => [...(symbolToSetups.get(s) || [])];
   let v = 1;
 
   if (cfg.execution === 'ladder') {
@@ -303,6 +315,19 @@ export function buildPortfolio(
       dayWeights.push(wmap);
       dayParking.push(park);
     }
+    // входы лестницы: каждый сигнальный день — транш 1/N капитала, равные доли среди имён дня
+    for (const [d, basket] of signalsByDay) {
+      if (d < start || d >= end) continue;
+      const names = [...basket];
+      if (!names.length) continue;
+      rebalances.push({
+        date: calDates[d],
+        kind: 'tranche',
+        scope: 1 / N_LAD,
+        positions: names.map((s) => ({ symbol: s, weight: 1 / names.length, setups: setupsOf(s) })),
+      });
+    }
+    rebalances.sort((a, b) => (a.date < b.date ? -1 : 1));
   } else {
     // периодический ребаланс: на границе недели/месяца на 100% в имена с сигналом за прошедший период
     const keyOf = (k: number): number =>
@@ -333,6 +358,12 @@ export function buildPortfolio(
       } else {
         cash = eq;
       }
+      rebalances.push({
+        date: calDates[k],
+        kind: 'rebalance',
+        scope: valid.length ? 1 : 0,
+        positions: valid.map((s) => ({ symbol: s, weight: 1 / valid.length, setups: setupsOf(s) })),
+      });
       prevReb = k;
     };
 
@@ -492,5 +523,5 @@ export function buildPortfolio(
   }
 
   const equityPts: DayPoint[] = equity.map((vv, i) => ({ d: calDates[start + i], v: vv }));
-  return { metrics, equity: equityPts, benchEquity, deployment, inMarket, weeks };
+  return { metrics, equity: equityPts, benchEquity, deployment, inMarket, weeks, rebalances: rebalances.slice(-1500) };
 }

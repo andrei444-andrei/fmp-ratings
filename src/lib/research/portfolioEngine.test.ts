@@ -47,6 +47,13 @@ describe('buildPortfolio (price-panel simulation)', () => {
     expect(wk.positions[0].weight).toBeGreaterThan(0);
     expect(wk.positions[0].setups).toContain('S');
     expect(wk.setupsActive).toContain('S');
+    // состав по входам лестницы: транш 1/N, доли внутри суммируются к 1, атрибуция к сетапу
+    expect(res.rebalances.length).toBeGreaterThan(0);
+    const rb = res.rebalances.find((r) => r.positions.length > 0)!;
+    expect(rb.kind).toBe('tranche');
+    expect(rb.scope).toBeCloseTo(1 / 5, 6);
+    expect(rb.positions.reduce((s, p) => s + p.weight, 0)).toBeCloseTo(1, 6);
+    expect(rb.positions[0].setups).toContain('S');
   });
 
   it('метрики «на нагрузку»: SPY считается ТОЛЬКО за дни в рынке (≠ SPY за весь период)', () => {
@@ -75,6 +82,10 @@ describe('buildPortfolio (price-panel simulation)', () => {
     const res = buildPortfolio(setups, cfg('weekly', 5, 'CASH'), spy, null, panel);
     expect(res.metrics.total!).toBeGreaterThan(0);
     expect(res.metrics.loading!).toBeGreaterThan(0.5);
+    // периодический режим даёт события ребаланса (scope=1)
+    const reb = res.rebalances.find((r) => r.kind === 'rebalance' && r.positions.length > 0)!;
+    expect(reb).toBeTruthy();
+    expect(reb.scope).toBe(1);
   });
 
   it('месячный ребаланс на длинном периоде не валится и даёт положительную доходность на растущем тикере', () => {

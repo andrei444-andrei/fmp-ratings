@@ -77,3 +77,10 @@
 .rsx table.pf-ptable tbody tr.sel td { background: var(--fk-brand-50); }
 .rsx .pf-drill { color: var(--fk-brand-700); font-weight: 700; margin-left: 4px; }
 .rsx .pf-week-meta { font-size: 12.5px; color: var(--fk-text-2); margin: 2px 0 4px; font-variant-numeric: tabular-nums; }
+
+/* долевая полоса состава ребаланса/входа */
+.rsx .pf-stack { display: flex; height: 22px; border-radius: 7px; overflow: hidden; background: var(--fk-surface-2); border: 1px solid var(--fk-line); }
+.rsx .pf-stack.empty { align-items: center; justify-content: center; color: var(--fk-text-3); font-size: 11px; }
+.rsx .pf-stack .seg { display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: 700; white-space: nowrap; overflow: hidden; min-width: 2px; border-right: 1px solid rgba(255, 255, 255, .35); }
+.rsx .pf-stack .seg:last-child { border-right: 0; }
+.rsx table.pf-ptable td .pf-stack { height: 18px; }
