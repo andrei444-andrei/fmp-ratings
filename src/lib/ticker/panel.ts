@@ -44,6 +44,8 @@ export type TickerPanel = {
   sma200: (number | null)[];
   factors: Record<string, (number | null)[]>;
   forwards: Record<string, (number | null)[]>;
+  // Превышение бенчмарка за то же форвард-окно: ret_тикера − ret_SPY на [t, t+H].
+  forwardsExc: Record<string, (number | null)[]>;
 };
 
 export async function getTickerPanel(symbol: string): Promise<TickerPanel> {
@@ -57,7 +59,15 @@ export async function getTickerPanel(symbol: string): Promise<TickerPanel> {
 
   const f = computeFactors(close, spyAligned);
   const forwards: Record<string, (number | null)[]> = {};
-  for (const H of HORIZONS) forwards[String(H)] = forwardReturns(close, H).map((x) => r(x));
+  const forwardsExc: Record<string, (number | null)[]> = {};
+  for (const H of HORIZONS) {
+    const tF = forwardReturns(close, H);
+    const sF = forwardReturns(spyAligned, H);
+    forwards[String(H)] = tF.map((x) => r(x));
+    forwardsExc[String(H)] = tF.map((v, i) =>
+      v != null && sF[i] != null && Number.isFinite(sF[i] as number) ? r((v as number) - (sF[i] as number)) : null,
+    );
+  }
 
   const fund = await getFundamentals([sym]).catch(() => []);
   const meta = fund[0] || null;
@@ -77,6 +87,7 @@ export async function getTickerPanel(symbol: string): Promise<TickerPanel> {
       vol21: round(f.vol21), dd21: round(f.dd21), dd63: round(f.dd63), rs63: round(f.rs63),
     },
     forwards,
+    forwardsExc,
   };
 }
 
