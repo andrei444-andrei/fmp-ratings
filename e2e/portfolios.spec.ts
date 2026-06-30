@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test';
 
-// Раздел «Портфели» (/portfolios): объединение сетапов в стратегию. Сетап засеваем напрямую через API
-// (поток сделок), затем на странице выбираем его, считаем метрики и кривую капитала. Без ключей —
-// детерминированная синтетика (SPY), движок не падает. За собой убираем (delete сетапа/портфеля).
+// Раздел «Портфели» (/portfolios): пошаговый мастер теста стратегии из сетапов.
+// Сетап засеваем через API (поток сигналов), затем проходим мастер: новый тест → вселенная →
+// ребалансировка → параметры → запуск; проверяем метрики, кривую капитала и авто-сохранение.
+// Без ключей — синтетика (SPY/цены), движок и AI-нейминг деградируют мягко (запасное имя).
 
 type Req = import('@playwright/test').APIRequestContext;
 
-// Поток сделок на недавних датах (синтетический SPY покрывает ~13 лет до сегодня → любые входы найдутся).
 function makeStream() {
   const rets = [3.2, -2.1, 5.0, 1.4, -1.2, 4.3, 2.0, -0.8];
   const today = Date.now();
@@ -33,59 +33,57 @@ async function seedSetup(request: Req, name: string) {
   return id;
 }
 
+async function runWizard(page: import('@playwright/test').Page, setupName: string) {
+  await page.getByTestId('new-test').click();
+  const chip = page.getByTestId('setup-pick-chip').filter({ hasText: setupName });
+  await expect(chip).toBeVisible({ timeout: 30000 });
+  await chip.click();
+  await page.getByTestId('wizard-next').click(); // → Ребалансировка
+  await page.getByTestId('wizard-next').click(); // → Параметры
+  await page.getByTestId('wizard-next').click(); // → Запуск
+  await page.getByTestId('wizard-run').click();
+}
+
 test.describe('Портфели /portfolios', () => {
-  test('собрать портфель из сетапа: метрики и кривая капитала', async ({ page, request }) => {
+  test('мастер: новый тест → запуск → метрики, кривая, авто-имя', async ({ page, request }) => {
     const name = `E2E-Сетап-PF-${Date.now()}`;
     const setupId = await seedSetup(request, name);
 
     await page.goto('/portfolios');
     await expect(page.getByRole('heading', { name: 'Портфели' })).toBeVisible();
+    await runWizard(page, name);
 
-    // сетап появился в списке выбора → выбираем
-    const chip = page.getByTestId('setup-pick-chip').filter({ hasText: name });
-    await expect(chip).toBeVisible({ timeout: 30000 });
-    await chip.click();
-
-    // считаем
-    await page.getByTestId('portfolio-compute').click();
-
-    // метрики и кривая капитала появились
     await expect(page.getByTestId('portfolio-metrics')).toBeVisible({ timeout: 30000 });
     await expect(page.getByTestId('portfolio-equity-svg')).toBeVisible({ timeout: 30000 });
-    // метрика «Загрузка» содержит процент
-    await expect(page.getByTestId('portfolio-metrics')).toContainText('Загрузка');
     await expect(page.getByTestId('portfolio-meta')).toContainText('сигналов');
+    // автосохранение присвоило имя (запасное без ключа AIMLAPI)
+    await expect(page.getByTestId('portfolio-name')).not.toHaveValue('');
 
-    // уборка
     await request.delete(`/api/researcher/setups?id=${encodeURIComponent(setupId)}`);
   });
 
-  test('сохранение портфеля и персист в БД', async ({ page, request }) => {
+  test('автосохранение теста и персист в БД', async ({ page, request }) => {
     const name = `E2E-Сетап-PF2-${Date.now()}`;
     const setupId = await seedSetup(request, name);
-    const pfName = `E2E-Портфель-${Date.now()}`;
 
     await page.goto('/portfolios');
-    const chip = page.getByTestId('setup-pick-chip').filter({ hasText: name });
-    await expect(chip).toBeVisible({ timeout: 30000 });
-    await chip.click();
+    await runWizard(page, name);
+    await expect(page.getByTestId('portfolio-metrics')).toBeVisible({ timeout: 30000 });
 
-    await page.getByTestId('pf-name').fill(pfName);
-    await page.getByTestId('portfolio-save').click();
-
-    const pchip = page.getByTestId('portfolio-chip').filter({ hasText: pfName });
+    // автосохранённый тест появился чипом (запасное имя содержит имя сетапа)
+    const pchip = page.getByTestId('portfolio-chip').filter({ hasText: name });
     await expect(pchip).toBeVisible({ timeout: 15000 });
 
-    // персист: после перезагрузки портфель на месте, по клику считается
+    // персист после перезагрузки → открытие пересчитывает
     await page.reload();
-    const pchip2 = page.getByTestId('portfolio-chip').filter({ hasText: pfName });
+    const pchip2 = page.getByTestId('portfolio-chip').filter({ hasText: name });
     await expect(pchip2).toBeVisible({ timeout: 15000 });
     await pchip2.click();
     await expect(page.getByTestId('portfolio-metrics')).toBeVisible({ timeout: 30000 });
 
-    // уборка: удаляем портфель (через UID-крестик) и сетап
+    // уборка
     await pchip2.locator('[data-testid="portfolio-chip-del"]').click();
-    await expect(page.getByTestId('portfolio-chip').filter({ hasText: pfName })).toHaveCount(0);
+    await expect(page.getByTestId('portfolio-chip').filter({ hasText: name })).toHaveCount(0);
     await request.delete(`/api/researcher/setups?id=${encodeURIComponent(setupId)}`);
   });
 });

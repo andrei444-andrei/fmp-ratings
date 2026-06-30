@@ -38,4 +38,27 @@
 
 .rsx .pf-empty { font-size: 12.5px; color: var(--fk-text-3); padding: 14px 2px; }
 .rsx .pf-err { font-size: 12px; color: var(--fk-down-text, #c81e3c); font-weight: 600; margin-top: 8px; }
-.rsx .pf-note { font-size: 11px; color: var(--fk-text-3); margin-top: 10px; }
+.rsx .pf-note { font-size: 11px; color: var(--fk-text-3); margin-top: 10px; line-height: 1.5; }
+
+/* пошаговый мастер */
+.rsx .pf-steps { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.rsx .pf-step { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 650; color: var(--fk-text-3); }
+.rsx .pf-step .num { width: 22px; height: 22px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; background: var(--fk-surface-2); color: var(--fk-text-3); font-size: 11px; font-weight: 700; }
+.rsx .pf-step.on { color: var(--fk-text); }
+.rsx .pf-step.on .num { background: var(--fk-brand-700, #2563eb); color: #fff; }
+.rsx .pf-step.done .num { background: var(--fk-brand-50); color: var(--fk-brand-700); }
+.rsx .pf-step .sep { color: var(--fk-line-strong); margin-left: 8px; }
+.rsx .pf-wiz-body { min-height: 76px; padding: 4px 0 14px; }
+.rsx .pf-wiz-nav { display: flex; align-items: center; gap: 10px; padding-top: 12px; border-top: 1px solid var(--fk-line); }
+.rsx .pf-wiz-nav .spacer { margin-left: auto; }
+
+/* итоговая сводка шага «Запуск» */
+.rsx .pf-summary { display: flex; flex-direction: column; gap: 7px; font-size: 13px; }
+.rsx .pf-summary .row { display: flex; gap: 10px; align-items: baseline; }
+.rsx .pf-summary .row .k { color: var(--fk-text-3); min-width: 170px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }
+
+/* имя теста в результатах (редактируемое) */
+.rsx .pf-name { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.rsx .pf-name input { font: inherit; font-size: 15px; font-weight: 700; border: 1px solid transparent; border-radius: 8px; padding: 5px 9px; background: transparent; color: var(--fk-text); min-width: 320px; max-width: 100%; }
+.rsx .pf-name input:hover { border-color: var(--fk-line); }
+.rsx .pf-name input:focus { border-color: var(--fk-line-strong); background: #fff; outline: none; }
