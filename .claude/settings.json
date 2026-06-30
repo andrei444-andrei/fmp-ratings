@@ -11,7 +11,11 @@
       "mcp__Vercel__get_project",
       "mcp__Vercel__web_fetch_vercel_url",
       "mcp__Vercel__get_access_to_vercel_url",
-      "mcp__Vercel__search_vercel_documentation"
+      "mcp__Vercel__search_vercel_documentation",
+      "mcp__Claude_Code_Remote__send_later",
+      "mcp__Claude_Code_Remote__list_triggers",
+      "mcp__Claude_Code_Remote__list_environments",
+      "mcp__Claude_Code_Remote__list_repos"
     ]
   }
 }
