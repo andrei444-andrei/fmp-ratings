@@ -1,6 +1,7 @@
 import { getPrices, type PriceRow } from '@/lib/research/prices';
 import { getFundamentals } from '@/lib/research/fundamentals';
 import { syntheticSeries } from '@/lib/research/metrics';
+import { fmpBatchQuote } from '@/lib/fmp';
 import { computeFactors, forwardReturns, HORIZONS } from './engine';
 
 // Серверный слой раздела «Анализ тикера». Цены — через единый кэш-первый getPrices (EODHD→FMP),
@@ -22,6 +23,38 @@ async function loadSeries(sym: string, from: string, to: string): Promise<{ rows
   return { rows: rows.filter((x) => x.date >= from && x.date <= to), synthetic: false };
 }
 
+// Near-real-time точка «сегодня» из котировок (как в terminal/overview): EOD-история отстаёт на
+// текущий незакрытый день, поэтому к последнему скорр. close применяем дневной % из quote.
+type Quote = { chgPct: number; day: string };
+async function loadQuotes(symbols: string[]): Promise<Map<string, Quote>> {
+  const out = new Map<string, Quote>();
+  if (!process.env.FMP_API_KEY) return out; // без ключа — остаёмся на EOD (graceful)
+  try {
+    const rows = await fmpBatchQuote(symbols);
+    for (const r of Array.isArray(rows) ? rows : []) {
+      const sym = String(r?.symbol ?? '').toUpperCase();
+      const chg = Number(r?.changePercentage ?? r?.changesPercentage);
+      if (!sym || !Number.isFinite(chg)) continue;
+      const ts = Number(r?.timestamp);
+      const day = Number.isFinite(ts) ? new Date(ts * 1000).toISOString().slice(0, 10) : '';
+      out.set(sym, { chgPct: chg, day });
+    }
+  } catch {
+    /* эндпоинт недоступен — работаем по EOD */
+  }
+  return out;
+}
+// Подмешивает «сегодня» в ряд: уровень согласован с adjusted-историей (% от последнего close).
+function spliceTodayQuote(rows: PriceRow[], q: Quote | undefined, today: string): boolean {
+  if (!q || q.day !== today || rows.length === 0) return false;
+  const last = rows[rows.length - 1];
+  if (last.date >= today) return false; // сегодня уже есть в EOD — не дублируем
+  const close = last.close * (1 + q.chgPct / 100);
+  if (!Number.isFinite(close) || close <= 0) return false;
+  rows.push({ date: today, close, volume: null });
+  return true;
+}
+
 // Выравнивает бенчмарк по датам тикера (перенос последнего известного close вперёд).
 function alignTo(dates: string[], bench: PriceRow[]): number[] {
   const out = new Array(dates.length).fill(NaN);
@@ -37,6 +70,7 @@ export type TickerPanel = {
   symbol: string;
   ok: boolean;
   synthetic: boolean;
+  live: boolean; // последняя точка — из котировки «сегодня» (near-real-time), а не закрытый EOD
   meta: { company: string | null; sector: string | null; currency: string | null; beta: number | null };
   dates: string[];
   close: number[];
@@ -52,6 +86,13 @@ export async function getTickerPanel(symbol: string): Promise<TickerPanel> {
   const sym = symbol.toUpperCase().trim();
   const { from, to } = fromTo();
   const [t, spy] = await Promise.all([loadSeries(sym, from, to), loadSeries(BENCH, from, to)]);
+  // near-real-time: добавляем точку «сегодня» из котировок к тикеру И бенчмарку (синтетику не трогаем).
+  let live = false;
+  if (!t.synthetic || !spy.synthetic) {
+    const quotes = await loadQuotes([sym, BENCH]);
+    if (!t.synthetic) live = spliceTodayQuote(t.rows, quotes.get(sym), to);
+    if (!spy.synthetic) spliceTodayQuote(spy.rows, quotes.get(BENCH), to);
+  }
   const rows = t.rows;
   const dates = rows.map((x) => x.date);
   const close = rows.map((x) => x.close);
@@ -77,6 +118,7 @@ export async function getTickerPanel(symbol: string): Promise<TickerPanel> {
     symbol: sym,
     ok: rows.length >= 60,
     synthetic: t.synthetic,
+    live,
     meta: { company: meta?.company ?? null, sector: meta?.sector ?? null, currency: meta?.currency ?? null, beta: meta?.beta ?? null },
     dates,
     close: close.map((x) => r(x, 4) as number),

@@ -120,6 +120,7 @@
 .tk .tk-current .cur-meta{font-size:12.5px;color:var(--tk-mut)}
 .tk .tk-current .cur-meta b{color:var(--tk-ink);font-weight:700}
 .tk .warnish{color:var(--tk-warn);font-weight:600}
+.tk .livedot{color:var(--tk-up);font-weight:700}
 .tk .cur-badge{margin-left:6px;background:var(--tk-hl);border-color:var(--tk-hlb);color:var(--tk-warn)}
 
 /* раскрытие бина — сетка без наложений */
