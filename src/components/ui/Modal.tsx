@@ -11,10 +11,10 @@ export interface ModalProps {
   description?: React.ReactNode;
   children?: React.ReactNode;
   footer?: React.ReactNode;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg' | 'xl';
 }
 
-const SIZES = { sm: 'sm:max-w-sm', md: 'sm:max-w-md', lg: 'sm:max-w-lg' } as const;
+const SIZES = { sm: 'sm:max-w-sm', md: 'sm:max-w-md', lg: 'sm:max-w-lg', xl: 'sm:max-w-2xl' } as const;
 
 export function Modal({ open, onClose, title, description, children, footer, size = 'md' }: ModalProps) {
   const [mounted, setMounted] = useState(false);

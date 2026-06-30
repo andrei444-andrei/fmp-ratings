@@ -470,15 +470,19 @@ export default function TerminalPage() {
 function DashboardGrid({ cfg, nodes }: { cfg: TermConfig | null; nodes: Record<string, React.ReactNode> }) {
   const order = cfg ? reconcileLayout(cfg.layout) : [...WIDGET_KEYS];
   const hidden = new Set(cfg?.hiddenWidgets ?? []);
+  // Masonry (CSS columns): узкие виджеты (RRG/ставки/риск/радар) укладываются плотно по высоте —
+  // высокий «Радар событий» больше не растягивает строку и не оставляет пустоту рядом.
+  // Широкие виджеты (пульс/сравнение/корзины) занимают всю ширину через column-span: all.
   return (
-    <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-2">
+    <div data-testid="dashboard-grid" className="columns-1 gap-3.5 lg:columns-2">
       {order
         .filter((k) => !hidden.has(k))
         .map((k) => {
           const n = nodes[k];
           if (!n) return null;
+          const wide = WIDGET_META[k]?.wide;
           return (
-            <div key={k} className={WIDGET_META[k]?.wide ? 'lg:col-span-2' : ''}>
+            <div key={k} className="mb-3.5 break-inside-avoid" style={wide ? { columnSpan: 'all' } : undefined}>
               {n}
             </div>
           );
