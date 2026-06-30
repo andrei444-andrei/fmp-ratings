@@ -114,12 +114,13 @@ test.describe('Скринер /researcher', () => {
     await expect(page.getByTestId('panel-meta')).toBeVisible({ timeout: 120000 });
     await page.getByText('удалить блок').click();
 
-    const card = page.getByTestId('deal-line-chart').first();
-    await expect(card).toBeVisible({ timeout: 60000 });
+    // дождаться загрузки цен (реальная линия), иначе клик попадёт в плейсхолдер «нет цен» (некликабелен)
+    await expect(page.getByTestId('deal-line').first()).toBeVisible({ timeout: 60000 });
+    const card = page.getByTestId('deal-line-chart').filter({ has: page.getByTestId('deal-line') }).first();
     await card.click();
 
     // открылся детальный просмотр с крупным графиком
-    await expect(page.getByTestId('asset-detail')).toBeVisible();
+    await expect(page.getByTestId('asset-detail')).toBeVisible({ timeout: 15000 });
     const svg = page.getByTestId('asset-detail-svg');
     await expect(svg).toBeVisible();
     await expect(page.getByTestId('detail-stats')).toBeVisible();
@@ -173,12 +174,13 @@ test.describe('Скринер /researcher', () => {
     await page.goto('/researcher');
     await expect(page.getByTestId('panel-meta')).toBeVisible({ timeout: 120000 });
     await page.getByText('удалить блок').click();
-    const card = page.getByTestId('deal-line-chart').first();
-    await expect(card).toBeVisible({ timeout: 60000 });
+    // дождаться загрузки цен (реальная линия), затем кликнуть карточку с графиком (не плейсхолдер)
+    await expect(page.getByTestId('deal-line').first()).toBeVisible({ timeout: 60000 });
+    const card = page.getByTestId('deal-line-chart').filter({ has: page.getByTestId('deal-line') }).first();
     await card.click();
 
     const strip = page.getByTestId('asset-detail-scrubber');
-    await expect(strip).toBeVisible();
+    await expect(strip).toBeVisible({ timeout: 15000 });
     await expect(page.getByTestId('asset-detail').getByText(/Весь период/)).toBeVisible();
 
     // тянем по полосе → создаётся окно периода
