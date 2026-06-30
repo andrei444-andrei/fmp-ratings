@@ -41,4 +41,16 @@ test.describe('Анализ тикера /ticker', () => {
     await expect(page.getByRole('heading', { name: /Анализ тикера/ })).toBeVisible();
     await expect(page.locator('.tk .widgets > .card').first()).toBeVisible({ timeout: 120000 });
   });
+
+  test('прототип: переключение графика на движок Lightweight Charts (canvas) и обратно', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name === 'mobile', 'на desktop');
+    await page.goto('/ticker');
+    const card = page.locator('.card', { hasText: 'график по годам' }).first();
+    await expect(card).toBeVisible({ timeout: 120000 });
+    await expect(card.locator('svg').first()).toBeVisible(); // по умолчанию — SVG
+    await page.getByRole('button', { name: 'Lightweight', exact: true }).click();
+    await expect(card.locator('canvas').first()).toBeVisible({ timeout: 10000 }); // LWC рисует в canvas
+    await page.getByRole('button', { name: 'SVG', exact: true }).click();
+    await expect(card.locator('svg').first()).toBeVisible();
+  });
 });

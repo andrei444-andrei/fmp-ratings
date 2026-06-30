@@ -5,7 +5,12 @@
 // статистика (baseline+edge, n_eff, CI, эпохи) считаются мгновенно на клиенте через @/lib/ticker/engine.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import dynamic from 'next/dynamic';
 import './ticker.css';
+
+// Прототип-движок TradingView Lightweight Charts грузим лениво (ssr:false) — добавляется в бандл
+// только когда пользователь его выбрал.
+const LwcChart = dynamic(() => import('./LwcChart'), { ssr: false });
 import {
   binStats, baselineStats, percentileOf, lastNonNull,
   type BinCfg, type BinResult, type Bin, type BinUnit,
@@ -61,6 +66,7 @@ export default function TickerPage() {
   const [ddOn, setDdOn] = useState(false);
   const [logOn, setLogOn] = useState(true);
   const [chartRange, setChartRange] = useState(0); // торг. дней; 0 = вся история
+  const [chartEngine, setChartEngine] = useState<'svg' | 'lwc'>('svg'); // прототип: сравнить SVG vs Lightweight Charts
 
   const [panel, setPanel] = useState<TickerPanel | null>(null);
   const [loading, setLoading] = useState(true);
@@ -239,18 +245,26 @@ export default function TickerPage() {
           <div className="grid2">
             <div className="card">
               <h2><span className="ht">{panel.symbol} · график по годам</span></h2>
-              <p className="desc">Свой SVG из того же ряда, что и расчёты. Наведи курсор — состояние на дату.</p>
+              <p className="desc">{chartEngine === 'lwc' ? 'Движок TradingView Lightweight Charts на НАШИХ данных (FMP/EODHD) — нативный зум/пан колесом и перетаскиванием.' : 'Свой SVG из того же ряда, что и расчёты. Наведи курсор — состояние на дату.'}</p>
               <div className="toolbar">
                 <span className="seg sm">
                   {RANGES.map((r) => <button key={r.label} className={chartRange === r.days ? 'active' : ''} onClick={() => setChartRange(r.days)}>{r.label}</button>)}
                 </span>
+                <span className="seg sm">
+                  <button className={chartEngine === 'svg' ? 'active' : ''} onClick={() => setChartEngine('svg')}>SVG</button>
+                  <button className={chartEngine === 'lwc' ? 'active' : ''} onClick={() => setChartEngine('lwc')}>Lightweight</button>
+                </span>
                 <span style={{ flex: 1 }} />
                 <button className={'ghost' + (sma50On ? ' on' : '')} onClick={() => setSma50On((v) => !v)}>SMA50</button>
                 <button className={'ghost' + (sma200On ? ' on' : '')} onClick={() => setSma200On((v) => !v)}>SMA200</button>
-                <button className={'ghost' + (ddOn ? ' on' : '')} onClick={() => setDdOn((v) => !v)}>Просадки</button>
+                {chartEngine === 'svg' && <button className={'ghost' + (ddOn ? ' on' : '')} onClick={() => setDdOn((v) => !v)}>Просадки</button>}
                 <button className={'ghost' + (logOn ? ' on' : '')} onClick={() => setLogOn((v) => !v)}>Лог</button>
               </div>
-              <Chart panel={panel} sma50On={sma50On} sma200On={sma200On} ddOn={ddOn} logOn={logOn} range={chartRange} tipRef={tipRef} hlRef={hlRef} />
+              {chartEngine === 'lwc' ? (
+                <LwcChart panel={panel} sma50On={sma50On} sma200On={sma200On} logOn={logOn} range={chartRange} />
+              ) : (
+                <Chart panel={panel} sma50On={sma50On} sma200On={sma200On} ddOn={ddOn} logOn={logOn} range={chartRange} tipRef={tipRef} hlRef={hlRef} />
+              )}
               <div className="legend">
                 <span><i style={{ background: 'var(--tk-blue)' }} />Цена</span>
                 {sma50On && <span><i style={{ background: 'var(--tk-sma50)' }} />SMA50</span>}

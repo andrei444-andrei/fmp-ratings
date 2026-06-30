@@ -17,6 +17,7 @@
     "@libsql/client": "^0.14.0",
     "drizzle-orm": "^0.36.0",
     "highlight.js": "^11.11.1",
+    "lightweight-charts": "^5.2.0",
     "marked": "^18.0.5",
     "next": "^15.0.3",
     "pyodide": "^0.29.4",
