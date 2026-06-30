@@ -154,7 +154,7 @@ export default function TickerPage() {
           {panel?.meta.company ? <b>{panel.meta.company}</b> : null}
           {panel?.meta.sector ? <> · {panel.meta.sector}</> : null}
           {panel?.meta.currency ? <> · {panel.meta.currency}</> : null}
-          {lastClose != null ? <> · посл. {lastClose.toFixed(2)} ({lastDate})</> : null}
+          {lastClose != null ? <> · посл. {lastClose.toFixed(2)} ({lastDate}{panel?.live ? <span className="livedot" title="точка «сегодня» из котировки (near-real-time)"> · live</span> : ' · EOD'})</> : null}
           {panel?.synthetic ? <> · <span className="warnish">⚠ синтетика без ключей</span></> : null}
         </span>
       </div>
