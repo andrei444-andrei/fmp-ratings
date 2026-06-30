@@ -35,6 +35,27 @@ describe('buildPortfolio (price-panel simulation)', () => {
     expect(res.metrics.maxDD).toBe(0);
     expect(res.metrics.total!).toBeGreaterThan(0);
     expect(res.equity.length).toBeGreaterThan(2);
+    // загрузка=1 → активный рукав = весь период; inMarket выровнен с кривой
+    expect(res.inMarket.length).toBe(res.equity.length);
+    expect(res.metrics.activeTotal!).toBeCloseTo(res.metrics.total!, 6);
+    expect(res.metrics.excessActive).not.toBeNull();
+  });
+
+  it('метрики «на нагрузку»: SPY считается ТОЛЬКО за дни в рынке (≠ SPY за весь период)', () => {
+    const spy = series(80, '2015-01-01', 100, 0.001); // SPY растёт каждый день
+    const dates = spy.map((b) => b.date);
+    const aaa = series(80, '2015-01-01', 50, 0.002);
+    const panel: PricePanel = new Map([['AAA', aaa]]);
+    // два сигнала с большим зазором → много дней простоя (загрузка < 0.5)
+    const setups: EngineSetup[] = [{ id: 's', name: 'S', signals: [{ date: dates[10], symbol: 'AAA' }, { date: dates[50], symbol: 'AAA' }] }];
+    const res = buildPortfolio(setups, cfg('ladder', 5, 'CASH'), spy, null, panel);
+    expect(res.metrics.loading!).toBeLessThan(0.5);
+    expect(res.metrics.spyActiveTotal).not.toBeNull();
+    expect(res.metrics.spyTotal).not.toBeNull();
+    // SPY за дни нагрузки заметно отличается от SPY за весь период (растущий зазор не входит в рукав)
+    expect(Math.abs(res.metrics.spyActiveTotal! - res.metrics.spyTotal!)).toBeGreaterThan(1e-6);
+    expect(res.metrics.activeTotal).not.toBeNull();
+    expect(res.metrics.alphaOnLoading).toBe(res.metrics.excessActive); // альфа/загрузка = превышение рукава над SPY(нагр)
   });
 
   it('недельный ребаланс: один растущий тикер → почти всегда в рынке, доходность положительная', () => {

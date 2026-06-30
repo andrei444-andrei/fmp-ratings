@@ -67,6 +67,75 @@ function EquityChart({ equity, bench }: { equity: DayPoint[]; bench: DayPoint[] 
   );
 }
 
+type Gran = 'year' | 'month' | 'week';
+type Period = { key: string; label: string; ret: number; spyRet: number; loading: number; days: number; start: string; end: string };
+const GRAN_LABEL: Record<Gran, string> = { year: 'Год', month: 'Месяц', week: 'Неделя' };
+
+function periodKey(d: string, g: Gran): { key: string; label: string } {
+  if (g === 'year') return { key: d.slice(0, 4), label: d.slice(0, 4) };
+  if (g === 'month') return { key: d.slice(0, 7), label: d.slice(0, 7) };
+  const ep = Math.floor(Date.parse(d + 'T00:00:00Z') / 86400000);
+  const wk = Math.floor((ep - 4) / 7); // бакет по понедельникам
+  const monday = new Date((wk * 7 + 4) * 86400000).toISOString().slice(0, 10);
+  return { key: String(wk), label: monday };
+}
+
+// Агрегирует дневные ряды (кривая, бенчмарк, загрузка) в периоды выбранной грануляции.
+function aggregatePeriods(equity: DayPoint[], bench: DayPoint[], deployment: number[], g: Gran): Period[] {
+  if (equity.length < 2) return [];
+  const out: Period[] = [];
+  let a = 0;
+  let curKey = periodKey(equity[0].d, g).key;
+  const flush = (b: number) => {
+    const { key, label } = periodKey(equity[a].d, g);
+    const base = a === 0 ? 0 : a - 1; // цепляемся от последнего дня прошлого периода
+    const ret = equity[base].v > 0 ? equity[b].v / equity[base].v - 1 : 0;
+    const spyRet = bench[base] && bench[base].v > 0 ? bench[b].v / bench[base].v - 1 : 0;
+    let inm = 0;
+    let cnt = 0;
+    for (let i = Math.max(a, 1); i <= b; i++) { cnt++; if (deployment[i] > 0) inm++; }
+    out.push({ key, label, ret, spyRet, loading: cnt ? inm / cnt : 0, days: b - a + 1, start: equity[a].d, end: equity[b].d });
+  };
+  for (let i = 1; i < equity.length; i++) {
+    const k = periodKey(equity[i].d, g).key;
+    if (k !== curKey) { flush(i - 1); a = i; curKey = k; }
+  }
+  flush(equity.length - 1);
+  return out;
+}
+
+// Интерактивный бар-чарт: доходность стратегии и SPY по периодам (наведение → детали периода).
+function PeriodChart({ periods, hovered, onHover }: { periods: Period[]; hovered: number; onHover: (i: number) => void }) {
+  const W = 820;
+  const H = 180;
+  const mid = H / 2;
+  if (!periods.length) return null;
+  const maxAbs = Math.max(0.01, ...periods.flatMap((p) => [Math.abs(p.ret), Math.abs(p.spyRet)]));
+  const slot = W / periods.length;
+  const barW = Math.max(1.2, Math.min(16, slot * 0.34));
+  const bar = (val: number) => {
+    const h = (Math.abs(val) / maxAbs) * (mid - 6);
+    return { y: val >= 0 ? mid - h : mid, h: Math.max(0.6, h) };
+  };
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" data-testid="pf-period-svg" role="img" aria-label="Доходность по периодам против SPY">
+      <line x1={0} y1={mid} x2={W} y2={mid} stroke="var(--fk-line-strong)" strokeWidth={1} />
+      {periods.map((p, i) => {
+        const cx = i * slot + slot / 2;
+        const s = bar(p.ret);
+        const b = bar(p.spyRet);
+        return (
+          <g key={p.key} onMouseEnter={() => onHover(i)} onMouseLeave={() => onHover(-1)}>
+            {hovered === i && <rect x={i * slot} y={0} width={slot} height={H} fill="var(--fk-surface-2)" />}
+            <rect x={cx - barW - 0.5} y={s.y} width={barW} height={s.h} rx={1} fill="var(--fk-brand-700, #2563eb)" />
+            <rect x={cx + 0.5} y={b.y} width={barW} height={b.h} rx={1} fill="var(--fk-text-3)" opacity={0.85} />
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 export default function PortfoliosPage() {
   const [setups, setSetups] = useState<SetupItem[]>([]);
   const [saved, setSaved] = useState<SavedPortfolio[]>([]);
@@ -84,6 +153,8 @@ export default function PortfoliosPage() {
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [gran, setGran] = useState<Gran>('year');
+  const [hoverP, setHoverP] = useState<number>(-1);
 
   const loadSetups = useCallback(async () => {
     try {
@@ -263,13 +334,19 @@ export default function PortfoliosPage() {
       { k: 'Загрузка', v: pct(m.loading, 1), sub: `${m.inMarketDays}/${Math.max(0, m.days - 1)} дн. · разв. ${pct(m.avgDeployment, 0)}`, cls: '' },
       { k: 'Годовая (CAGR)', v: signPct(m.cagr), sub: `всего ${signPct(m.total)}`, cls: signCls(m.cagr) },
       { k: 'Макс. просадка', v: pct(m.maxDD), sub: `SPY ${pct(m.spyMaxDD)}`, cls: 'down' },
-      { k: 'Sharpe', v: numFmt(m.sharpe), sub: `SPY ${numFmt(m.spySharpe)}`, cls: signCls(m.sharpe) },
-      { k: 'Превышение vs SPY', v: signPct(m.excessTotal), sub: `год. ${signPct(m.excessCagr)}`, cls: signCls(m.excessTotal) },
+      { k: 'Sharpe (всего)', v: numFmt(m.sharpe), sub: `SPY ${numFmt(m.spySharpe)}`, cls: signCls(m.sharpe) },
+      { k: 'Превышение vs SPY (нагр.)', v: signPct(m.excessActive), sub: `рукав ${signPct(m.activeTotal)} / SPY(нагр) ${signPct(m.spyActiveTotal)}`, cls: signCls(m.excessActive) },
+      { k: 'Sharpe (нагр.)', v: numFmt(m.sharpeActive), sub: `SPY(нагр) ${numFmt(m.spySharpeActive)}`, cls: signCls(m.sharpeActive) },
+      { k: 'Sharpe к SPY (нагр.)', v: m.sharpeVsSpyActive == null ? '—' : `${numFmt(m.sharpeVsSpyActive)}×`, sub: `всего ${m.sharpeVsSpy == null ? '—' : numFmt(m.sharpeVsSpy) + '×'}`, cls: signCls((m.sharpeVsSpyActive ?? 1) - 1) },
       { k: 'Доходность / загрузка', v: signPct(m.returnOnLoading), sub: 'CAGR ÷ загрузка', cls: signCls(m.returnOnLoading) },
-      { k: 'Альфа / загрузка', v: signPct(m.alphaOnLoading), sub: '(CAGR − SPY) ÷ загрузка', cls: signCls(m.alphaOnLoading) },
-      { k: 'Sharpe к SPY', v: m.sharpeVsSpy == null ? '—' : `${numFmt(m.sharpeVsSpy)}×`, sub: `актив. рукав ${numFmt(m.sharpeActive)}`, cls: signCls((m.sharpeVsSpy ?? 1) - 1) },
     ];
   }, [m]);
+
+  const periods = useMemo(
+    () => (result && result.equity.length > 1 ? aggregatePeriods(result.equity, result.benchEquity, result.deployment, gran) : []),
+    [result, gran],
+  );
+  const hp = hoverP >= 0 && hoverP < periods.length ? periods[hoverP] : null;
 
   const canNext = step === 1 ? selected.size > 0 : true;
   const selectedNames = setups.filter((s) => selected.has(s.id)).map((s) => s.name);
@@ -438,6 +515,11 @@ export default function PortfoliosPage() {
                 {!meta?.synthetic && !!meta?.syntheticSymbols && <span className="badge warn" style={{ marginLeft: 8 }}>имён без реальных цен: {meta.syntheticSymbols} (синтетика)</span>}
                 {!!meta?.truncatedSymbols && <span className="badge warn" style={{ marginLeft: 8 }}>усечено имён: {meta.truncatedSymbols}</span>}
               </div>
+              <div className="pf-note">
+                Метрики «(нагр.)» считаются ТОЛЬКО за дни, когда стратегия в рынке, и сравниваются с SPY ровно за те же дни (активный рукав):
+                это корректное «на нагрузку». Альфа на нагрузку = превышение рукава над SPY за дни нагрузки. Загрузка — доля дней в рынке
+                (BIL не считается). «Доходность/загрузка» = CAGR ÷ загрузка — интенсивность, не достижимая доходность. Оценка in-sample.
+              </div>
 
               {result && result.equity.length > 1 && (
                 <>
@@ -451,6 +533,56 @@ export default function PortfoliosPage() {
                   </div>
                 </>
               )}
+            </div></div>
+          )}
+
+          {/* Доходность и загрузка по периодам (интерактивно, с бенчмарком) */}
+          {ran && periods.length > 0 && (
+            <div className="card"><div className="card-b">
+              <div className="pf-period-head">
+                <div className="card-t">Доходность и загрузка по периодам</div>
+                <div className="seg pf-gran" data-testid="pf-gran">
+                  {(['year', 'month', 'week'] as Gran[]).map((g) => (
+                    <button key={g} className={gran === g ? 'on' : ''} onClick={() => { setGran(g); setHoverP(-1); }}>{GRAN_LABEL[g]}</button>
+                  ))}
+                </div>
+              </div>
+              {hp ? (
+                <div className="pf-period-sel" data-testid="pf-period-sel">
+                  <b>{hp.label}</b> · стратегия <span className={signCls(hp.ret)}>{signPct(hp.ret)}</span> · SPY {signPct(hp.spyRet)} · превышение{' '}
+                  <span className={signCls(hp.ret - hp.spyRet)}>{signPct(hp.ret - hp.spyRet)}</span> · загрузка {pct(hp.loading, 0)}
+                </div>
+              ) : (
+                <div className="pf-period-sel muted">наведи на столбец — доходность периода, сравнение с SPY и загрузка</div>
+              )}
+              <div className="pf-chart">
+                <PeriodChart periods={periods} hovered={hoverP} onHover={setHoverP} />
+              </div>
+              <div className="pf-legend">
+                <span><i style={{ background: 'var(--fk-brand-700, #2563eb)' }} />Портфель</span>
+                <span><i style={{ background: 'var(--fk-text-3)' }} />S&amp;P 500</span>
+              </div>
+
+              <div className="pf-ptable-wrap">
+                <table className="pf-ptable" data-testid="pf-period-table">
+                  <thead><tr><th className="l">Период</th><th>Стратегия</th><th>SPY</th><th>Превышение</th><th>Загрузка</th></tr></thead>
+                  <tbody>
+                    {periods.slice(-120).reverse().map((p, i) => {
+                      const realIdx = periods.length - 1 - i;
+                      return (
+                        <tr key={p.key} className={`click${realIdx === hoverP ? ' on' : ''}`} onMouseEnter={() => setHoverP(realIdx)} onMouseLeave={() => setHoverP(-1)}>
+                          <td className="l">{p.label}</td>
+                          <td className={signCls(p.ret)}>{signPct(p.ret)}</td>
+                          <td>{signPct(p.spyRet)}</td>
+                          <td className={signCls(p.ret - p.spyRet)}>{signPct(p.ret - p.spyRet)}</td>
+                          <td>{pct(p.loading, 0)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {periods.length > 120 && <div className="pf-note">Показаны последние 120 периодов из {periods.length}.</div>}
             </div></div>
           )}
         </>
