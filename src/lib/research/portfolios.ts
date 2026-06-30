@@ -6,11 +6,13 @@ import { libsqlClient } from '@/db/client';
 // Навсегда в Turso, created_at обязателен (§1). Зеркало сетапов/корзин: config — JSON в колонке.
 
 export type Parking = 'BIL' | 'SPY' | 'CASH';
+export type ExecMode = 'ladder' | 'weekly' | 'monthly';
 export type PortfolioConfig = {
   setupIds: string[];
-  weighting: 'equal';
-  maxConcurrent: number | null; // лимит одновременных позиций (топ-K по эджу сетапа); null/0 — без лимита
-  parking: Parking;
+  selection: 'all'; // отбор: пока «все имена»; топ-K экстремумов / низкая корреляция — позже
+  execution: ExecMode; // лестница / недельный / месячный ребаланс
+  ladderN: number; // длина лестницы (дней удержания транша), актуально для execution='ladder'
+  parking: Parking; // паркинг простоя
 };
 export type PortfolioRow = { id: string; name: string; description: string; config: PortfolioConfig };
 
@@ -41,10 +43,10 @@ function normConfig(raw: any): PortfolioConfig {
   const rawIds: string[] = Array.isArray(raw?.setupIds) ? raw.setupIds.map((x: any) => String(x)).filter(Boolean) : [];
   const setupIds = [...new Set(rawIds)].slice(0, 40);
   const parking: Parking = raw?.parking === 'SPY' ? 'SPY' : raw?.parking === 'CASH' ? 'CASH' : 'BIL';
-  let maxConcurrent: number | null = null;
-  const mc = Number(raw?.maxConcurrent);
-  if (Number.isFinite(mc) && mc > 0) maxConcurrent = Math.min(50, Math.round(mc));
-  return { setupIds, weighting: 'equal', maxConcurrent, parking };
+  const execution: ExecMode = raw?.execution === 'weekly' ? 'weekly' : raw?.execution === 'monthly' ? 'monthly' : 'ladder';
+  const ln = Number(raw?.ladderN);
+  const ladderN = Number.isFinite(ln) && ln > 0 ? Math.min(60, Math.round(ln)) : 5;
+  return { setupIds, selection: 'all', execution, ladderN, parking };
 }
 
 export async function listPortfolios(): Promise<PortfolioRow[]> {

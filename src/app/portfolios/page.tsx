@@ -9,9 +9,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { PortfolioResult, DayPoint } from '@/lib/research/portfolioEngine';
 
 type Parking = 'BIL' | 'SPY' | 'CASH';
+type ExecMode = 'ladder' | 'weekly' | 'monthly';
 type SetupItem = { id: string; name: string; snapshot?: Record<string, number | string> };
-type SavedPortfolio = { id: string; name: string; description: string; config: { setupIds: string[]; maxConcurrent: number | null; parking: Parking } };
-type ComputeMeta = { setups: string[]; parking: Parking; maxConcurrent: number | null; synthetic: boolean };
+type SavedPortfolio = { id: string; name: string; description: string; config: { setupIds: string[]; execution: ExecMode; ladderN: number; parking: Parking } };
+type ComputeMeta = { setups: string[]; execution: ExecMode; ladderN: number; parking: Parking; synthetic: boolean; syntheticSymbols?: number; truncatedSymbols?: number };
+
+const EXEC_LABEL: Record<ExecMode, string> = { ladder: 'лестница', weekly: 'ребаланс/нед', monthly: 'ребаланс/мес' };
 
 const newId = () => (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `pf-${Date.now()}-${Math.round(Math.random() * 1e6)}`);
 
@@ -63,7 +66,8 @@ export default function PortfoliosPage() {
   const [saved, setSaved] = useState<SavedPortfolio[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [parking, setParking] = useState<Parking>('BIL');
-  const [maxK, setMaxK] = useState<number>(0); // 0 — без лимита
+  const [exec, setExec] = useState<ExecMode>('ladder');
+  const [ladderN, setLadderN] = useState<number>(5);
   const [name, setName] = useState('');
   const [result, setResult] = useState<PortfolioResult | null>(null);
   const [meta, setMeta] = useState<ComputeMeta | null>(null);
@@ -100,7 +104,7 @@ export default function PortfoliosPage() {
     });
 
   const compute = useCallback(
-    async (ids?: string[], cfg?: { parking: Parking; maxConcurrent: number }) => {
+    async (ids?: string[], over?: { parking: Parking; execution: ExecMode; ladderN: number }) => {
       const setupIds = ids ?? [...selected];
       if (!setupIds.length) {
         setErr('Выбери хотя бы один сетап.');
@@ -109,7 +113,7 @@ export default function PortfoliosPage() {
       setBusy(true);
       setErr('');
       try {
-        const body = { setupIds, parking: cfg?.parking ?? parking, maxConcurrent: cfg?.maxConcurrent ?? maxK };
+        const body = { setupIds, parking: over?.parking ?? parking, execution: over?.execution ?? exec, ladderN: over?.ladderN ?? ladderN };
         const r = await fetch('/api/researcher/portfolios/compute', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -129,7 +133,7 @@ export default function PortfoliosPage() {
         setBusy(false);
       }
     },
-    [selected, parking, maxK],
+    [selected, parking, exec, ladderN],
   );
 
   const save = useCallback(async () => {
@@ -142,22 +146,23 @@ export default function PortfoliosPage() {
       await fetch('/api/researcher/portfolios', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ id: newId(), name: nm, config: { setupIds: [...selected], weighting: 'equal', maxConcurrent: maxK, parking } }),
+        body: JSON.stringify({ id: newId(), name: nm, config: { setupIds: [...selected], selection: 'all', execution: exec, ladderN, parking } }),
       });
       setName('');
       await loadSaved();
     } catch (e: any) {
       setErr(e?.message || 'Не сохранилось');
     }
-  }, [name, saved.length, selected, maxK, parking, loadSaved]);
+  }, [name, saved.length, selected, exec, ladderN, parking, loadSaved]);
 
   const loadPortfolio = useCallback(
     (p: SavedPortfolio) => {
       const ids = p.config.setupIds || [];
       setSelected(new Set(ids));
       setParking(p.config.parking);
-      setMaxK(p.config.maxConcurrent ?? 0);
-      compute(ids, { parking: p.config.parking, maxConcurrent: p.config.maxConcurrent ?? 0 });
+      setExec(p.config.execution);
+      setLadderN(p.config.ladderN ?? 5);
+      compute(ids, { parking: p.config.parking, execution: p.config.execution, ladderN: p.config.ladderN ?? 5 });
     },
     [compute],
   );
@@ -178,7 +183,7 @@ export default function PortfoliosPage() {
   const stats = useMemo(() => {
     if (!m) return [];
     return [
-      { k: 'Загрузка', v: pct(m.loading, 1), sub: `${m.inMarketDays}/${Math.max(0, m.days - 1)} дн. в рынке`, cls: '' },
+      { k: 'Загрузка', v: pct(m.loading, 1), sub: `${m.inMarketDays}/${Math.max(0, m.days - 1)} дн. · разв. ${pct(m.avgDeployment, 0)}`, cls: '' },
       { k: 'Годовая (CAGR)', v: signPct(m.cagr), sub: `всего ${signPct(m.total)}`, cls: signCls(m.cagr) },
       { k: 'Макс. просадка', v: pct(m.maxDD), sub: `SPY ${pct(m.spyMaxDD)}`, cls: 'down' },
       { k: 'Sharpe', v: numFmt(m.sharpe), sub: `SPY ${numFmt(m.spySharpe)}`, cls: signCls(m.sharpe) },
@@ -234,14 +239,20 @@ export default function PortfoliosPage() {
 
               <div className="pf-controls">
                 <div className="ctl">
-                  <span className="lbl">Взвешивание</span>
-                  <span className="badge">равный вес</span>
+                  <span className="lbl">Исполнение</span>
+                  <select value={exec} data-testid="pf-exec" onChange={(e) => setExec(e.target.value as ExecMode)}>
+                    <option value="ladder">Лестница (N дней)</option>
+                    <option value="weekly">Ребаланс / неделя</option>
+                    <option value="monthly">Ребаланс / месяц</option>
+                  </select>
+                  {exec === 'ladder' && (
+                    <input className="kin" type="number" min={1} max={60} value={ladderN} data-testid="pf-ladderN"
+                      onChange={(e) => setLadderN(Math.max(1, Math.min(60, Number(e.target.value) || 5)))} />
+                  )}
                 </div>
                 <div className="ctl">
-                  <span className="lbl">Лимит позиций</span>
-                  <input className="kin" type="number" min={0} max={50} value={maxK} data-testid="pf-maxk"
-                    onChange={(e) => setMaxK(Math.max(0, Math.min(50, Number(e.target.value) || 0)))} />
-                  <span className="sub" style={{ fontSize: 11, color: 'var(--fk-text-3)' }}>0 = без лимита</span>
+                  <span className="lbl">Вес · отбор</span>
+                  <span className="badge">равный · все имена</span>
                 </div>
                 <div className="ctl">
                   <span className="lbl">Паркинг простоя</span>
@@ -280,13 +291,17 @@ export default function PortfoliosPage() {
               ))}
             </div>
             <div className="pf-note" data-testid="portfolio-meta">
-              Период {m.start ?? '—'}…{m.end ?? '—'} · {m.nDeals} сделок · {m.nSetups} сетапов · паркинг {meta?.parking ?? parking}
+              Период {m.start ?? '—'}…{m.end ?? '—'} · {m.nSignals} сигналов · {m.nSymbols} имён · {m.nSetups} сетапов ·{' '}
+              {EXEC_LABEL[meta?.execution ?? exec]}{(meta?.execution ?? exec) === 'ladder' ? ` N=${meta?.ladderN ?? ladderN}` : ''} · паркинг {meta?.parking ?? parking}
               {meta?.synthetic && <span className="badge warn" style={{ marginLeft: 8 }}>данные синтетические (без ключей)</span>}
+              {!meta?.synthetic && !!meta?.syntheticSymbols && <span className="badge warn" style={{ marginLeft: 8 }}>имён без реальных цен: {meta.syntheticSymbols} (синтетика)</span>}
+              {!!meta?.truncatedSymbols && <span className="badge warn" style={{ marginLeft: 8 }}>усечено имён: {meta.truncatedSymbols}</span>}
             </div>
             <div className="pf-note">
-              Загрузка — доля торговых дней с открытой позицией (BIL загрузкой не считается). «Доходность/загрузка» = CAGR ÷ загрузка —
-              интенсивность при полной занятости капитала, не достижимая доходность. Альфа — простое превышение над SPY (без беты). Оценка
-              in-sample на всей истории сетапов.
+              Исполнение задаёт срок удержания (не горизонт сетапа): лестница — 1/N капитала в день, транш держим N дней; недельный/месячный —
+              100% ребаланс в имена с сигналом за период. Отбор сейчас — «все имена» (топ-K экстремумов появится после доработки сетапов;
+              низкокоррелированный — позже). Загрузка — доля дней в рынке (BIL не считается). «Доходность/загрузка» = CAGR ÷ загрузка —
+              интенсивность, не достижимая доходность. Альфа — простое превышение над SPY (без беты). Оценка in-sample на всей истории.
             </div>
           </div>
         </div>
