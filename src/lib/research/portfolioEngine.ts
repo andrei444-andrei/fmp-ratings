@@ -46,10 +46,16 @@ export type PortfolioMetrics = {
   spyCagr: number | null;
   spyMaxDD: number | null;
   spySharpe: number | null;
-  excessTotal: number | null;
+  excessTotal: number | null; // total − spyTotal (за весь период)
   excessCagr: number | null;
-  alphaOnLoading: number | null;
-  sharpeVsSpy: number | null;
+  alphaOnLoading: number | null; // = excessActive (превышение рукава над SPY за дни нагрузки)
+  sharpeVsSpy: number | null; // sharpe ÷ spySharpe (весь период)
+  // «на нагрузку»: сравнение с SPY ТОЛЬКО за дни, когда стратегия в рынке (активный рукав)
+  activeTotal: number | null; // доходность активного рукава (произведение по дням в рынке)
+  spyActiveTotal: number | null; // SPY ровно за те же дни нагрузки
+  excessActive: number | null; // activeTotal − spyActiveTotal (превышение vs SPY на нагрузку)
+  spySharpeActive: number | null; // Sharpe SPY по дням нагрузки
+  sharpeVsSpyActive: number | null; // sharpeActive ÷ spySharpeActive
 };
 
 export type PortfolioResult = {
@@ -57,6 +63,7 @@ export type PortfolioResult = {
   equity: DayPoint[];
   benchEquity: DayPoint[];
   deployment: number[]; // доля развёрнутого капитала по дням (для графика загрузки)
+  inMarket: boolean[]; // по дням: открыта ли ≥1 реальная позиция (для разбивки загрузки по периодам)
 };
 
 const TRADING_DAYS = 252;
@@ -131,6 +138,7 @@ function emptyMetrics(nSetups: number): PortfolioMetrics {
     start: null, end: null, years: 0, total: null, cagr: null, maxDD: null, vol: null, sharpe: null,
     sharpeActive: null, returnOnLoading: null, spyTotal: null, spyCagr: null, spyMaxDD: null,
     spySharpe: null, excessTotal: null, excessCagr: null, alphaOnLoading: null, sharpeVsSpy: null,
+    activeTotal: null, spyActiveTotal: null, excessActive: null, spySharpeActive: null, sharpeVsSpyActive: null,
   };
 }
 
@@ -144,7 +152,7 @@ export function buildPortfolio(
   bil: Bar[] | null,
   panel: PricePanel,
 ): PortfolioResult {
-  const empty: PortfolioResult = { metrics: emptyMetrics(setups.length), equity: [], benchEquity: [], deployment: [] };
+  const empty: PortfolioResult = { metrics: emptyMetrics(setups.length), equity: [], benchEquity: [], deployment: [], inMarket: [] };
 
   const cal = dedupSortBars(spy);
   if (cal.length < 2 || !setups.length) return empty;
@@ -304,16 +312,25 @@ export function buildPortfolio(
     }
   }
 
-  // метрики из дневной кривой
+  // метрики из дневной кривой. Параллельно копим «активный рукав»: доходность стратегии и SPY
+  // ТОЛЬКО по дням, когда стратегия в рынке (для корректного сравнения «на нагрузку»).
   const dayRets: number[] = [];
   const activeRets: number[] = [];
+  const spyActiveRets: number[] = [];
   let inMarketDays = 0;
+  let activeProd = 1;
+  let spyActiveProd = 1;
   for (let i = 1; i < equity.length; i++) {
     const r = equity[i] / equity[i - 1] - 1;
     dayRets.push(r);
     if (inMarket[i]) {
       inMarketDays++;
       activeRets.push(r);
+      activeProd *= 1 + r;
+      const k = start + i;
+      const sa = spyClose[k - 1] > 0 ? spyClose[k] / spyClose[k - 1] - 1 : 0;
+      spyActiveRets.push(sa);
+      spyActiveProd *= 1 + sa;
     }
   }
   const transitions = equity.length - 1;
@@ -334,6 +351,14 @@ export function buildPortfolio(
   const excessTotal = total != null && spyTotal != null ? total - spyTotal : null;
   const excessCagr = cagr != null && spyCagr != null ? cagr - spyCagr : null;
 
+  // активный рукав vs SPY за дни нагрузки
+  const sharpeActive = sharpeOf(activeRets);
+  const activeTotal = inMarketDays ? activeProd - 1 : null;
+  const spyActiveTotal = inMarketDays ? spyActiveProd - 1 : null;
+  const excessActive = activeTotal != null && spyActiveTotal != null ? activeTotal - spyActiveTotal : null;
+  const spySharpeActive = sharpeOf(spyActiveRets);
+  const sharpeVsSpyActive = sharpeActive != null && spySharpeActive != null && spySharpeActive > 0 ? sharpeActive / spySharpeActive : null;
+
   const metrics: PortfolioMetrics = {
     nSetups: setups.length,
     nSignals,
@@ -350,7 +375,7 @@ export function buildPortfolio(
     maxDD: maxDrawdown(equity),
     vol: vol != null ? vol * Math.sqrt(TRADING_DAYS) : null,
     sharpe,
-    sharpeActive: sharpeOf(activeRets),
+    sharpeActive,
     returnOnLoading: cagr != null && loading && loading > 0 ? cagr / loading : null,
     spyTotal,
     spyCagr,
@@ -358,10 +383,15 @@ export function buildPortfolio(
     spySharpe,
     excessTotal,
     excessCagr,
-    alphaOnLoading: excessCagr != null && loading && loading > 0 ? excessCagr / loading : null,
+    alphaOnLoading: excessActive, // «альфа на нагрузку» = превышение рукава над SPY за дни нагрузки
     sharpeVsSpy: sharpe != null && spySharpe != null && spySharpe > 0 ? sharpe / spySharpe : null, // отношение осмысленно лишь при положительном Sharpe SPY
+    activeTotal,
+    spyActiveTotal,
+    excessActive,
+    spySharpeActive,
+    sharpeVsSpyActive,
   };
 
   const equityPts: DayPoint[] = equity.map((vv, i) => ({ d: calDates[start + i], v: vv }));
-  return { metrics, equity: equityPts, benchEquity, deployment };
+  return { metrics, equity: equityPts, benchEquity, deployment, inMarket };
 }

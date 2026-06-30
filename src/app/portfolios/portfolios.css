@@ -62,3 +62,15 @@
 .rsx .pf-name input { font: inherit; font-size: 15px; font-weight: 700; border: 1px solid transparent; border-radius: 8px; padding: 5px 9px; background: transparent; color: var(--fk-text); min-width: 320px; max-width: 100%; }
 .rsx .pf-name input:hover { border-color: var(--fk-line); }
 .rsx .pf-name input:focus { border-color: var(--fk-line-strong); background: #fff; outline: none; }
+
+/* доходность/загрузка по периодам */
+.rsx .pf-period-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.rsx .seg.pf-gran { width: auto; }
+.rsx .seg.pf-gran button { padding: 4px 16px; }
+.rsx .pf-period-sel { font-size: 12.5px; color: var(--fk-text-2); margin: 2px 0 8px; font-variant-numeric: tabular-nums; min-height: 18px; }
+.rsx .pf-period-sel.muted { color: var(--fk-text-3); }
+.rsx .pf-ptable-wrap { max-height: 300px; overflow: auto; margin-top: 12px; border: 1px solid var(--fk-line); border-radius: 10px; }
+.rsx table.pf-ptable { width: 100%; }
+.rsx table.pf-ptable thead th { position: sticky; top: 0; background: var(--fk-surface-elev); z-index: 1; }
+.rsx table.pf-ptable td, .rsx table.pf-ptable th { padding: 6px 11px; }
+.rsx table.pf-ptable tbody tr.on td { background: var(--fk-surface-2); }

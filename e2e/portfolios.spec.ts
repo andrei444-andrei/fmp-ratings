@@ -59,6 +59,12 @@ test.describe('Портфели /portfolios', () => {
     // автосохранение присвоило имя (запасное без ключа AIMLAPI)
     await expect(page.getByTestId('portfolio-name')).not.toHaveValue('');
 
+    // разбивка по периодам с бенчмарком + переключение грануляции
+    await expect(page.getByTestId('pf-period-svg')).toBeVisible();
+    await expect(page.getByTestId('pf-period-table')).toBeVisible();
+    await page.getByTestId('pf-gran').getByRole('button', { name: 'Месяц' }).click();
+    await expect(page.getByTestId('pf-period-table')).toBeVisible();
+
     await request.delete(`/api/researcher/setups?id=${encodeURIComponent(setupId)}`);
   });
 
