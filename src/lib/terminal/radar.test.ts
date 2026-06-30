@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classify } from './radar';
+import { classify, dispNum, sigById } from './radar';
 
 // Классификатор радара на РЕАЛЬНЫХ названиях событий FMP: нужная версия метрики матчится,
 // суб-метрики и иные шкалы (продолжающие заявки, U-6, индекс-уровень PPI, Private NFP,
@@ -60,5 +60,31 @@ describe('radar classify', () => {
     expect(id('EIA Crude Oil Stocks Change')).toBe(null);
     expect(id('Building Permits (May)')).toBe(null);
     expect(id('')).toBe(null);
+  });
+});
+
+describe('dispNum — числовое значение в единицах показа (для графика истории)', () => {
+  it("'k' нормализует к тысячам (175000→175, 175→175)", () => {
+    expect(dispNum(175000, 'k')).toBe(175);
+    expect(dispNum(229000, 'k')).toBe(229);
+    expect(dispNum(215, 'k')).toBe(215); // уже в тысячах
+  });
+  it('проценты/индекс округляет до 2 знаков; пустое → null', () => {
+    expect(dispNum('2.93', 'pct')).toBe(2.93);
+    expect(dispNum(52.7, 'index')).toBe(52.7);
+    expect(dispNum('', 'pct')).toBe(null);
+    expect(dispNum(null, 'k')).toBe(null);
+    expect(dispNum('n/a', 'pct')).toBe(null);
+  });
+});
+
+describe('sigById + метаданные значимых типов', () => {
+  it('находит тип по id и у каждого есть человекочитаемое описание', () => {
+    expect(sigById('cpi')?.ru).toBe('Инфляция');
+    expect(sigById('claims')?.fmt).toBe('k');
+    expect(sigById('нет такого')).toBeUndefined();
+    for (const idv of ['cpi', 'core_cpi', 'nfp', 'claims', 'fomc_rate', 'gdp', 'retail', 'ism_svc']) {
+      expect(sigById(idv)?.desc, idv).toBeTruthy();
+    }
   });
 });
