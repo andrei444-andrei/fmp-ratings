@@ -21,38 +21,44 @@ type SigType = {
   fmt: Fmt;
   fed?: boolean;
   match: string[]; // подстроки англ. названия (нижний регистр); самое длинное совпадение выигрывает
+  exclude?: string[]; // если присутствует любая из подстрок — тип НЕ применяется (отсев суб-метрик)
 };
 
-// Значимые типы событий (то, что реально двигает рынок). Остальное (региональные индексы ФРБ,
-// запасы топлива, жильё, заказы длит. пользования и т.п.) отфильтровывается как шум.
+// Значимые типы событий (то, что реально двигает рынок). Подстроки `match` нацелены на ОДНУ
+// каноническую версию метрики (для инфляции — годовая YoY, для розницы/PPI — месячная MoM),
+// `exclude` отсекает суб-метрики и иные шкалы (продолжающие заявки, U-6, индекс-уровень PPI,
+// Private NFP, Business Activity, MoM/YoY-двойники). Прочее (региональные ФРБ, запасы топлива,
+// жильё и т.п.) просто не матчится и отбрасывается как шум.
 const SIGNIFICANT: SigType[] = [
-  { id: 'core_cpi', ru: 'Базовая инфляция', eng: 'Core CPI', importance: 1, goodHigh: false, fmt: 'pct', match: ['core inflation rate', 'core consumer price', 'core cpi'] },
-  { id: 'cpi', ru: 'Инфляция', eng: 'CPI', importance: 1, goodHigh: false, fmt: 'pct', match: ['inflation rate', 'consumer price index'] },
-  { id: 'core_pce', ru: 'Главная инфляция для ФРС', eng: 'Core PCE', importance: 1, goodHigh: false, fmt: 'pct', match: ['core pce price index', 'core pce'] },
-  { id: 'pce', ru: 'Инфляция PCE', eng: 'PCE', importance: 2, goodHigh: false, fmt: 'pct', match: ['pce price index'] },
-  { id: 'ppi', ru: 'Цены производителей', eng: 'PPI', importance: 2, goodHigh: false, fmt: 'pct', match: ['producer price index', 'ppi '] },
-  { id: 'nfp', ru: 'Новые рабочие места', eng: 'NFP', importance: 1, goodHigh: true, fmt: 'k', match: ['nonfarm payrolls', 'non farm payrolls', 'non-farm payrolls'] },
-  { id: 'unemployment', ru: 'Безработица', eng: 'Unemployment', importance: 2, goodHigh: false, fmt: 'pct', match: ['unemployment rate'] },
-  { id: 'claims', ru: 'Заявки на пособие', eng: 'Jobless Claims', importance: 2, goodHigh: false, fmt: 'k', match: ['initial jobless claims', 'jobless claims', 'initial claims'] },
-  { id: 'avg_earnings', ru: 'Рост зарплат', eng: 'Avg Hourly Earnings', importance: 2, goodHigh: null, fmt: 'pct', match: ['average hourly earnings'] },
-  { id: 'fomc_rate', ru: 'Решение ФРС по ставке', eng: 'FOMC', importance: 1, goodHigh: null, fmt: 'rate', fed: true, match: ['fed interest rate decision', 'interest rate decision', 'fomc rate', 'federal funds rate'] },
+  { id: 'core_cpi', ru: 'Базовая инфляция', eng: 'Core CPI, г/г', importance: 1, goodHigh: false, fmt: 'pct', match: ['core inflation rate yoy', 'core consumer price index yoy'] },
+  { id: 'cpi', ru: 'Инфляция', eng: 'CPI, г/г', importance: 1, goodHigh: false, fmt: 'pct', match: ['inflation rate yoy', 'consumer price index yoy'] },
+  { id: 'core_pce', ru: 'Главная инфляция для ФРС', eng: 'Core PCE, г/г', importance: 1, goodHigh: false, fmt: 'pct', match: ['core pce price index yoy'] },
+  { id: 'pce', ru: 'Инфляция PCE', eng: 'PCE, г/г', importance: 2, goodHigh: false, fmt: 'pct', match: ['pce price index yoy'] },
+  { id: 'ppi', ru: 'Цены производителей', eng: 'PPI, м/м', importance: 2, goodHigh: false, fmt: 'pct', match: ['producer price index mom', 'ppi mom'], exclude: ['ex food', 'ex energy', 'core'] },
+  { id: 'nfp', ru: 'Новые рабочие места', eng: 'NFP', importance: 1, goodHigh: true, fmt: 'k', match: ['nonfarm payrolls', 'non farm payrolls', 'non-farm payrolls'], exclude: ['private'] },
+  { id: 'unemployment', ru: 'Безработица', eng: 'Unemployment', importance: 2, goodHigh: false, fmt: 'pct', match: ['unemployment rate'], exclude: ['u-6', 'u6'] },
+  { id: 'claims', ru: 'Заявки на пособие', eng: 'Initial Claims', importance: 2, goodHigh: false, fmt: 'k', match: ['initial jobless claims', 'initial claims'] },
+  { id: 'avg_earnings', ru: 'Рост зарплат', eng: 'Earnings, г/г', importance: 2, goodHigh: null, fmt: 'pct', match: ['average hourly earnings yoy'] },
+  { id: 'fomc_rate', ru: 'Решение ФРС по ставке', eng: 'FOMC', importance: 1, goodHigh: null, fmt: 'rate', fed: true, match: ['fed interest rate decision', 'interest rate decision', 'federal funds rate'] },
   { id: 'fomc_minutes', ru: 'Протокол заседания ФРС', eng: 'FOMC Minutes', importance: 2, goodHigh: null, fmt: 'raw', fed: true, match: ['fomc minutes', 'fed minutes'] },
-  { id: 'fed_speech', ru: 'Выступление главы ФРС', eng: 'Fed', importance: 2, goodHigh: null, fmt: 'raw', fed: true, match: ['fed chair', 'powell speech', 'powell testimony', 'fed press conference'] },
-  { id: 'ism_mfg', ru: 'Деловая активность: промышленность', eng: 'ISM Mfg', importance: 2, goodHigh: true, fmt: 'index', match: ['ism manufacturing pmi'] },
-  { id: 'ism_svc', ru: 'Деловая активность: услуги', eng: 'ISM Svc', importance: 2, goodHigh: true, fmt: 'index', match: ['ism services pmi', 'ism non-manufacturing', 'ism non manufacturing'] },
-  { id: 'retail', ru: 'Розничные продажи', eng: 'Retail', importance: 2, goodHigh: true, fmt: 'pct', match: ['retail sales'] },
-  { id: 'gdp', ru: 'Рост экономики (ВВП)', eng: 'GDP', importance: 1, goodHigh: true, fmt: 'pct', match: ['gdp growth rate', 'gross domestic product'] },
-  { id: 'michigan', ru: 'Доверие потребителей (Мичиган)', eng: 'Michigan', importance: 2, goodHigh: true, fmt: 'index', match: ['michigan consumer sentiment'] },
-  { id: 'cb_conf', ru: 'Доверие потребителей', eng: 'Conf.', importance: 2, goodHigh: true, fmt: 'index', match: ['cb consumer confidence', 'consumer confidence'] },
+  { id: 'fed_speech', ru: 'Выступление главы ФРС', eng: 'Fed', importance: 2, goodHigh: null, fmt: 'raw', fed: true, match: ['fed press conference', 'powell speech', 'fed chair powell', 'powell testimony'] },
+  { id: 'ism_mfg', ru: 'Деловая активность: промышленность', eng: 'ISM Mfg', importance: 2, goodHigh: true, fmt: 'index', match: ['ism manufacturing pmi'], exclude: ['prices', 'employment', 'new orders'] },
+  { id: 'ism_svc', ru: 'Деловая активность: услуги', eng: 'ISM Svc', importance: 2, goodHigh: true, fmt: 'index', match: ['ism services pmi', 'ism non-manufacturing pmi'], exclude: ['business activity', 'prices', 'employment', 'new orders'] },
+  { id: 'retail', ru: 'Розничные продажи', eng: 'Retail, м/м', importance: 2, goodHigh: true, fmt: 'pct', match: ['retail sales mom'], exclude: ['ex auto', 'control'] },
+  { id: 'gdp', ru: 'Рост экономики (ВВП)', eng: 'GDP', importance: 1, goodHigh: true, fmt: 'pct', match: ['gdp growth rate qoq'], exclude: ['final', 'sales', 'price', '2nd', '3rd'] },
+  { id: 'michigan', ru: 'Доверие потребителей (Мичиган)', eng: 'Michigan', importance: 2, goodHigh: true, fmt: 'index', match: ['michigan consumer sentiment'], exclude: ['expectations', 'conditions', 'inflation'] },
+  { id: 'cb_conf', ru: 'Доверие потребителей', eng: 'CB Conf.', importance: 2, goodHigh: true, fmt: 'index', match: ['cb consumer confidence'] },
 ];
 
-/** Классифицирует событие FMP: возвращает значимый тип (самое длинное совпадение) либо null. */
-function classify(eventName: string): SigType | null {
+/** Классифицирует событие FMP: возвращает значимый тип (самое длинное совпадение) либо null.
+ *  Тип с непустым exclude пропускается, если в названии есть любая из его подстрок. */
+export function classify(eventName: string): SigType | null {
   const s = String(eventName || '').toLowerCase();
   if (!s) return null;
   let best: SigType | null = null;
   let bestLen = 0;
   for (const t of SIGNIFICANT) {
+    if (t.exclude && t.exclude.some((x) => s.includes(x))) continue;
     for (const m of t.match) {
       if (m && m.length > bestLen && s.includes(m)) {
         best = t;

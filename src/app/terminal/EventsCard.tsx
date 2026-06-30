@@ -220,7 +220,7 @@ function Row({ e }: { e: RadarEntry }) {
   } else if (e.kind === 'fed') {
     meta = `${e.note ?? ''}${e.prev ? `${e.note ? ' · ' : ''}было ${disp(e.prev)}` : ''}`;
   } else if (past) {
-    meta = `прогноз ${disp(e.forecast)} · прошлое ${disp(e.prev)}`;
+    meta = e.forecast != null ? `прогноз ${disp(e.forecast)} · прошлое ${disp(e.prev)}` : `прошлое ${disp(e.prev)}`;
   } else {
     meta = `прошлое ${disp(e.prev)}${e.unit ? ` · ${e.unit}` : ''}`;
   }
