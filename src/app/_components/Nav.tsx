@@ -12,7 +12,7 @@ const LINKS = [
   { href: '/switch', label: 'Переключение A/B' },
   { href: '/backtest', label: 'Тестирование стратегий' },
   { href: '/quant', label: 'Аналитика алгоритмов' },
-  { href: '/polymarket', label: 'Polymarket' },
+  // Polymarket временно скрыт из навигации (страницы /polymarket и /polymarket/wallets живы)
   { href: '/admin', label: 'Admin' },
 ];
 
