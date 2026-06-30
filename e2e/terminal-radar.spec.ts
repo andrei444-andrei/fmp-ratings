@@ -127,15 +127,27 @@ test.describe('Радар событий /terminal — всплывашка ис
     expect(xs.size).toBeGreaterThanOrEqual(2); // карточки стоят в двух разных колонках
   });
 
-  test('фильтр «только важное» оставляет события высшей важности', async ({ page }, testInfo) => {
+  test('тумблер «Главные» оставляет только курируемые главные индикаторы', async ({ page }, testInfo) => {
     test.skip(testInfo.project.name === 'mobile', 'на desktop');
     await page.goto('/terminal');
     await expect(page.getByText('Радар событий', { exact: true })).toBeVisible({ timeout: 120000 });
-    // до фильтра видна второстепенная «Заявки на пособие»
+    // до фильтра видна второстепенная «Заявки на пособие» (claims — не в главных)
     await expect(page.getByRole('button', { name: /Заявки на пособие/ })).toBeVisible();
-    await page.getByText('только важное').click();
-    // после — остаётся «Инфляция» (важность 1), «Заявки» (важность 2) скрыта
+    await page.getByRole('button', { name: '★ Главные' }).click();
+    // после — главные остаются (Инфляция=cpi, Розничные продажи=retail), «Заявки»=claims скрыты
     await expect(page.getByRole('button', { name: /Инфляция/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Розничные продажи/ })).toBeVisible();
     await expect(page.getByRole('button', { name: /Заявки на пособие/ })).toHaveCount(0);
+  });
+
+  test('кнопка «Сегодня» возвращает к текущему моменту', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name === 'mobile', 'на desktop');
+    await page.goto('/terminal');
+    await expect(page.getByText('Радар событий', { exact: true })).toBeVisible({ timeout: 120000 });
+    const todayBtn = page.getByRole('button', { name: '● Сегодня' });
+    await expect(todayBtn).toBeVisible();
+    await todayBtn.click();
+    // разделитель «Сегодня» в ленте виден после клика
+    await expect(page.locator('[data-today]')).toBeVisible();
   });
 });
