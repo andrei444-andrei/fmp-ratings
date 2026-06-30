@@ -6,8 +6,10 @@ const nextConfig = {
   // включаем папку drizzle/ в бандл serverless-функций для /api/admin/migrate
   outputFileTracingIncludes: {
     '/api/admin/migrate': ['./drizzle/**/*'],
-    // pyodide (ядро + кэш wheel'ов) в бандл функций исполнения Python
-    '/api/signals/study': ['./node_modules/pyodide/**/*'],
+    // pyodide (ядро + кэш wheel'ов) в бандл функций, исполняющих Python: скрин-движок
+    // researcher (computeAndCache → screenPanel → lib/signals/runner) считает на pyodide.
+    '/api/researcher/panel': ['./node_modules/pyodide/**/*'],
+    '/api/researcher/warm': ['./node_modules/pyodide/**/*'],
   },
 };
 module.exports = nextConfig;
