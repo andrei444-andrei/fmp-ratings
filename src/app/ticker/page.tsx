@@ -36,11 +36,16 @@ const WIDGETS: Widget[] = [
 ];
 const POPULAR = ['NVDA', 'AAPL', 'KO', 'XLE', 'SPY'];
 const HZ = [5, 10, 21, 63];
+const RANGES: { label: string; days: number }[] = [
+  { label: '1Г', days: 252 }, { label: '3Г', days: 756 }, { label: '5Л', days: 1260 },
+  { label: '10Л', days: 2520 }, { label: 'Всё', days: 0 },
+];
 
 export default function TickerPage() {
   const [ticker, setTicker] = useState('AAPL');
   const [H, setH] = useState(21);
   const [mode, setMode] = useState<'edge' | 'raw'>('edge');
+  const [outcome, setOutcome] = useState<'ret' | 'exc'>('ret');
   const [sel, setSel] = useState<Record<string, number | undefined>>({});
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [openCfg, setOpenCfg] = useState<Record<string, boolean>>({});
@@ -51,9 +56,11 @@ export default function TickerPage() {
   });
   const [corrAssets, setCorrAssets] = useState<string[]>(['SPY', 'QQQ', 'GLD', 'TLT']);
   const [recent, setRecent] = useState<string[]>(['AAPL', 'NVDA', 'KO']);
-  const [smaOn, setSmaOn] = useState(true);
+  const [sma50On, setSma50On] = useState(true);
+  const [sma200On, setSma200On] = useState(true);
   const [ddOn, setDdOn] = useState(false);
   const [logOn, setLogOn] = useState(true);
+  const [chartRange, setChartRange] = useState(0); // торг. дней; 0 = вся история
 
   const [panel, setPanel] = useState<TickerPanel | null>(null);
   const [loading, setLoading] = useState(true);
@@ -101,18 +108,21 @@ export default function TickerPage() {
 
   /* ---------- derived ---------- */
   const years = useMemo(() => (panel ? panel.dates.map((d) => +d.slice(0, 4)) : []), [panel]);
-  const baseline = useMemo(() => (panel ? baselineStats(panel.forwards[String(H)] || []) : null), [panel, H]);
+  // выбранный исход: сырая доходность или превышение бенчмарка за то же окно
+  const fwAll = panel ? (outcome === 'exc' ? panel.forwardsExc : panel.forwards) : null;
+  const outLabel = outcome === 'exc' ? 'превышение SPY' : 'доходность';
+  const baseline = useMemo(() => (fwAll ? baselineStats(fwAll[String(H)] || []) : null), [fwAll, H]);
   const cfgKey = JSON.stringify(binCfg);
   const results = useMemo(() => {
     const m: Record<string, BinResult> = {};
-    if (!panel || !baseline) return m;
-    const fwd = panel.forwards[String(H)] || [];
+    if (!panel || !baseline || !fwAll) return m;
+    const fwd = fwAll[String(H)] || [];
     WIDGETS.forEach((w) => {
       m[w.id] = binStats(panel.factors[w.key] || [], fwd, years, binCfg[w.id], w.unit, baseline.mean, H);
     });
     return m;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panel, H, cfgKey, years, baseline]);
+  }, [panel, H, outcome, cfgKey, years, baseline]);
 
   /* ---------- search dropdown ---------- */
   const dropItems = useMemo(() => {
@@ -123,6 +133,9 @@ export default function TickerPage() {
     return list;
   }, [query, recent]);
 
+  const lastClose = panel ? panel.close[panel.close.length - 1] : null;
+  const lastDate = panel ? panel.dates[panel.dates.length - 1] : null;
+
   /* ---------- render ---------- */
   return (
     <div className="tk">
@@ -132,6 +145,18 @@ export default function TickerPage() {
       <div className="banner">
         <span>⚠️</span>
         <span><b>Разведка по ОДНОМУ активу.</b> Малые выборки и автокорреляция перекрывающихся окон делают паттерн кандидатом, а не выводом: смотри <b>edge</b> (а не raw), <b>n_eff</b> и доверительный интервал; серое = незначимо. Границы условий настраиваются на каждом виджете (⚙).</span>
+      </div>
+
+      {/* текущий тикер */}
+      <div className="tk-current">
+        <span className="cur-sym">{panel ? panel.symbol : ticker}</span>
+        <span className="cur-meta">
+          {panel?.meta.company ? <b>{panel.meta.company}</b> : null}
+          {panel?.meta.sector ? <> · {panel.meta.sector}</> : null}
+          {panel?.meta.currency ? <> · {panel.meta.currency}</> : null}
+          {lastClose != null ? <> · посл. {lastClose.toFixed(2)} ({lastDate})</> : null}
+          {panel?.synthetic ? <> · <span className="warnish">⚠ синтетика без ключей</span></> : null}
+        </span>
       </div>
 
       {/* controls */}
@@ -164,7 +189,11 @@ export default function TickerPage() {
         <div><span className="lbl">Горизонт</span><span className="seg">
           {HZ.map((h) => <button key={h} className={h === H ? 'active' : ''} onClick={() => setH(h)}>{h}д</button>)}
         </span></div>
-        <div><span className="lbl">Метрика</span><span className="seg">
+        <div><span className="lbl">Исход</span><span className="seg">
+          <button className={outcome === 'ret' ? 'active' : ''} onClick={() => setOutcome('ret')}>Доходность</button>
+          <button className={outcome === 'exc' ? 'active' : ''} onClick={() => setOutcome('exc')}>vs SPY (excess)</button>
+        </span></div>
+        <div><span className="lbl">Показ</span><span className="seg">
           <button className={mode === 'edge' ? 'active' : ''} onClick={() => setMode('edge')}>edge (vs baseline)</button>
           <button className={mode === 'raw' ? 'active' : ''} onClick={() => setMode('raw')}>raw</button>
         </span></div>
@@ -177,14 +206,11 @@ export default function TickerPage() {
       {loading && <div className="card"><div className="loading">Загрузка панели {ticker}…</div></div>}
       {!loading && !panel && <div className="card"><div className="loading">Не удалось получить данные по {ticker}. Попробуй другой символ.</div></div>}
 
-      {panel && baseline && (
+      {panel && baseline && fwAll && (
         <>
           {/* state now */}
           <div className="card">
-            <h2><span className="ht">Состояние сейчас
-              <span className="pill">{panel.meta.sector || (panel.synthetic ? 'синтетика (без ключей)' : '—')}</span>
-              <span className="small">{panel.synthetic ? '⚠ демо-ряд' : (panel.meta.currency || '')}</span>
-            </span></h2>
+            <h2><span className="ht">Состояние сейчас · <b>{panel.symbol}</b></span></h2>
             <p className="desc">Текущие значения факторов и их перцентиль в собственной истории тикера. Ниже подсвечивается, в какой бин попадает каждое значение.</p>
             <div className="grid-state">
               {([
@@ -212,30 +238,35 @@ export default function TickerPage() {
           {/* chart + baseline */}
           <div className="grid2">
             <div className="card">
-              <h2><span className="ht">График по годам · SMA50 / SMA200</span></h2>
+              <h2><span className="ht">{panel.symbol} · график по годам</span></h2>
               <p className="desc">Свой SVG из того же ряда, что и расчёты. Наведи курсор — состояние на дату.</p>
               <div className="toolbar">
-                <button className={'ghost' + (smaOn ? ' on' : '')} onClick={() => setSmaOn((v) => !v)}>SMA 50/200</button>
-                <button className={'ghost' + (ddOn ? ' on' : '')} onClick={() => setDdOn((v) => !v)}>Заливка просадок</button>
-                <button className={'ghost' + (logOn ? ' on' : '')} onClick={() => setLogOn((v) => !v)}>Лог-шкала</button>
+                <span className="seg sm">
+                  {RANGES.map((r) => <button key={r.label} className={chartRange === r.days ? 'active' : ''} onClick={() => setChartRange(r.days)}>{r.label}</button>)}
+                </span>
+                <span style={{ flex: 1 }} />
+                <button className={'ghost' + (sma50On ? ' on' : '')} onClick={() => setSma50On((v) => !v)}>SMA50</button>
+                <button className={'ghost' + (sma200On ? ' on' : '')} onClick={() => setSma200On((v) => !v)}>SMA200</button>
+                <button className={'ghost' + (ddOn ? ' on' : '')} onClick={() => setDdOn((v) => !v)}>Просадки</button>
+                <button className={'ghost' + (logOn ? ' on' : '')} onClick={() => setLogOn((v) => !v)}>Лог</button>
               </div>
-              <Chart panel={panel} smaOn={smaOn} ddOn={ddOn} logOn={logOn} tipRef={tipRef} hlRef={hlRef} />
+              <Chart panel={panel} sma50On={sma50On} sma200On={sma200On} ddOn={ddOn} logOn={logOn} range={chartRange} tipRef={tipRef} hlRef={hlRef} />
               <div className="legend">
                 <span><i style={{ background: 'var(--tk-blue)' }} />Цена</span>
-                <span><i style={{ background: 'var(--tk-sma50)' }} />SMA50</span>
-                <span><i style={{ background: 'var(--tk-sma200)' }} />SMA200</span>
-                <span className="small">{ticker} · {years[0]}–{years[years.length - 1]} · {panel.dates.length} баров</span>
+                {sma50On && <span><i style={{ background: 'var(--tk-sma50)' }} />SMA50</span>}
+                {sma200On && <span><i style={{ background: 'var(--tk-sma200)' }} />SMA200</span>}
+                <span className="small">{panel.symbol} · {years[0]}–{years[years.length - 1]} · {panel.dates.length} баров</span>
               </div>
             </div>
 
             <div className="card">
-              <h2><span className="ht">Baseline тикера (опорная линия)</span></h2>
-              <p className="desc">Безусловная форвардная доходность — эталон, относительно которого читаются все таблицы. «Edge» = условное минус это.</p>
+              <h2><span className="ht">Baseline · {outLabel}</span></h2>
+              <p className="desc">Безусловный исход ({outLabel}) — эталон, относительно которого читаются все таблицы. «Edge» = условное минус это.</p>
               <table>
                 <tbody>
                   <tr><th className="l">Горизонт</th><th>n</th><th>сред.</th><th>медиана</th><th>hit</th><th>σ</th></tr>
                   {HZ.map((h) => {
-                    const b = baselineStats(panel.forwards[String(h)] || []);
+                    const b = baselineStats(fwAll[String(h)] || []);
                     const cur = h === H;
                     return (
                       <tr key={h} style={cur ? { background: 'var(--tk-sel)' } : undefined}>
@@ -250,7 +281,7 @@ export default function TickerPage() {
                   })}
                 </tbody>
               </table>
-              <p className="small" style={{ marginTop: 10 }}>Безусловно тикер даёт <b>{pct(baseline.mean)}</b> за {H}д (hit {Math.round(baseline.hit * 100)}%). «edge» показывает, что добавляет <i>условие</i> сверх дрейфа актива.</p>
+              <p className="small" style={{ marginTop: 10 }}>Безусловно за {H}д: <b>{pct(baseline.mean)}</b> ({outLabel}, hit {Math.round(baseline.hit * 100)}%). «edge» показывает, что добавляет <i>условие</i> сверх этого.</p>
             </div>
           </div>
 
@@ -258,7 +289,7 @@ export default function TickerPage() {
           <div className="card ai">
             <h2><span className="ht">AI-черновик гипотезы <span className="badge">отфильтровано: значимо + n_eff достаточно</span></span></h2>
             <p className="desc">Детерминированный пре-фильтр отбирает «что необычно сейчас И статистически держится», и только это формулируется как гипотеза.</p>
-            <AiBox panel={panel} results={results} hidden={hidden} H={H} baselineMean={baseline.mean} />
+            <AiBox panel={panel} results={results} hidden={hidden} H={H} baselineMean={baseline.mean} outLabel={outLabel} />
           </div>
 
           {/* widgets */}
@@ -303,7 +334,7 @@ export default function TickerPage() {
                           <FragmentRow key={k}>
                             <tr className={'bin' + (isCur ? ' cur' : '') + (isSel ? ' sel' : '') + (st.lowN ? ' muted' : '')}
                               onClick={() => setSel((s) => ({ ...s, [w.id]: s[w.id] === k ? undefined : k }))}>
-                              <td className="l">{b.label}{isCur && <span className="badge" style={{ marginLeft: 6, background: 'var(--tk-hl)', borderColor: 'var(--tk-hlb)', color: 'var(--tk-warn)' }}>сейчас</span>}</td>
+                              <td className="l">{b.label}{isCur && <span className="badge cur-badge">сейчас</span>}</td>
                               <td>{st.n}</td>
                               <td className={valCls}>{pct(showVal)}<Dot st={st} /></td>
                               <td className={st.lowN ? 'mut' : ''}>{Math.round(st.hit * 100)}%</td>
@@ -311,8 +342,8 @@ export default function TickerPage() {
                               <td><Spark ep={st.epEdge} /></td>
                             </tr>
                             {isSel && (
-                              <tr><td colSpan={6} style={{ background: 'var(--app-hover)', padding: 0 }}>
-                                <div style={{ padding: '10px 12px' }}><Detail panel={panel} w={w} binIdx={k} res={res} H={H} cfg={binCfg[w.id]} years={years} baselineMean={baseline.mean} /></div>
+                              <tr className="detail-row"><td colSpan={6}>
+                                <Detail panel={panel} w={w} binIdx={k} res={res} H={H} cfg={binCfg[w.id]} years={years} baselineMean={baseline.mean} fwAll={fwAll} outLabel={outLabel} />
                               </td></tr>
                             )}
                           </FragmentRow>
@@ -434,45 +465,78 @@ function CfgPanel(props: {
   );
 }
 
-function Detail(props: { panel: TickerPanel; w: Widget; binIdx: number; res: BinResult; H: number; cfg: BinCfg; years: number[]; baselineMean: number }) {
-  const { panel, w, binIdx, res, H, cfg, years } = props;
+function Detail(props: {
+  panel: TickerPanel; w: Widget; binIdx: number; res: BinResult; H: number; cfg: BinCfg;
+  years: number[]; baselineMean: number; fwAll: Record<string, (number | null)[]>; outLabel: string;
+}) {
+  const { panel, w, binIdx, res, H, cfg, years, fwAll, outLabel } = props;
   const st = res.bins[binIdx].stat;
+  const fwd = fwAll[String(H)] || [];
+
+  // decay по горизонтам для этого бина
   const decay = HZ.map((h) => {
-    const bs = baselineStats(panel.forwards[String(h)] || []);
-    const r = binStats(panel.factors[w.key] || [], panel.forwards[String(h)] || [], years, cfg, w.unit, bs.mean, h);
+    const fwh = fwAll[String(h)] || [];
+    const bs = baselineStats(fwh);
+    const r = binStats(panel.factors[w.key] || [], fwh, years, cfg, w.unit, bs.mean, h);
     const bb = r.bins[binIdx] || r.bins[Math.min(binIdx, r.bins.length - 1)];
     return { h, edge: bb ? bb.stat.edge : 0, lowN: bb ? bb.stat.lowN : true };
   });
   const maxE = Math.max(0.001, ...decay.map((d) => Math.abs(d.edge)));
   const signs = decay.filter((d) => !d.lowN).map((d) => d.edge);
   const mono = signs.length >= 3 && (signs.every((v, i) => i === 0 || v >= signs[i - 1]) || signs.every((v, i) => i === 0 || v <= signs[i - 1]));
+
+  // поведение ПО ГОДАМ для этого бина (на выбранном горизонте/исходе)
+  const byYear = useMemoYears(st.members, fwd, years, props.baselineMean);
   const epOk = st.epEdge.filter((x): x is number => x != null);
   const sameSign = epOk.length ? epOk.filter((x) => Math.sign(x) === Math.sign(st.edge)).length : 0;
-  const fwd = panel.forwards[String(H)] || [];
-  const eps = [...st.members].map((i) => ({ i, r: fwd[i] as number, d: panel.dates[i] })).filter((e) => e.r != null).sort((a, b) => b.i - a.i).slice(0, 6);
-  const maxAbs = Math.max(0.001, ...eps.map((e) => Math.abs(e.r)));
   const skew = Math.abs(st.mean - st.median) > 1.5 * st.std / 2;
+
+  // похожие эпизоды (последние входы в бин)
+  const eps = [...st.members].map((i) => ({ i, r: fwd[i] as number, d: panel.dates[i] })).filter((e) => e.r != null).sort((a, b) => b.i - a.i).slice(0, 8);
+  const maxAbs = Math.max(0.001, ...eps.map((e) => Math.abs(e.r)));
+  const maxYearAbs = Math.max(0.001, ...byYear.map((y) => Math.abs(y.edge)));
+
   return (
-    <div className="row" style={{ gap: 24, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-      <div style={{ minWidth: 230 }}>
-        <div className="small" style={{ marginBottom: 2 }}><b>Decay по горизонтам</b> (edge) {mono
-          ? <span className="flag good">монотонно — признак паттерна</span>
-          : <span className="flag gray">немонотонно — вероятно шум</span>}</div>
-        <div className="decay">
-          {decay.map((d) => (
-            <div key={d.h} className="b"><span>{pct(d.edge, 1)}</span>
-              <span className="bar" style={{ height: clamp(Math.abs(d.edge) / maxE * 40, 2, 40), background: d.lowN ? 'var(--tk-soft)' : (d.edge > 0 ? 'var(--tk-up)' : 'var(--tk-down)') }} />
-              <span>{d.h}д</span></div>
-          ))}
+    <div className="detail">
+      <div className="detail-top">
+        <div className="detail-cell">
+          <div className="small dt-title"><b>Decay по горизонтам</b> (edge) {mono
+            ? <span className="flag good">монотонно — признак паттерна</span>
+            : <span className="flag gray">немонотонно — вероятно шум</span>}</div>
+          <div className="decay">
+            {decay.map((d) => (
+              <div key={d.h} className="b"><span>{pct(d.edge, 1)}</span>
+                <span className="bar" style={{ height: clamp(Math.abs(d.edge) / maxE * 40, 2, 40), background: d.lowN ? 'var(--tk-soft)' : (d.edge > 0 ? 'var(--tk-up)' : 'var(--tk-down)') }} />
+                <span>{d.h}д</span></div>
+            ))}
+          </div>
+        </div>
+        <div className="detail-cell">
+          <div className="small dt-title"><b>Сводка бина</b> ({outLabel}, {H}д)</div>
+          <div className="small">{epOk.length ? <>Стабильность: знак edge совпадает в <b>{sameSign} из {epOk.length}</b> 5-летних эпох.</> : 'Стабильность: недостаточно эпох.'}</div>
+          <div className="small mut" style={{ marginTop: 4 }}>сред. {pct(st.mean)} · медиана {pct(st.median)} · baseline {pct(props.baselineMean)} · σ {pctRaw(st.std)} · n={st.n} (n_eff {st.neff.toFixed(0)}){skew && <> · <span style={{ color: 'var(--tk-warn)' }}>скошено/выбросы</span></>}</div>
         </div>
       </div>
-      <div style={{ flex: 1, minWidth: 200 }}>
-        <div className="small">{epOk.length ? <>Стабильность: знак edge совпадает в <b>{sameSign} из {epOk.length}</b> 5-летних эпох.</> : 'Стабильность: недостаточно эпох.'}</div>
-        <div style={{ marginTop: 4 }}><Spark ep={st.epEdge} /></div>
-        <div className="small mut" style={{ marginTop: 4 }}>сред. {pct(st.mean)} · медиана {pct(st.median)} · baseline {pct(props.baselineMean)} · σ {pctRaw(st.std)}{skew && <> · <span style={{ color: 'var(--tk-warn)' }}>скошено/выбросы</span></>}</div>
+
+      {/* поведение по годам */}
+      <div className="detail-years">
+        <div className="small dt-title"><b>Поведение по годам</b> · edge {outLabel} за {H}д (наведи — n/hit). Лет с данными: {byYear.length}</div>
+        {byYear.length ? (
+          <div className="years">
+            {byYear.map((y) => (
+              <div key={y.year} className="yb" title={`${y.year}: edge ${pct(y.edge)} · сред ${pct(y.mean)} · n=${y.n} · hit ${Math.round(y.hit * 100)}%`}>
+                <span className="yv">{pct(y.edge, 0)}</span>
+                <span className="ybar" style={{ height: clamp(Math.abs(y.edge) / maxYearAbs * 36, 2, 36), background: y.n < 5 ? 'var(--tk-soft)' : (y.edge > 0 ? 'var(--tk-up)' : 'var(--tk-down)') }} />
+                <span className="yl">{String(y.year).slice(2)}</span>
+              </div>
+            ))}
+          </div>
+        ) : <div className="small mut">Недостаточно наблюдений по годам.</div>}
       </div>
-      <div className="episodes" style={{ width: '100%' }}>
-        <div className="small" style={{ marginBottom: 6 }}><b>Похожие эпизоды</b> (последние входы в этот бин, исход за {H}д):</div>
+
+      {/* похожие эпизоды */}
+      <div className="detail-eps">
+        <div className="small dt-title"><b>Похожие эпизоды</b> (последние входы в бин, исход {outLabel} за {H}д):</div>
         {eps.map((e) => (
           <div key={e.i} className="ep"><span className="mut">{e.d}</span>
             <span className="epbar" style={{ background: e.r >= 0 ? 'var(--tk-up)' : 'var(--tk-down)', width: Math.max(6, Math.abs(e.r) / maxAbs * 100) + '%' }} />
@@ -483,7 +547,19 @@ function Detail(props: { panel: TickerPanel; w: Widget; binIdx: number; res: Bin
   );
 }
 
-function AiBox({ panel, results, hidden, H, baselineMean }: { panel: TickerPanel; results: Record<string, BinResult>; hidden: Set<string>; H: number; baselineMean: number }) {
+// Группировка наблюдений бина по календарным годам.
+function useMemoYears(members: number[], fwd: (number | null)[], years: number[], baseMean: number) {
+  return useMemo(() => {
+    const m = new Map<number, number[]>();
+    for (const i of members) { const v = fwd[i]; if (v == null) continue; const y = years[i]; if (!m.has(y)) m.set(y, []); (m.get(y) as number[]).push(v); }
+    return [...m.entries()].sort((a, b) => a[0] - b[0]).map(([year, vals]) => {
+      const mean = vals.reduce((s, x) => s + x, 0) / vals.length;
+      return { year, n: vals.length, mean, edge: mean - baseMean, hit: vals.filter((x) => x > 0).length / vals.length };
+    });
+  }, [members, fwd, years, baseMean]);
+}
+
+function AiBox({ panel, results, hidden, H, baselineMean, outLabel }: { panel: TickerPanel; results: Record<string, BinResult>; hidden: Set<string>; H: number; baselineMean: number; outLabel: string }) {
   const findings = WIDGETS.filter((w) => !hidden.has(w.id)).map((w) => {
     const res = results[w.id];
     if (!res || res.curBin < 0) return null;
@@ -495,15 +571,15 @@ function AiBox({ panel, results, hidden, H, baselineMean }: { panel: TickerPanel
   const weak = findings.filter((f) => !f.st.sig || f.st.lowN);
   return (
     <div>
-      <div className="small" style={{ marginBottom: 6 }}>Тикер <b>{panel.symbol}</b>, горизонт {H}д, baseline {pct(baselineMean)}.</div>
+      <div className="small" style={{ marginBottom: 6 }}>Тикер <b>{panel.symbol}</b>, горизонт {H}д, исход — {outLabel}, baseline {pct(baselineMean)}.</div>
       {!strong.length ? (
         <div className="hyp weak">Сейчас по текущему состоянию <b>нет статистически устойчивых паттернов</b> (после учёта n_eff и сравнения с baseline). Это честный результат: большинство условных эффектов на одном тикере — дрейф или шум.
-          <div className="meta">Не выдаём слабые находки за сигнал. Попробуй другой горизонт/тикер или измени границы бинов (⚙).</div></div>
+          <div className="meta">Не выдаём слабые находки за сигнал. Попробуй другой горизонт/тикер/исход или измени границы бинов (⚙).</div></div>
       ) : strong.slice(0, 3).map((f, i) => {
         const dir = f.st.edge > 0 ? 'выше' : 'ниже';
         const unstable = f.st.epEdge.filter((x): x is number => x != null && Math.sign(x) === Math.sign(f.st.edge)).length < 3;
         return (
-          <div key={i} className="hyp"><b>{f.w.title.split('→')[0].trim()}:</b> тикер сейчас в бине «{f.b.label}» (перцентиль {Math.round(f.curPctl * 100)}%). Исторически след. {H}д доходность <b className={f.st.edge > 0 ? 'pos' : 'neg'}>{pct(f.st.edge)} {dir} baseline</b> (hit {Math.round(f.st.hit * 100)}%, n={f.st.n}, n_eff {f.st.neff.toFixed(0)}, CI {pct(f.st.ciLo)}…{pct(f.st.ciHi)}).
+          <div key={i} className="hyp"><b>{f.w.title.split('→')[0].trim()}:</b> тикер сейчас в бине «{f.b.label}» (перцентиль {Math.round(f.curPctl * 100)}%). Исторически след. {H}д {outLabel} <b className={f.st.edge > 0 ? 'pos' : 'neg'}>{pct(f.st.edge)} {dir} baseline</b> (hit {Math.round(f.st.hit * 100)}%, n={f.st.n}, n_eff {f.st.neff.toFixed(0)}, CI {pct(f.st.ciLo)}…{pct(f.st.ciHi)}).
             <div className="meta">→ Гипотеза: при таком состоянии есть смещение исхода. Проверить вне выборки{unstable && <> — <span style={{ color: 'var(--tk-warn)' }}>нестабильно по эпохам</span></>}.</div></div>
         );
       })}
@@ -512,36 +588,42 @@ function AiBox({ panel, results, hidden, H, baselineMean }: { panel: TickerPanel
   );
 }
 
-function Chart({ panel, smaOn, ddOn, logOn, tipRef, hlRef }: {
-  panel: TickerPanel; smaOn: boolean; ddOn: boolean; logOn: boolean;
+function Chart({ panel, sma50On, sma200On, ddOn, logOn, range, tipRef, hlRef }: {
+  panel: TickerPanel; sma50On: boolean; sma200On: boolean; ddOn: boolean; logOn: boolean; range: number;
   tipRef: React.RefObject<HTMLDivElement | null>; hlRef: React.RefObject<SVGLineElement | null>;
 }) {
   const W = 560, Hh = 240, pad = { l: 38, r: 8, t: 8, b: 18 };
   const geom = useMemo(() => {
-    const c = panel.close, n = c.length, step = Math.max(1, Math.ceil(n / 700));
-    const xs = (i: number) => pad.l + (i / (n - 1)) * (W - pad.l - pad.r);
-    const lo = Math.min(...c), hi = Math.max(...c);
+    const c = panel.close, n = c.length;
+    const s0 = range > 0 ? Math.max(0, n - range) : 0; // начало видимого окна
+    const span = Math.max(1, n - 1 - s0);
+    const step = Math.max(1, Math.ceil((n - s0) / 700));
+    const xs = (i: number) => pad.l + ((i - s0) / span) * (W - pad.l - pad.r);
+    let lo = Infinity, hi = -Infinity;
+    for (let i = s0; i < n; i++) { if (c[i] < lo) lo = c[i]; if (c[i] > hi) hi = c[i]; }
+    if (!(lo < hi)) { lo = c[s0] * 0.99; hi = c[s0] * 1.01; }
     const yfn = (v: number) => logOn
       ? pad.t + (1 - (Math.log(v) - Math.log(lo)) / (Math.log(hi) - Math.log(lo))) * (Hh - pad.t - pad.b)
       : pad.t + (1 - (v - lo) / (hi - lo)) * (Hh - pad.t - pad.b);
-    const path = (s: (number | null)[]) => {
+    const path = (sarr: (number | null)[]) => {
       let d = '', first = true;
-      for (let i = 0; i < n; i += step) { const v = s[i]; if (v == null) { first = true; continue; } d += (first ? 'M' : 'L') + xs(i).toFixed(1) + ' ' + yfn(v).toFixed(1) + ' '; first = false; }
+      for (let i = s0; i < n; i += step) { const v = sarr[i]; if (v == null) { first = true; continue; } d += (first ? 'M' : 'L') + xs(i).toFixed(1) + ' ' + yfn(v).toFixed(1) + ' '; first = false; }
       return d;
     };
-    let grid = '', lastY = -1;
-    for (let i = 0; i < n; i += step) { const y = +panel.dates[i].slice(0, 4); if (y !== lastY && y % 5 === 0) { grid += `${xs(i)}|${y};`; lastY = y; } }
-    const gridArr = grid.split(';').filter(Boolean).map((s) => { const [x, y] = s.split('|'); return { x: +x, y }; });
-    let dd: { x: number }[] = [];
-    if (ddOn) { let m = -Infinity; for (let i = 0; i < n; i += step) { if (c[i] > m) m = c[i]; if (c[i] / m - 1 < -0.15) dd.push({ x: xs(i) }); } }
+    const gridArr: { x: number; y: string }[] = [];
+    let lastY = -1;
+    const yearStep = span > 252 * 12 ? 5 : span > 252 * 4 ? 2 : 1;
+    for (let i = s0; i < n; i += step) { const y = +panel.dates[i].slice(0, 4); if (y !== lastY && y % yearStep === 0) { gridArr.push({ x: xs(i), y: String(y) }); lastY = y; } }
+    const dd: { x: number }[] = [];
+    if (ddOn) { let m = -Infinity; for (let i = 0; i < n; i++) { if (c[i] > m) m = c[i]; if (i >= s0 && i % step === 0 && c[i] / m - 1 < -0.15) dd.push({ x: xs(i) }); } }
     const yticks = [0, 1, 2, 3, 4].map((k) => { const v = logOn ? Math.exp(Math.log(lo) + (k / 4) * (Math.log(hi) - Math.log(lo))) : lo + (k / 4) * (hi - lo); return { y: yfn(v), v }; });
-    return { n, step, xs, yfn, priceD: path(c), sma50D: path(panel.sma50), sma200D: path(panel.sma200), gridArr, dd, yticks };
-  }, [panel, logOn, ddOn]);
+    return { n, s0, span, step, xs, priceD: path(c), sma50D: path(panel.sma50), sma200D: path(panel.sma200), gridArr, dd, yticks };
+  }, [panel, logOn, ddOn, range]);
 
   function onMove(e: React.MouseEvent<SVGSVGElement>) {
     const svg = e.currentTarget, r = svg.getBoundingClientRect();
     const xpix = (e.clientX - r.left) / r.width * W;
-    const i = clamp(Math.round(((xpix - pad.l) / (W - pad.l - pad.r)) * (geom.n - 1)), 0, geom.n - 1);
+    const i = clamp(Math.round(geom.s0 + ((xpix - pad.l) / (W - pad.l - pad.r)) * geom.span), geom.s0, geom.n - 1);
     const x = geom.xs(i);
     if (hlRef.current) { hlRef.current.setAttribute('x1', String(x)); hlRef.current.setAttribute('x2', String(x)); hlRef.current.setAttribute('opacity', '1'); }
     const tip = tipRef.current;
@@ -562,8 +644,8 @@ function Chart({ panel, smaOn, ddOn, logOn, tipRef, hlRef }: {
         {geom.dd.map((d, i) => <rect key={'d' + i} x={d.x} y={pad.t} width={(W / 700) * 1.6} height={Hh - pad.t - pad.b} fill="var(--tk-down)" opacity="0.13" />)}
         {geom.gridArr.map((g, i) => <g key={'g' + i}><line x1={g.x} y1={pad.t} x2={g.x} y2={Hh - pad.b} stroke="var(--tk-line)" /><text x={g.x + 2} y={Hh - 6} fontSize="9" fill="var(--tk-soft)">{g.y}</text></g>)}
         {geom.yticks.map((t, i) => <text key={'y' + i} x="2" y={t.y + 3} fontSize="9" fill="var(--tk-soft)">{t.v < 10 ? t.v.toFixed(1) : Math.round(t.v)}</text>)}
-        {smaOn && <path d={geom.sma200D} fill="none" stroke="var(--tk-sma200)" strokeWidth="1.2" opacity="0.9" />}
-        {smaOn && <path d={geom.sma50D} fill="none" stroke="var(--tk-sma50)" strokeWidth="1.2" opacity="0.9" />}
+        {sma200On && <path d={geom.sma200D} fill="none" stroke="var(--tk-sma200)" strokeWidth="1.2" opacity="0.9" />}
+        {sma50On && <path d={geom.sma50D} fill="none" stroke="var(--tk-sma50)" strokeWidth="1.2" opacity="0.9" />}
         <path d={geom.priceD} fill="none" stroke="var(--tk-blue)" strokeWidth="1.4" />
         <line ref={hlRef} x1="0" y1={pad.t} x2="0" y2={Hh - pad.b} stroke="var(--tk-soft)" strokeDasharray="3 3" opacity="0" />
       </svg>
