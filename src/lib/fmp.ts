@@ -48,6 +48,24 @@ export async function fmpGradesHistorical(symbol: string) {
   return fmpGet(`${BASE_STABLE}/grades-historical?symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(key)}`);
 }
 
+// Консенсус целевых цен sell-side: targetHigh/targetLow/targetConsensus/targetMedian.
+export async function fmpPriceTargetConsensus(symbol: string) {
+  const key = getFmpKey();
+  return fmpGet(`${BASE_STABLE}/price-target-consensus?symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(key)}`);
+}
+
+// Лента новостей по тикеру: symbol, publishedDate, title, publisher/site, text, url, image.
+export async function fmpStockNews(symbol: string, limit = 30) {
+  const key = getFmpKey();
+  return fmpGet(`${BASE_STABLE}/news/stock?symbols=${encodeURIComponent(symbol)}&limit=${encodeURIComponent(limit)}&apikey=${encodeURIComponent(key)}`);
+}
+
+// Отчёт о прибылях (для фундаментала в динамике): revenue/grossProfit/operatingIncome/netIncome/eps.
+export async function fmpIncomeStatement(symbol: string, period: 'quarter' | 'annual' = 'quarter', limit = 24) {
+  const key = getFmpKey();
+  return fmpGet(`${BASE_STABLE}/income-statement?symbol=${encodeURIComponent(symbol)}&period=${period}&limit=${encodeURIComponent(limit)}&apikey=${encodeURIComponent(key)}`);
+}
+
 // Историческая дневная цена закрытия (light: symbol, date, price, volume).
 // Возвращает массив, обычно отсортирован по убыванию даты.
 export async function fmpHistoricalPriceEod(symbol: string, from?: string, to?: string) {

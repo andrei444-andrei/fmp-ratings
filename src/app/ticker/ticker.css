@@ -138,8 +138,56 @@
 .tk .detail-years .yl{font-size:9px;color:var(--tk-soft)}
 .tk .detail-eps{border-top:1px dashed var(--tk-line);padding-top:10px}
 
+/* профиль-досье */
+.tk .profile{background:var(--tk-card);border:1px solid var(--tk-line);border-radius:14px;padding:14px 16px;margin-bottom:12px}
+.tk .prof-main{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.tk .prof-sym{font-size:22px;font-weight:800;letter-spacing:-.02em}
+.tk .prof-co{font-size:14px;font-weight:600;color:var(--tk-ink)}
+.tk .prof-crumbs{font-size:12px;color:var(--tk-mut)}
+.tk .prof-stats{display:flex;gap:18px;flex-wrap:wrap;margin-top:10px}
+.tk .ps{display:flex;flex-direction:column;gap:1px}
+.tk .ps span{font-size:10px;text-transform:uppercase;letter-spacing:.03em;color:var(--tk-soft);font-weight:700}
+.tk .ps b{font-size:14px}
+.tk .prof-desc{margin-top:10px;font-size:12px;color:var(--tk-mut);line-height:1.5;max-width:900px}
+/* таб-бар */
+.tk .tabbar{display:flex;gap:4px;border-bottom:1px solid var(--tk-line);margin-bottom:14px;flex-wrap:wrap}
+.tk .tab{border:0;background:transparent;color:var(--tk-mut);padding:8px 14px;cursor:pointer;font-size:13.5px;font-weight:700;border-bottom:2px solid transparent;margin-bottom:-1px;display:inline-flex;align-items:center;gap:6px}
+.tk .tab:hover{color:var(--tk-ink)}
+.tk .tab.on{color:var(--app-acc-2);border-bottom-color:var(--app-acc-bd)}
+.tk .tabcount{font-size:10.5px;font-weight:700;background:var(--tk-chip);border:1px solid var(--tk-line);border-radius:999px;padding:0 6px;color:var(--tk-mut)}
+/* грейды */
+.tk .grades{display:flex;flex-direction:column}
+.tk .grade{display:grid;grid-template-columns:88px 22px 1fr auto;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--tk-gridline,var(--tk-line));font-size:12.5px}
+.tk .gr-date{color:var(--tk-soft);font-size:11.5px}
+.tk .gr-act{font-weight:800;text-align:center}
+.tk .gr-act.gr-up{color:var(--tk-up)} .tk .gr-act.gr-down{color:var(--tk-down)} .tk .gr-act.gr-mut{color:var(--tk-soft)}
+.tk .gr-firm{font-weight:600}
+.tk .gr-grade{color:var(--tk-mut);text-align:right;font-size:12px}
+/* таргет-шкала */
+.tk .tgtbar{position:relative;height:16px;margin:10px 0 4px;background:linear-gradient(90deg,var(--tk-chip),var(--tk-chip));border:1px solid var(--tk-line);border-radius:8px}
+.tk .tgtbar .tg{position:absolute;top:-2px;transform:translateX(-50%)}
+.tk .tgtbar .tg.lo,.tk .tgtbar .tg.hi{top:3px;width:2px;height:10px;background:var(--tk-soft)}
+.tk .tgtbar .tg.cons{top:1px;width:3px;height:14px;background:var(--app-acc-2);border-radius:1px}
+.tk .tgtbar .tg.price{top:-3px;width:10px;height:10px;border-radius:50%;background:var(--tk-blue);border:2px solid var(--tk-card)}
+.tk .tgtlegend{display:flex;justify-content:space-between;font-size:10.5px;color:var(--tk-soft)}
+/* фундаментал */
+.tk .fbars{display:flex;gap:2px;align-items:flex-end;height:64px;margin-top:6px}
+.tk .fbar{flex:1;display:flex;align-items:flex-end;justify-content:center}
+.tk .fbar .fb{width:80%;border-radius:2px 2px 0 0;min-height:2px}
+/* новости */
+.tk .news{display:flex;flex-direction:column;gap:2px}
+.tk .newsitem{display:block;padding:8px 0;border-bottom:1px solid var(--tk-line);text-decoration:none;color:inherit}
+.tk .newsitem:hover{background:var(--app-hover)}
+.tk .nw-top{display:flex;gap:8px;align-items:center;font-size:11px;color:var(--tk-soft)}
+.tk .nw-site{background:var(--tk-chip);border:1px solid var(--tk-line);border-radius:6px;padding:0 6px}
+.tk .nw-title{font-size:13.5px;font-weight:600;margin-top:3px;color:var(--tk-ink)}
+.tk .nw-snip{font-size:12px;color:var(--tk-mut);margin-top:2px;line-height:1.45}
+
 @media(max-width:860px){
   .tk .widgets,.tk .grid2{grid-template-columns:1fr}
   .tk .grid-state{grid-template-columns:repeat(2,1fr)}
   .tk .detail-top{grid-template-columns:1fr}
+  .tk .tabbar{overflow-x:auto}
+  .tk .grade{grid-template-columns:72px 18px 1fr;grid-auto-rows:auto}
+  .tk .gr-grade{grid-column:3;text-align:left}
 }
