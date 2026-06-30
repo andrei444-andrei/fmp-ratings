@@ -87,10 +87,13 @@ test.describe('Радар событий /terminal — всплывашка ис
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible();
     await expect(dialog.getByText(/подорожала потребительская корзина/)).toBeVisible();
-    // график истории (площадь + линия)
+    // график истории (площадь + линия факта + линия прогноза-плана)
     const chart = dialog.locator('svg[viewBox="0 0 620 230"]');
     await expect(chart).toBeVisible({ timeout: 10000 });
-    expect(await chart.locator('path').count()).toBeGreaterThanOrEqual(2);
+    expect(await chart.locator('path').count()).toBeGreaterThanOrEqual(3);
+    // линия ПРОГНОЗА (план) — пунктир янтарного цвета
+    expect(await chart.locator('path[stroke="#f59e0b"]').count()).toBeGreaterThanOrEqual(1);
+    await expect(dialog.getByText('прогноз (план)')).toBeVisible();
     // лог публикаций со строками
     await expect(dialog.getByText(/Все публикации/)).toBeVisible();
     expect(await dialog.locator('table tbody tr').count()).toBeGreaterThanOrEqual(3);
@@ -102,14 +105,26 @@ test.describe('Радар событий /terminal — всплывашка ис
     await expect(page.getByRole('dialog')).toHaveCount(0);
   });
 
-  test('masonry: сетка виджетов в 2 колонки (узкий радар не растягивает строку)', async ({ page }, testInfo) => {
+  test('masonry: узкие виджеты в 2 колонки бок-о-бок (высокий радар не оставляет пустоту)', async ({ page }, testInfo) => {
     test.skip(testInfo.project.name === 'mobile', 'masonry — 2 колонки только на широком экране');
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto('/terminal');
-    const grid = page.getByTestId('dashboard-grid');
-    await expect(grid).toBeVisible({ timeout: 120000 });
-    const cols = await grid.evaluate((el) => getComputedStyle(el).columnCount);
-    expect(cols).toBe('2');
+    await expect(page.getByText('Радар событий', { exact: true })).toBeVisible({ timeout: 120000 });
+    const band = page.getByTestId('masonry-band').first();
+    await expect(band).toBeVisible();
+    // на широком экране полоса раскладывается в ряд (2 колонки), а не в столбик
+    const dir = await band.evaluate((el) => getComputedStyle(el).flexDirection);
+    expect(dir).toBe('row');
+    // ровно 2 колонки-контейнера (после measure-раскладки), карточки бок-о-бок (разный x)
+    await expect.poll(() => band.evaluate((el) => el.children.length), { timeout: 10000 }).toBe(2);
+    const cards = page.locator('[data-testid="masonry-band"] > div > div');
+    const n = await cards.count();
+    const xs = new Set<number>();
+    for (let i = 0; i < n; i++) {
+      const b = await cards.nth(i).boundingBox();
+      if (b) xs.add(Math.round(b.x));
+    }
+    expect(xs.size).toBeGreaterThanOrEqual(2); // карточки стоят в двух разных колонках
   });
 
   test('фильтр «только важное» оставляет события высшей важности', async ({ page }, testInfo) => {
