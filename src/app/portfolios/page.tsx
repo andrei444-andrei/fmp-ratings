@@ -12,7 +12,7 @@ type Parking = 'BIL' | 'SPY' | 'CASH';
 type ExecMode = 'ladder' | 'weekly' | 'monthly';
 type SetupItem = { id: string; name: string; snapshot?: Record<string, number | string> };
 type SavedPortfolio = { id: string; name: string; description: string; config: { setupIds: string[]; execution: ExecMode; ladderN: number; parking: Parking } };
-type ComputeMeta = { setups: string[]; execution: ExecMode; ladderN: number; parking: Parking; synthetic: boolean; truncatedSymbols?: number };
+type ComputeMeta = { setups: string[]; execution: ExecMode; ladderN: number; parking: Parking; synthetic: boolean; syntheticSymbols?: number; truncatedSymbols?: number };
 
 const EXEC_LABEL: Record<ExecMode, string> = { ladder: 'лестница', weekly: 'ребаланс/нед', monthly: 'ребаланс/мес' };
 
@@ -294,6 +294,7 @@ export default function PortfoliosPage() {
               Период {m.start ?? '—'}…{m.end ?? '—'} · {m.nSignals} сигналов · {m.nSymbols} имён · {m.nSetups} сетапов ·{' '}
               {EXEC_LABEL[meta?.execution ?? exec]}{(meta?.execution ?? exec) === 'ladder' ? ` N=${meta?.ladderN ?? ladderN}` : ''} · паркинг {meta?.parking ?? parking}
               {meta?.synthetic && <span className="badge warn" style={{ marginLeft: 8 }}>данные синтетические (без ключей)</span>}
+              {!meta?.synthetic && !!meta?.syntheticSymbols && <span className="badge warn" style={{ marginLeft: 8 }}>имён без реальных цен: {meta.syntheticSymbols} (синтетика)</span>}
               {!!meta?.truncatedSymbols && <span className="badge warn" style={{ marginLeft: 8 }}>усечено имён: {meta.truncatedSymbols}</span>}
             </div>
             <div className="pf-note">

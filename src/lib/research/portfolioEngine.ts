@@ -110,8 +110,9 @@ function sharpeOf(rets: number[]): number | null {
   if (sd == null || sd === 0) return null;
   return (meanOf(rets) / sd) * Math.sqrt(TRADING_DAYS);
 }
+const MIN_YEARS = 1 / 52; // окно < ~недели не аннуализируем — иначе CAGR абсурдно раздувается
 function cagrOf(total: number | null, years: number): number | null {
-  if (total == null || total <= -1 || years <= 0) return null;
+  if (total == null || total <= -1 || years < MIN_YEARS) return null;
   return Math.pow(1 + total, 1 / years) - 1;
 }
 function dailyReturns(closes: number[]): number[] {
@@ -258,7 +259,7 @@ export function buildPortfolio(
     // периодический ребаланс: на границе недели/месяца на 100% в имена с сигналом за прошедший период
     const keyOf = (k: number): number =>
       cfg.execution === 'weekly'
-        ? Math.floor(Date.parse(calDates[k] + 'T00:00:00Z') / 86400000 / 7)
+        ? Math.floor((Date.parse(calDates[k] + 'T00:00:00Z') / 86400000 - 4) / 7) // −4 → границы недели на понедельник
         : Number(calDates[k].slice(0, 7).replace('-', ''));
     let holdings = new Map<string, number>(); // тикер → «юниты» (кол-во относительно номинала)
     let cash = 1;
@@ -358,7 +359,7 @@ export function buildPortfolio(
     excessTotal,
     excessCagr,
     alphaOnLoading: excessCagr != null && loading && loading > 0 ? excessCagr / loading : null,
-    sharpeVsSpy: sharpe != null && spySharpe != null && spySharpe !== 0 ? sharpe / spySharpe : null,
+    sharpeVsSpy: sharpe != null && spySharpe != null && spySharpe > 0 ? sharpe / spySharpe : null, // отношение осмысленно лишь при положительном Sharpe SPY
   };
 
   const equityPts: DayPoint[] = equity.map((vv, i) => ({ d: calDates[start + i], v: vv }));

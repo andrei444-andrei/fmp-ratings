@@ -15,12 +15,6 @@ export const dynamic = 'force-dynamic';
 const MAX_SYMBOLS = 200;
 const toBars = (rows: { date: string; close: number }[]): Bar[] => rows.map((r) => ({ date: r.date, close: r.close }));
 
-async function loadBars(symbol: string, from: string, to: string): Promise<Bar[]> {
-  const rows = await getPrices(symbol, from, to).catch(() => [] as any[]);
-  if (rows && rows.length >= 2) return toBars(rows);
-  return toBars(syntheticSeries(symbol)); // graceful без ключей
-}
-
 export async function POST(req: Request) {
   try {
     const b = await req.json().catch(() => ({} as any));
@@ -35,7 +29,7 @@ export async function POST(req: Request) {
       const parking = b?.parking === 'SPY' ? 'SPY' : b?.parking === 'CASH' ? 'CASH' : 'BIL';
       const execution = b?.execution === 'weekly' ? 'weekly' : b?.execution === 'monthly' ? 'monthly' : 'ladder';
       const ln = Number(b?.ladderN);
-      cfg = { setupIds, selection: 'all', execution, ladderN: Number.isFinite(ln) && ln > 0 ? Math.round(ln) : 5, parking };
+      cfg = { setupIds, selection: 'all', execution, ladderN: Number.isFinite(ln) && ln > 0 ? Math.min(60, Math.round(ln)) : 5, parking };
     }
     if (!cfg.setupIds.length) return Response.json({ error: 'нужен непустой список сетапов' }, { status: 400 });
 
@@ -70,13 +64,28 @@ export async function POST(req: Request) {
       const bilRows = await getPrices('BIL', from, to).catch(() => [] as any[]);
       if (bilRows && bilRows.length >= 2) bil = toBars(bilRows);
     }
-    const panelEntries = await Promise.all(useSymbols.map(async (sym) => [sym, await loadBars(sym, from, to)] as const));
+    // панель цен по тикерам; считаем, у скольких имён реальных данных нет (фолбэк на синтетику)
+    const synthSyms: string[] = [];
+    const panelEntries = await Promise.all(
+      useSymbols.map(async (sym) => {
+        const rows = await getPrices(sym, from, to).catch(() => [] as any[]);
+        if (rows && rows.length >= 2) return [sym, toBars(rows)] as const;
+        synthSyms.push(sym);
+        return [sym, toBars(syntheticSeries(sym))] as const;
+      }),
+    );
     const panel: PricePanel = new Map(panelEntries);
 
     const result = buildPortfolio(engineSetups, cfg, spy, bil, panel);
+    if (!result || result.metrics.nSignals === 0) {
+      return Response.json({ error: 'сигналы вне доступного ценового диапазона — нет данных для расчёта' }, { status: 400 });
+    }
     return Response.json({
       result,
-      meta: { setups: names, execution: cfg.execution, ladderN: cfg.ladderN, parking: cfg.parking, synthetic, truncatedSymbols: truncated ? symbols.length - MAX_SYMBOLS : 0 },
+      meta: {
+        setups: names, execution: cfg.execution, ladderN: cfg.ladderN, parking: cfg.parking,
+        synthetic, syntheticSymbols: synthSyms.length, truncatedSymbols: truncated ? symbols.length - MAX_SYMBOLS : 0,
+      },
     });
   } catch (e: any) {
     const msg = e?.message || String(e);
