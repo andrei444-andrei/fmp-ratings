@@ -39,6 +39,14 @@ describe('buildPortfolio (price-panel simulation)', () => {
     expect(res.inMarket.length).toBe(res.equity.length);
     expect(res.metrics.activeTotal!).toBeCloseTo(res.metrics.total!, 6);
     expect(res.metrics.excessActive).not.toBeNull();
+    // понедельные снимки состава: есть недели с позицией AAA и атрибуцией к сетапу
+    expect(res.weeks.length).toBeGreaterThan(0);
+    const wk = res.weeks.find((w) => w.positions.length > 0)!;
+    expect(wk).toBeTruthy();
+    expect(wk.positions[0].symbol).toBe('AAA');
+    expect(wk.positions[0].weight).toBeGreaterThan(0);
+    expect(wk.positions[0].setups).toContain('S');
+    expect(wk.setupsActive).toContain('S');
   });
 
   it('метрики «на нагрузку»: SPY считается ТОЛЬКО за дни в рынке (≠ SPY за весь период)', () => {

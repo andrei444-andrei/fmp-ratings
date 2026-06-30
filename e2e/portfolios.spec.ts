@@ -65,6 +65,14 @@ test.describe('Портфели /portfolios', () => {
     await page.getByTestId('pf-gran').getByRole('button', { name: 'Месяц' }).click();
     await expect(page.getByTestId('pf-period-table')).toBeVisible();
 
+    // drill-down недели: грануляция «Неделя» → клик по строке → состав/экспозиция/причины
+    await page.getByTestId('pf-gran').getByRole('button', { name: 'Неделя' }).click();
+    const wrow = page.getByTestId('pf-week-row').first();
+    await expect(wrow).toBeVisible();
+    await wrow.click();
+    await expect(page.getByTestId('pf-week-meta')).toBeVisible();
+    await expect(page.getByTestId('pf-week-positions')).toBeVisible();
+
     await request.delete(`/api/researcher/setups?id=${encodeURIComponent(setupId)}`);
   });
 
