@@ -5,6 +5,7 @@ import ThemeToggle from './ThemeToggle';
 
 const LINKS = [
   { href: '/terminal', label: 'Рыночный терминал' },
+  { href: '/ticker', label: 'Анализ тикера' },
   { href: '/researcher', label: 'Скринер' },
   { href: '/signals', label: 'Модель сигналов' },
   { href: '/switch', label: 'Переключение A/B' },
