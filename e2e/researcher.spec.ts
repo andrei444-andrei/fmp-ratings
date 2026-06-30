@@ -163,6 +163,8 @@ test.describe('Скринер /researcher', () => {
     // загрузка сетапа не падает (вселенная/условия применяются, панель остаётся)
     await chip2.click();
     await expect(page.getByTestId('panel-meta')).toBeVisible({ timeout: 120000 });
+    // видно, какой сетап активен: метка в шапке результатов + подсветка чипа
+    await expect(page.getByTestId('active-setup')).toBeVisible();
 
     // чистим за собой
     await page.getByTestId('setup-chip').filter({ hasText: name }).locator('.bx').click();
