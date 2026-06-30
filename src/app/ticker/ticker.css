@@ -120,8 +120,10 @@
 .tk .cur-badge{margin-left:6px;background:var(--tk-hl);border-color:var(--tk-hlb);color:var(--tk-warn)}
 
 /* раскрытие бина — сетка без наложений */
-.tk tr.detail-row > td{background:var(--app-hover);padding:0}
-.tk .detail{display:flex;flex-direction:column;gap:14px;padding:12px 14px}
+/* ВАЖНО: ячейки таблицы выше — nowrap (числовые колонки), но деталь должна переноситься,
+   иначе длинная строка «Сводка бина» растягивает таблицу шире карточки и обрезается. */
+.tk tr.detail-row > td{background:var(--app-hover);padding:0;white-space:normal}
+.tk .detail{display:flex;flex-direction:column;gap:14px;padding:12px 14px;overflow-wrap:anywhere}
 .tk .detail-top{display:grid;grid-template-columns:240px 1fr;gap:20px;align-items:start}
 .tk .detail-cell{min-width:0}
 .tk .dt-title{margin-bottom:6px}
