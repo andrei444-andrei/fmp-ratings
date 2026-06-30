@@ -8,7 +8,7 @@ const LINKS = [
   { href: '/signals', label: 'Модель сигналов' },
   { href: '/backtest', label: 'Тестирование стратегий' },
   { href: '/quant', label: 'Аналитика алгоритмов' },
-  { href: '/polymarket', label: 'Polymarket' },
+  // Polymarket временно скрыт из навигации (страницы /polymarket и /polymarket/wallets живы)
   { href: '/admin', label: 'Admin' },
 ];
 
