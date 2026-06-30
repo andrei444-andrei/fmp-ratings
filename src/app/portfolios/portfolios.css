@@ -1,0 +1,41 @@
+/* Раздел «Портфели» — поверх кита скринера (.rsx). Только дополнения; базовые классы — в researcher.css. */
+.rsx.pf .top h1 { font-size: 18px; }
+
+/* выбор сетапов — чипы (переиспользуем .grp/.chip) */
+.rsx .grp .chip.pick { display: inline-flex; align-items: center; gap: 4px; }
+.rsx .grp .chip.pick.on { background: var(--fk-brand-700, #2563eb); color: #fff; border-color: transparent; box-shadow: var(--fk-shadow-sm); }
+.rsx .grp .chip.pick .m { color: var(--fk-text-3); font-weight: 500; margin-left: 4px; font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.rsx .grp .chip.pick.on .m { color: rgba(255, 255, 255, .82); }
+
+/* панель параметров сборки */
+.rsx .pf-controls { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 12px; padding: 10px 12px; background: var(--fk-surface-2); border-radius: 10px; }
+.rsx .pf-controls .ctl { display: flex; align-items: center; gap: 7px; }
+.rsx .pf-controls .ctl .lbl { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--fk-text-3); }
+.rsx .pf-controls select, .rsx .pf-controls input.kin, .rsx .pf-controls input.nin { font: inherit; font-size: 12px; border: 1px solid var(--fk-line-strong); border-radius: 8px; background: #fff; padding: 5px 8px; color: var(--fk-text); }
+.rsx .pf-controls input.kin { width: 64px; text-align: right; font-variant-numeric: tabular-nums; }
+.rsx .pf-controls input.nin { width: 180px; }
+.rsx .pf-controls .btn.apply.on { background: var(--fk-brand-700, #2563eb); color: #fff; border-color: transparent; }
+.rsx .pf-controls .grow { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+/* сохранённые портфели */
+.rsx .pf-saved { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; padding: 8px 10px; background: var(--fk-surface-2); border-radius: 10px; }
+.rsx .pf-saved .lbl { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--fk-text-3); }
+.rsx .pf-saved .chip.pf { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--fk-brand-100); background: var(--fk-brand-50); color: var(--fk-brand-700); border-radius: 999px; padding: 4px 10px; font-size: 11.5px; cursor: pointer; }
+.rsx .pf-saved .chip.pf:hover { filter: brightness(.98); }
+.rsx .pf-saved .chip.pf .bx { margin-left: 2px; color: var(--fk-text-3); font-size: 10px; }
+.rsx .pf-saved .chip.pf .bx:hover { color: var(--fk-down-text, #c81e3c); }
+
+/* сетка метрик */
+.rsx .statgrid .stat .v.up { color: var(--fk-up-text, #0a8a60); }
+.rsx .statgrid .stat .v.down { color: var(--fk-down-text, #c81e3c); }
+.rsx .statgrid .stat .sub { font-size: 10px; color: var(--fk-text-3); margin-top: 2px; font-variant-numeric: tabular-nums; }
+
+/* кривая капитала */
+.rsx .pf-chart { margin-top: 6px; border: 1px solid var(--fk-line); border-radius: 10px; padding: 10px 12px 8px; background: var(--fk-surface-elev); }
+.rsx .pf-chart svg { display: block; width: 100%; height: auto; }
+.rsx .pf-legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 11px; color: var(--fk-text-3); margin-top: 8px; }
+.rsx .pf-legend i { display: inline-block; width: 12px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
+
+.rsx .pf-empty { font-size: 12.5px; color: var(--fk-text-3); padding: 14px 2px; }
+.rsx .pf-err { font-size: 12px; color: var(--fk-down-text, #c81e3c); font-weight: 600; margin-top: 8px; }
+.rsx .pf-note { font-size: 11px; color: var(--fk-text-3); margin-top: 10px; }
