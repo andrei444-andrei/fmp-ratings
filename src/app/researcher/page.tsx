@@ -345,16 +345,20 @@ export default function Researcher() {
       tstat: r2(consol.tstat), pval: r2(consol.pval), horizon: panel.horizon || horizon,
       first: allDeals[0]?.date ?? '', last: allDeals[allDeals.length - 1]?.date ?? '',
     };
-    // Поток сделок во времени — материал для будущей комбинации сетапов в стратегию (корреляция/совместная кривая).
-    const stream = allDeals.map((d) => [d.date, d.symbol, r2(d.ret), r2(d.exc), r2(d.mfe), r2(d.mae), r2(d.mdd)]);
+    // Ранжирующие колонки на ВХОД (показанные столбцы + факторы из условий) — те же значения, что в таблице
+    // скринера (d.vals): «Портфели» ранжируют топ-K по любой из них без look-ahead. Исходы (ret/exc/…) — будущее.
+    const streamCols = [...new Set([...displayCols, ...blk.flatMap((b) => b.conds.map((c) => c.col))])].slice(0, 40);
+    const fv = (v: number | null | undefined) => (v == null || !Number.isFinite(v) ? null : r2(v as number));
+    // Поток сделок: [date, symbol, ret, exc, mfe, mae, mdd, ...значения streamCols на дату входа].
+    const stream = allDeals.map((d) => [d.date, d.symbol, r2(d.ret), r2(d.exc), r2(d.mfe), r2(d.mae), r2(d.mdd), ...streamCols.map((c) => fv(d.vals[c]))]);
     const desc = description.trim();
     setSetups((p) => [...p.filter((x) => x.name !== nm), { id, name: nm, description: desc, config, snapshot }]);
     setSetupSave(null);
     try {
-      const res = await fetch('/api/researcher/setups', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, name: nm, description: desc, config, snapshot, stream }) });
+      const res = await fetch('/api/researcher/setups', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, name: nm, description: desc, config, snapshot, stream, streamCols }) });
       const j = await res.json().catch(() => ({})); if (j?.error) throw new Error(j.error);
     } catch (e: any) { setErr(`сетап не сохранён в БД: ${e?.message || e}`); }
-  }, [setups, panel, consol, allDeals, uniText, group, blocks, display, horizon, years, view]);
+  }, [setups, panel, consol, allDeals, displayCols, uniText, group, blocks, display, horizon, years, view]);
   const removeSetup = useCallback(async (id: string) => {
     setSetups((p) => p.filter((x) => x.id !== id));
     try { await fetch(`/api/researcher/setups?id=${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch { /* */ }
