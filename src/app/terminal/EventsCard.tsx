@@ -179,7 +179,7 @@ function Timeline({ data, onlyTop, onOpen }: { data: RadarData; onlyTop: boolean
         <span className="inline-flex items-center gap-1"><i className="h-1.5 w-1.5 rounded-full" style={{ background: BRAND }} /> ФРС / отчёт</span>
         <span className="ml-auto text-ink-3">клик — динамика за годы</span>
       </div>
-      <div ref={feedRef} className="relative max-h-[440px] overflow-y-auto">
+      <div ref={feedRef} className="relative max-h-[360px] overflow-y-auto">
         {rows}
       </div>
     </div>
@@ -343,8 +343,14 @@ function IndicatorBody({ s }: { s: IndicatorSeries }) {
       </div>
       {dir && <div className="text-[11.5px] text-ink-3">Как читать: {dir}.</div>}
 
-      {/* график */}
-      <HistoryChart pts={pts} fmt={s.fmt} goodHigh={s.goodHigh} />
+      {/* график: факт + прогноз (план) */}
+      <div>
+        <HistoryChart pts={pts} fmt={s.fmt} goodHigh={s.goodHigh} />
+        <div className="mt-1 flex flex-wrap items-center gap-3.5 text-[10.5px] text-ink-3">
+          <span className="inline-flex items-center gap-1.5"><i className="h-[3px] w-4 rounded" style={{ background: BRAND }} />факт</span>
+          <span className="inline-flex items-center gap-1.5"><i className="inline-block h-0 w-4 border-t-2 border-dashed" style={{ borderColor: MED }} />прогноз (план)</span>
+        </div>
+      </div>
 
       {/* лог публикаций */}
       <div>
@@ -427,8 +433,10 @@ function HistoryChart({ pts, fmt, goodHigh }: { pts: HistPoint[]; fmt: SeriesFmt
   const xs = data.map((p) => new Date(p.date + 'T12:00:00').getTime());
   const minX = xs[0];
   const maxX = xs[xs.length - 1];
-  let lo = Math.min(...data.map((p) => p.actual));
-  let hi = Math.max(...data.map((p) => p.actual));
+  // в шкалу включаем и факт, и прогноз — чтобы обе линии помещались
+  const allV = data.flatMap((p) => [p.actual, p.forecast]).filter((v): v is number => v != null);
+  let lo = Math.min(...allV);
+  let hi = Math.max(...allV);
   const pad = (hi - lo) * 0.15 || Math.abs(hi) * 0.1 || 1;
   lo -= pad;
   hi += pad;
@@ -437,6 +445,9 @@ function HistoryChart({ pts, fmt, goodHigh }: { pts: HistPoint[]; fmt: SeriesFmt
   const path = data.map((p, i) => `${i ? 'L' : 'M'}${X(xs[i]).toFixed(1)} ${Y(p.actual).toFixed(1)}`).join(' ');
   const area = `${path} L${X(maxX).toFixed(1)} ${Y(lo).toFixed(1)} L${X(minX).toFixed(1)} ${Y(lo).toFixed(1)} Z`;
   const last = data[data.length - 1];
+  // линия ПРОГНОЗА (план) по тем же датам, где прогноз известен
+  const fcPts = data.map((p, i) => ({ i, v: p.forecast })).filter((p): p is { i: number; v: number } => p.v != null);
+  const fcPath = fcPts.map((p, k) => `${k ? 'L' : 'M'}${X(xs[p.i]).toFixed(1)} ${Y(p.v).toFixed(1)}`).join(' ');
   // подписи годов по оси X
   const years: { t: number; y: number }[] = [];
   let seen = -1;
@@ -470,6 +481,8 @@ function HistoryChart({ pts, fmt, goodHigh }: { pts: HistPoint[]; fmt: SeriesFmt
         <text key={k} x={X(yt.t).toFixed(1)} y={H - 7} fontSize="9.5" fill="#8b95a7" textAnchor={k === 0 ? 'start' : 'middle'}>{yt.y}</text>
       ))}
       <path d={area} fill="url(#indFill)" stroke="none" />
+      {fcPath && <path d={fcPath} fill="none" stroke={MED} strokeWidth={1.6} strokeDasharray="4 3" strokeLinejoin="round" />}
+      {showDots && fcPts.map((p) => <circle key={`f${p.i}`} cx={X(xs[p.i]).toFixed(1)} cy={Y(p.v).toFixed(1)} r={1.8} fill="#fff" stroke={MED} strokeWidth={1.2} />)}
       <path d={path} fill="none" stroke={BRAND} strokeWidth={2.2} strokeLinejoin="round" strokeLinecap="round" />
       {showDots && data.map((p, i) => <circle key={i} cx={X(xs[i]).toFixed(1)} cy={Y(p.actual).toFixed(1)} r={2.2} fill={BRAND} />)}
       <circle cx={X(maxX).toFixed(1)} cy={Y(last.actual).toFixed(1)} r={4} fill={lastTone} stroke="#fff" strokeWidth={1.5} />

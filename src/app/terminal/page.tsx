@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { Delta, Sparkline, SegmentedControl, Badge, Skeleton, Modal, Button, Input, Spinner } from '@/components/ui';
 import { SEED_BLOCKS } from '@/lib/terminal/registry';
 import RotationCard from './RotationCard';
@@ -470,23 +470,125 @@ export default function TerminalPage() {
 function DashboardGrid({ cfg, nodes }: { cfg: TermConfig | null; nodes: Record<string, React.ReactNode> }) {
   const order = cfg ? reconcileLayout(cfg.layout) : [...WIDGET_KEYS];
   const hidden = new Set(cfg?.hiddenWidgets ?? []);
-  // Masonry (CSS columns): узкие виджеты (RRG/ставки/риск/радар) укладываются плотно по высоте —
-  // высокий «Радар событий» больше не растягивает строку и не оставляет пустоту рядом.
-  // Широкие виджеты (пульс/сравнение/корзины) занимают всю ширину через column-span: all.
+  const visible = order.filter((k) => !hidden.has(k) && nodes[k]);
+  // Сегменты: широкие виджеты — на всю ширину; подряд идущие узкие — в общую masonry-полосу
+  // (плотная укладка по реальной высоте, без пустот рядом с высоким «Радаром»).
+  type Seg = { type: 'wide'; key: string } | { type: 'band'; keys: string[] };
+  const segments: Seg[] = [];
+  for (const k of visible) {
+    if (WIDGET_META[k]?.wide) {
+      segments.push({ type: 'wide', key: k });
+    } else {
+      const last = segments[segments.length - 1];
+      if (last && last.type === 'band') last.keys.push(k);
+      else segments.push({ type: 'band', keys: [k] });
+    }
+  }
   return (
-    <div data-testid="dashboard-grid" className="columns-1 gap-3.5 lg:columns-2">
-      {order
-        .filter((k) => !hidden.has(k))
-        .map((k) => {
-          const n = nodes[k];
-          if (!n) return null;
-          const wide = WIDGET_META[k]?.wide;
-          return (
-            <div key={k} className="mb-3.5 break-inside-avoid" style={wide ? { columnSpan: 'all' } : undefined}>
-              {n}
+    <div data-testid="dashboard-grid" className="flex flex-col gap-3.5">
+      {segments.map((s, i) =>
+        s.type === 'wide' ? (
+          <div key={`w${s.key}`}>{nodes[s.key]}</div>
+        ) : (
+          <MasonryBand key={`b${i}`} keys={s.keys} nodes={nodes} />
+        ),
+      )}
+    </div>
+  );
+}
+
+// Истинный masonry: измеряем реальные высоты карточек и раскладываем каждую в САМУЮ КОРОТКУЮ
+// колонку (greedy) — плотно, без «хвостов» пустоты у коротких соседей высокого виджета.
+// 2 колонки на широком экране (≥980px контейнера), 1 — на узком. ResizeObserver пересобирает
+// при изменении высоты (асинхронная подгрузка данных) и ширины.
+// Раскладка ключей по c колонкам так, чтобы САМАЯ ВЫСОКАЯ колонка была минимальной (меньше всего
+// пустоты внизу). Для 2 колонок и небольшого N — точный перебор разбиений; иначе/для 1 колонки —
+// greedy в самую короткую. Порядок внутри колонки сохраняется; левая = колонка с первым ключом.
+function layoutColumns(keys: string[], heights: number[], c: number): string[][] {
+  if (c <= 1 || keys.length <= 1) return [keys.slice()];
+  const n = keys.length;
+  if (c === 2 && n <= 14) {
+    let bestMask = 0;
+    let bestMax = Infinity;
+    let bestDiff = Infinity;
+    for (let mask = 0; mask < 1 << n; mask++) {
+      let a = 0;
+      let b = 0;
+      for (let i = 0; i < n; i++) (mask & (1 << i)) ? (a += heights[i]) : (b += heights[i]);
+      const mx = Math.max(a, b);
+      const diff = Math.abs(a - b);
+      if (mx < bestMax - 0.5 || (mx <= bestMax + 0.5 && diff < bestDiff)) {
+        bestMax = mx;
+        bestDiff = diff;
+        bestMask = mask;
+      }
+    }
+    const colA: string[] = [];
+    const colB: string[] = [];
+    for (let i = 0; i < n; i++) ((bestMask >> i) & 1 ? colA : colB).push(keys[i]);
+    // левая колонка — та, что содержит первый ключ (стабильность порядка)
+    return (bestMask & 1) ? [colA, colB] : [colB, colA];
+  }
+  // greedy: каждый ключ — в самую короткую колонку
+  const colH = new Array(c).fill(0);
+  const cols: string[][] = Array.from({ length: c }, () => []);
+  keys.forEach((k, i) => {
+    let m = 0;
+    for (let j = 1; j < c; j++) if (colH[j] < colH[m]) m = j;
+    cols[m].push(k);
+    colH[m] += heights[i];
+  });
+  return cols;
+}
+
+function MasonryBand({ keys, nodes }: { keys: string[]; nodes: Record<string, React.ReactNode> }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const els = useRef(new Map<string, HTMLDivElement>());
+  const [columns, setColumns] = useState<string[][]>(() => (keys.length ? [keys] : []));
+
+  const sig = keys.join('|');
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    let raf = 0;
+    const relayout = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const w = node.clientWidth || 0;
+        const c = w >= 980 ? 2 : 1;
+        const h = keys.map((k) => (els.current.get(k)?.offsetHeight ?? 0) || 1);
+        const cols = layoutColumns(keys, h, c);
+        setColumns((prev) => (JSON.stringify(prev) === JSON.stringify(cols) ? prev : cols));
+      });
+    };
+    relayout();
+    const ro = new ResizeObserver(relayout);
+    ro.observe(node);
+    els.current.forEach((el) => ro.observe(el));
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
+  }, [sig]);
+
+  if (!keys.length) return null;
+  return (
+    <div ref={ref} data-testid="masonry-band" className="flex flex-col gap-3.5 lg:flex-row lg:items-start">
+      {columns.map((colKeys, ci) => (
+        <div key={ci} className="flex min-w-0 flex-1 flex-col gap-3.5">
+          {colKeys.map((k) => (
+            <div
+              key={k}
+              ref={(el) => {
+                if (el) els.current.set(k, el);
+                else els.current.delete(k);
+              }}
+            >
+              {nodes[k]}
             </div>
-          );
-        })}
+          ))}
+        </div>
+      ))}
     </div>
   );
 }
