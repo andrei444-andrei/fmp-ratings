@@ -114,12 +114,13 @@ test.describe('Скринер /researcher', () => {
     await expect(page.getByTestId('panel-meta')).toBeVisible({ timeout: 120000 });
     await page.getByText('удалить блок').click();
 
-    const card = page.getByTestId('deal-line-chart').first();
-    await expect(card).toBeVisible({ timeout: 60000 });
+    // дождаться загрузки цен (реальная линия), иначе клик попадёт в плейсхолдер «нет цен» (некликабелен)
+    await expect(page.getByTestId('deal-line').first()).toBeVisible({ timeout: 60000 });
+    const card = page.getByTestId('deal-line-chart').filter({ has: page.getByTestId('deal-line') }).first();
     await card.click();
 
     // открылся детальный просмотр с крупным графиком
-    await expect(page.getByTestId('asset-detail')).toBeVisible();
+    await expect(page.getByTestId('asset-detail')).toBeVisible({ timeout: 15000 });
     const svg = page.getByTestId('asset-detail-svg');
     await expect(svg).toBeVisible();
     await expect(page.getByTestId('detail-stats')).toBeVisible();
@@ -139,17 +140,47 @@ test.describe('Скринер /researcher', () => {
     await expect(page.getByRole('button', { name: 'Сбросить масштаб' })).toBeEnabled();
   });
 
+  // Сетапы: сохранение находки (рецепт + снимок + поток) в БД, персист, загрузка, удаление.
+  test('сетапы: сохранение находки и персист в БД', async ({ page }) => {
+    await page.goto('/researcher');
+    await expect(page.getByTestId('panel-meta')).toBeVisible({ timeout: 120000 });
+    await page.getByText('удалить блок').click(); // все сделки → есть что сохранить
+
+    const name = `E2E-Сетап-${Date.now()}`;
+    await page.getByTestId('setup-save-open').click();
+    await page.getByTestId('setup-name-input').fill(name);
+    await page.getByTestId('setup-desc-input').fill('тестовый сетап');
+    await page.getByTestId('setup-save-confirm').click();
+    const chip = page.getByTestId('setup-chip').filter({ hasText: name });
+    await expect(chip).toBeVisible();
+
+    // персист в БД: после перезагрузки сетап на месте
+    await page.reload();
+    await expect(page.getByTestId('panel-meta')).toBeVisible({ timeout: 120000 });
+    const chip2 = page.getByTestId('setup-chip').filter({ hasText: name });
+    await expect(chip2).toBeVisible();
+
+    // загрузка сетапа не падает (вселенная/условия применяются, панель остаётся)
+    await chip2.click();
+    await expect(page.getByTestId('panel-meta')).toBeVisible({ timeout: 120000 });
+
+    // чистим за собой
+    await page.getByTestId('setup-chip').filter({ hasText: name }).locator('.bx').click();
+    await expect(page.getByTestId('setup-chip').filter({ hasText: name })).toHaveCount(0);
+  });
+
   // Полоса-скруббер под графиком: тянем → выбирается период, метрики пересчитываются.
   test('детальный график: полоса-скруббер выбирает период', async ({ page }) => {
     await page.goto('/researcher');
     await expect(page.getByTestId('panel-meta')).toBeVisible({ timeout: 120000 });
     await page.getByText('удалить блок').click();
-    const card = page.getByTestId('deal-line-chart').first();
-    await expect(card).toBeVisible({ timeout: 60000 });
+    // дождаться загрузки цен (реальная линия), затем кликнуть карточку с графиком (не плейсхолдер)
+    await expect(page.getByTestId('deal-line').first()).toBeVisible({ timeout: 60000 });
+    const card = page.getByTestId('deal-line-chart').filter({ has: page.getByTestId('deal-line') }).first();
     await card.click();
 
     const strip = page.getByTestId('asset-detail-scrubber');
-    await expect(strip).toBeVisible();
+    await expect(strip).toBeVisible({ timeout: 15000 });
     await expect(page.getByTestId('asset-detail').getByText(/Весь период/)).toBeVisible();
 
     // тянем по полосе → создаётся окно периода

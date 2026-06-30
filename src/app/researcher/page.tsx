@@ -46,6 +46,10 @@ type FormulaDef = { id: string; name: string; expr: string; savedName: string; s
 // Пресет настроек скринера: условия + столбцы + горизонт/окно/вид (config), с именем и описанием.
 type PresetCfg = { blocks?: UBlock[]; display?: string[]; horizon?: number; years?: number; view?: 'all' | 'tickers' | 'years' };
 type PresetDef = { id: string; name: string; description: string; config: PresetCfg };
+// Сетап — сохранённая находка скринера как сущность: рецепт (вселенная+условия+горизонт+окно), снимок цифр,
+// поток сделок (в БД, не в UI). Кирпичик для будущего раздела «Стратегии».
+type SetupCfg = { uniText?: string; group?: string; blocks?: UBlock[]; display?: string[]; horizon?: number; years?: number; view?: 'all' | 'tickers' | 'years' };
+type SetupDef = { id: string; name: string; description: string; config: SetupCfg; snapshot: Record<string, number | string> };
 
 // Разбор ключа колонки: базовый фактор (fid+период) или имя формулы.
 function parseCol(col: string): { kind: 'base'; id: string; p: number } | { kind: 'formula'; name: string } {
@@ -69,6 +73,7 @@ function validateFormula(name: string, expr: string): string | null {
 
 const cls = (v: number | null) => (v == null ? 'flat' : v > 0 ? 'up' : v < 0 ? 'down' : 'flat');
 const fnum = (v: number | null, d = 1) => (v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(d));
+const r2 = (x: number) => Math.round(x * 100) / 100; // компактные числа в потоке/снимке сетапа
 const isRsiKey = (k: string) => k.startsWith('rsi');
 
 // Дефолты конфигурации скринера (для старта и кнопки «Сбросить»).
@@ -116,6 +121,8 @@ export default function Researcher() {
   const [basketModal, setBasketModal] = useState(false); // модалка «Создать корзину» (ручной ввод + AI)
   const [presets, setPresets] = useState<PresetDef[]>([]); // пресеты настроек скринера (БД, навсегда)
   const [presetSave, setPresetSave] = useState<{ name: string; description: string } | null>(null); // форма сохранения пресета
+  const [setups, setSetups] = useState<SetupDef[]>([]); // сохранённые сетапы-находки (БД, навсегда)
+  const [setupSave, setSetupSave] = useState<{ name: string; description: string } | null>(null); // форма сохранения сетапа
   const [priceSeries, setPriceSeries] = useState<Record<string, { date: string; close: number }[]>>({}); // дневные цены для графиков сделок
   const [pricesLoading, setPricesLoading] = useState(false);
   const [detailSym, setDetailSym] = useState<string | null>(null); // открытый детальный график актива (зум + метрики периода)
@@ -257,6 +264,11 @@ export default function Researcher() {
         const j = await r.json().catch(() => ({}));
         if (Array.isArray(j?.presets)) setPresets(j.presets.map((p: any) => ({ id: String(p.id), name: String(p.name), description: String(p.description ?? ''), config: p.config && typeof p.config === 'object' ? p.config : { blocks: [] } })));
       } catch { /* нет БД — без сохранённых пресетов */ }
+      try {
+        const r = await fetch('/api/researcher/setups');
+        const j = await r.json().catch(() => ({}));
+        if (Array.isArray(j?.setups)) setSetups(j.setups.map((s: any) => ({ id: String(s.id), name: String(s.name), description: String(s.description ?? ''), config: s.config && typeof s.config === 'object' ? s.config : {}, snapshot: s.snapshot && typeof s.snapshot === 'object' ? s.snapshot : {} })));
+      } catch { /* нет БД — без сетапов */ }
     })();
     loadedRef.current = true;
     setCfgNonce((n) => n + 1);
@@ -312,6 +324,47 @@ export default function Researcher() {
   const byYraw = useMemo(() => (panel ? screenByYear(panel, blk, minYear, fmap) : []), [panel, blocks, minYear, fmap]); // eslint-disable-line react-hooks/exhaustive-deps
   const allDeals = useMemo(() => (panel ? screenAllDeals(panel, blk, minYear, fmap) : []), [panel, blocks, minYear, fmap]); // eslint-disable-line react-hooks/exhaustive-deps
   const consol = useMemo(() => dealStats(allDeals), [allDeals]);
+
+  // Сетапы — сохранённые находки скринера (рецепт + снимок цифр + поток сделок) в БД, навсегда.
+  const saveSetup = useCallback(async (name: string, description: string) => {
+    const nm = name.trim(); if (!nm) return;
+    if (!panel) { setErr('Сначала примените вселенную — нет данных для сетапа.'); return; }
+    const id = setups.find((x) => x.name === nm)?.id ?? newId();
+    const config: SetupCfg = { uniText, group, blocks, display, horizon, years, view };
+    const snapshot: Record<string, number | string> = {
+      n: consol.n, tickers: consol.tickers, hitPct: r2(consol.hitPct), avgRet: r2(consol.avgRet), medRet: r2(consol.medRet),
+      avgMdd: r2(consol.avgMdd), avgMae: r2(consol.avgMae), avgMfe: r2(consol.avgMfe), avgExc: r2(consol.avgExc),
+      tstat: r2(consol.tstat), pval: r2(consol.pval), horizon: panel.horizon || horizon,
+      first: allDeals[0]?.date ?? '', last: allDeals[allDeals.length - 1]?.date ?? '',
+    };
+    // Поток сделок во времени — материал для будущей комбинации сетапов в стратегию (корреляция/совместная кривая).
+    const stream = allDeals.map((d) => [d.date, d.symbol, r2(d.ret), r2(d.exc), r2(d.mfe), r2(d.mae), r2(d.mdd)]);
+    const desc = description.trim();
+    setSetups((p) => [...p.filter((x) => x.name !== nm), { id, name: nm, description: desc, config, snapshot }]);
+    setSetupSave(null);
+    try {
+      const res = await fetch('/api/researcher/setups', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, name: nm, description: desc, config, snapshot, stream }) });
+      const j = await res.json().catch(() => ({})); if (j?.error) throw new Error(j.error);
+    } catch (e: any) { setErr(`сетап не сохранён в БД: ${e?.message || e}`); }
+  }, [setups, panel, consol, allDeals, uniText, group, blocks, display, horizon, years, view]);
+  const removeSetup = useCallback(async (id: string) => {
+    setSetups((p) => p.filter((x) => x.id !== id));
+    try { await fetch(`/api/researcher/setups?id=${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch { /* */ }
+  }, []);
+  // Загрузка сетапа: восстанавливаем рецепт (вселенная+условия+столбцы+горизонт+окно+вид) и пересчитываем (вселенная/горизонт изменились).
+  const loadSetup = useCallback((s: SetupDef) => {
+    const c = s.config || {};
+    if (typeof c.uniText === 'string') setUniText(c.uniText);
+    if (typeof c.group === 'string') setGroup(c.group);
+    if (Array.isArray(c.blocks) && c.blocks.length) setBlocks(structuredClone(c.blocks));
+    if (Array.isArray(c.display)) setDisplay([...c.display]);
+    if (typeof c.years === 'number') setYears(c.years);
+    if (c.view === 'all' || c.view === 'tickers' || c.view === 'years') setView(c.view);
+    const hz = typeof c.horizon === 'number' ? c.horizon : horizon;
+    if (typeof c.horizon === 'number') setHorizon(c.horizon);
+    setCfgNonce((n) => n + 1);
+    apply(parseUni(typeof c.uniText === 'string' ? c.uniText : uniText), hz);
+  }, [apply, horizon, uniText]);
   // realtime-фильтры результата (мгновенно, поверх агрегатов строк)
   const passRf = (r: { n: number; hitPct: number; avgRet: number }) => r.n >= rf.minN && r.hitPct >= rf.minHit && r.avgRet >= rf.minRet;
   const byT = byTraw.filter(passRf);
@@ -565,6 +618,30 @@ export default function Researcher() {
                 {(['all', 'tickers', 'years'] as const).map((v) => <button key={v} className={view === v ? 'on' : ''} onClick={() => setView(v)} style={{ padding: '4px 10px' }}>{v === 'all' ? 'Сводно' : v === 'tickers' ? 'По тикерам' : 'По годам'}</button>)}
               </div>
             </div>
+          </div>
+
+          {/* Сетапы — сохранённые находки (рецепт + снимок цифр + поток сделок). Кирпичики для будущего раздела «Стратегии». */}
+          <div className="setupbar">
+            <span className="lbl">Сетапы:</span>
+            {setups.map((s) => (
+              <button key={s.id} type="button" data-testid="setup-chip" className="chip setup" onClick={() => loadSetup(s)}
+                title={`${s.description || 'без описания'}\nвселенная: ${s.config?.uniText || '—'}\nсделок ${s.snapshot?.n ?? '—'} · доля+ ${s.snapshot?.hitPct ?? '—'}% · ср.return ${s.snapshot?.avgRet ?? '—'}% · t-стат ${s.snapshot?.tstat ?? '—'} · горизонт ${s.config?.horizon ?? '—'}д · клик — загрузить`}>
+                <b>{s.name}</b>
+                <span className="m">N {s.snapshot?.n ?? '—'} · ret {s.snapshot?.avgRet ?? '—'}% · t {s.snapshot?.tstat ?? '—'}</span>
+                <span className="bx" onClick={(e) => { e.stopPropagation(); removeSetup(s.id); }} title="удалить сетап">✕</span>
+              </button>
+            ))}
+            {setupSave === null
+              ? <button type="button" className="btn sm" data-testid="setup-save-open" disabled={!panel} onClick={() => setSetupSave({ name: group && !GROUPS[group] ? group : '', description: '' })}>💾 Сохранить как сетап</button>
+              : (
+                <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <input className="rfin" style={{ width: 150, textAlign: 'left' }} autoFocus placeholder="имя сетапа" data-testid="setup-name-input" value={setupSave.name} onChange={(e) => setSetupSave((s) => (s ? { ...s, name: e.target.value } : s))} onKeyDown={(e) => { if (e.key === 'Enter' && setupSave.name.trim()) saveSetup(setupSave.name, setupSave.description); }} />
+                  <input className="rfin" style={{ width: 200, textAlign: 'left' }} placeholder="описание (необязательно)" data-testid="setup-desc-input" value={setupSave.description} onChange={(e) => setSetupSave((s) => (s ? { ...s, description: e.target.value } : s))} />
+                  <button type="button" className="btn sm" data-testid="setup-save-confirm" disabled={!setupSave.name.trim()} onClick={() => saveSetup(setupSave.name, setupSave.description)}>Сохранить</button>
+                  <button type="button" className="btn sm ghost" onClick={() => setSetupSave(null)}>отмена</button>
+                </span>
+              )}
+            {setups.length === 0 && setupSave === null && <span className="sub">сохрани находку: вселенная + условия + цифры → кирпичик для будущих стратегий</span>}
           </div>
 
           {/* realtime-фильтры строк результата (тикеры/годы) */}
