@@ -33,6 +33,19 @@ test.describe('Анализ тикера /ticker', () => {
 
     // Корреляции: настраиваемый набор активов.
     await expect(page.locator('.tk .assets .asset').first()).toBeVisible();
+
+    // «Карточка акции»: шапка-досье + вкладки. Текущее живёт во вкладке «Статистика» (ничего не удалено).
+    await expect(page.locator('.tk .profile .prof-sym')).toBeVisible();
+    await expect(page.locator('.tk .tabbar .tab')).toHaveCount(4);
+    await page.getByRole('button', { name: /Аналитики/ }).click();
+    await expect(page.locator('.tk .card').first()).toBeVisible();
+    await page.getByRole('button', { name: /Фундаментал/ }).click();
+    await expect(page.locator('.tk .card').first()).toBeVisible();
+    await page.getByRole('button', { name: /Новости/ }).click();
+    await expect(page.locator('.tk .card').first()).toBeVisible();
+    // Назад в «Статистику» — виджеты на месте.
+    await page.getByRole('button', { name: /Статистика/ }).click();
+    await expect(page.locator('.tk .widgets > .card').first()).toBeVisible();
   });
 
   test('мобильный вьюпорт: заголовок и виджеты видны', async ({ page }) => {

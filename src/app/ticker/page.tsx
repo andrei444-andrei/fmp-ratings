@@ -16,6 +16,7 @@ import {
   type BinCfg, type BinResult, type Bin, type BinUnit,
 } from '@/lib/ticker/engine';
 import type { TickerPanel } from '@/lib/ticker/panel';
+import type { TickerInsight, GradeRow, IncomeRow } from '@/lib/ticker/insight';
 
 const pct = (x: number, d = 1) => (x >= 0 ? '+' : '') + (x * 100).toFixed(d) + '%';
 const pctRaw = (x: number, d = 1) => (x * 100).toFixed(d) + '%';
@@ -71,6 +72,8 @@ export default function TickerPage() {
   const [panel, setPanel] = useState<TickerPanel | null>(null);
   const [loading, setLoading] = useState(true);
   const [corrSeries, setCorrSeries] = useState<Record<string, [string, number][]>>({});
+  const [tab, setTab] = useState<'stats' | 'analyst' | 'funda' | 'news'>('stats');
+  const [insight, setInsight] = useState<TickerInsight | null>(null);
 
   const [query, setQuery] = useState('');
   const [dropOpen, setDropOpen] = useState(false);
@@ -87,6 +90,16 @@ export default function TickerPage() {
       .then((r) => r.json())
       .then((p) => { if (alive) { setPanel(p && Array.isArray(p.dates) && p.dates.length ? p : null); setLoading(false); } })
       .catch(() => { if (alive) { setPanel(null); setLoading(false); } });
+    return () => { alive = false; };
+  }, [ticker]);
+
+  useEffect(() => {
+    let alive = true;
+    setInsight(null);
+    fetch(`/api/ticker/insight?symbol=${encodeURIComponent(ticker)}`)
+      .then((r) => r.json())
+      .then((j) => { if (alive) setInsight(j || null); })
+      .catch(() => {});
     return () => { alive = false; };
   }, [ticker]);
 
@@ -214,6 +227,18 @@ export default function TickerPage() {
 
       {panel && baseline && fwAll && (
         <>
+          <ProfileHeader insight={insight} panel={panel} />
+          <div className="tabbar">
+            {([['stats', 'Статистика'], ['analyst', 'Аналитики'], ['funda', 'Фундаментал'], ['news', 'Новости']] as const).map(([k, l]) => (
+              <button key={k} className={'tab' + (tab === k ? ' on' : '')} onClick={() => setTab(k)}>
+                {l}
+                {k === 'analyst' && insight && insight.grades.length ? <span className="tabcount">{insight.grades.length}</span> : null}
+                {k === 'news' && insight && insight.news.length ? <span className="tabcount">{insight.news.length}</span> : null}
+              </button>
+            ))}
+          </div>
+
+          {tab === 'stats' && (<>
           {/* state now */}
           <div className="card">
             <h2><span className="ht">Состояние сейчас · <b>{panel.symbol}</b></span></h2>
@@ -394,8 +419,192 @@ export default function TickerPage() {
           <div className="small" style={{ marginTop: 16, color: 'var(--tk-soft)' }}>
             Данные: цены через единый кэш <code>getPrices</code> (EODHD→FMP), без ключей — синтетика. Бины/статистика считаются на клиенте (<code>@/lib/ticker/engine</code>). baseline+edge, n_eff/CI и серый-незначимо — честная подача неопределённости на одном инструменте.
           </div>
+          </>)}
+
+          {tab === 'analyst' && <AnalystTab insight={insight} panel={panel} />}
+          {tab === 'funda' && <FundaTab insight={insight} />}
+          {tab === 'news' && <NewsTab insight={insight} />}
         </>
       )}
+    </div>
+  );
+}
+
+/* ----------------------------- профиль и вкладки «картины акции» ----------------------------- */
+function fmtCap(v: number | null): string {
+  if (v == null) return '—';
+  const a = Math.abs(v);
+  if (a >= 1e12) return '$' + (v / 1e12).toFixed(2) + 'T';
+  if (a >= 1e9) return '$' + (v / 1e9).toFixed(1) + 'B';
+  if (a >= 1e6) return '$' + (v / 1e6).toFixed(0) + 'M';
+  return '$' + v.toFixed(0);
+}
+function fmtBig(v: number | null): string {
+  if (v == null) return '—';
+  const a = Math.abs(v), s = v < 0 ? '-' : '';
+  if (a >= 1e9) return s + (a / 1e9).toFixed(2) + 'B';
+  if (a >= 1e6) return s + (a / 1e6).toFixed(1) + 'M';
+  if (a >= 1e3) return s + (a / 1e3).toFixed(1) + 'K';
+  return s + a.toFixed(0);
+}
+function relDate(d: string): string {
+  const t = Date.parse(d);
+  if (!Number.isFinite(t)) return d.slice(0, 10);
+  const days = Math.floor((Date.parse(new Date().toISOString()) - t) / 864e5);
+  if (days <= 0) return 'сегодня';
+  if (days === 1) return 'вчера';
+  if (days < 7) return days + 'д назад';
+  if (days < 60) return Math.floor(days / 7) + 'н назад';
+  return d.slice(0, 10);
+}
+function EmptyTab({ msg }: { msg: string }) { return <div className="card"><div className="loading">{msg}</div></div>; }
+
+function ProfileHeader({ insight, panel }: { insight: TickerInsight | null; panel: TickerPanel }) {
+  const p = insight?.profile;
+  return (
+    <div className="profile">
+      <div className="prof-main">
+        <div className="prof-sym">{panel.symbol}</div>
+        <div className="prof-co">{p?.company || (panel.synthetic ? 'демо-данные' : '')}</div>
+        {p?.sector ? <div className="prof-crumbs">{p.sector}{p.industry ? <> · {p.industry}</> : null}{p.exchange ? <> · {p.exchange}</> : null}</div> : null}
+      </div>
+      <div className="prof-stats">
+        <div className="ps"><span>Капитализация</span><b>{fmtCap(p?.marketCap ?? null)}</b></div>
+        <div className="ps"><span>Бета</span><b>{p?.beta != null ? p.beta.toFixed(2) : (panel.meta.beta != null ? panel.meta.beta.toFixed(2) : '—')}</b></div>
+        <div className="ps"><span>Сотрудники</span><b>{p?.employees != null ? fmtBig(p.employees) : '—'}</b></div>
+        <div className="ps"><span>IPO</span><b>{p?.ipoDate || '—'}</b></div>
+        <div className="ps"><span>52-нед.</span><b>{p?.range52w || '—'}</b></div>
+      </div>
+      {p?.description ? <div className="prof-desc">{p.description.length > 320 ? p.description.slice(0, 320) + '…' : p.description}</div> : null}
+    </div>
+  );
+}
+
+function AnalystTab({ insight, panel }: { insight: TickerInsight | null; panel: TickerPanel }) {
+  if (!insight) return <EmptyTab msg="Загрузка аналитики…" />;
+  const t = insight.target, g = insight.grades;
+  const price = panel.close[panel.close.length - 1];
+  const since = Date.parse(new Date(Date.now() - 90 * 864e5).toISOString());
+  const up90 = g.filter((x) => x.action === 'up' && Date.parse(x.date) >= since).length;
+  const dn90 = g.filter((x) => x.action === 'down' && Date.parse(x.date) >= since).length;
+  // шкала таргета
+  let bar = null;
+  if (t && t.consensus != null) {
+    const lo = Math.min(t.low ?? t.consensus, price), hi = Math.max(t.high ?? t.consensus, price);
+    const x = (v: number) => ((v - lo) / Math.max(1e-9, hi - lo)) * 100;
+    const upside = (t.consensus / price - 1);
+    bar = (
+      <div className="card">
+        <h2><span className="ht">Консенсус-таргет sell-side</span></h2>
+        <p className="desc">Куда аналитики ждут цену. Апсайд к консенсусу: <b className={upside >= 0 ? 'pos' : 'neg'}>{pct(upside)}</b> (цена {price.toFixed(2)}, консенсус {t.consensus.toFixed(2)}).</p>
+        <div className="tgtbar">
+          {t.low != null ? <span className="tg lo" style={{ left: x(t.low) + '%' }} title={'low ' + t.low.toFixed(0)} /> : null}
+          {t.high != null ? <span className="tg hi" style={{ left: x(t.high) + '%' }} title={'high ' + t.high.toFixed(0)} /> : null}
+          <span className="tg cons" style={{ left: x(t.consensus) + '%' }} title={'консенсус ' + t.consensus.toFixed(0)} />
+          <span className="tg price" style={{ left: x(price) + '%' }} title={'цена ' + price.toFixed(0)} />
+        </div>
+        <div className="tgtlegend"><span>low {t.low != null ? t.low.toFixed(0) : '—'}</span><span>● цена</span><span>▮ консенсус</span><span>high {t.high != null ? t.high.toFixed(0) : '—'}</span></div>
+      </div>
+    );
+  }
+  return (
+    <>
+      {bar}
+      <div className="card">
+        <h2><span className="ht">Рейтинговые действия аналитиков</span> <span className="badge">за 90д: <span className="pos">+{up90}</span> / <span className="neg">−{dn90}</span></span></h2>
+        <p className="desc">История апгрейдов/даунгрейдов инвестбанков по тикеру (самые свежие сверху).</p>
+        {g.length ? (
+          <div className="grades">
+            {g.map((x, i) => <GradeItem key={i} g={x} />)}
+          </div>
+        ) : <div className="loading">Нет данных по грейдам (нужен ключ FMP или нет покрытия по тикеру).</div>}
+      </div>
+    </>
+  );
+}
+function GradeItem({ g }: { g: GradeRow }) {
+  const sym = g.action === 'up' ? '▲' : g.action === 'down' ? '▼' : g.action === 'init' ? '✦' : '=';
+  const cls = g.action === 'up' ? 'gr-up' : g.action === 'down' ? 'gr-down' : 'gr-mut';
+  return (
+    <div className="grade">
+      <span className="gr-date">{g.date}</span>
+      <span className={'gr-act ' + cls}>{sym}</span>
+      <span className="gr-firm">{g.firm}</span>
+      <span className="gr-grade">{g.from ? <>{g.from} → </> : null}<b>{g.to || '—'}</b></span>
+    </div>
+  );
+}
+
+function FundaTab({ insight }: { insight: TickerInsight | null }) {
+  if (!insight) return <EmptyTab msg="Загрузка фундаментала…" />;
+  const rows = insight.income;
+  if (!rows.length) return <EmptyTab msg="Нет фундаментальных данных (нужен ключ FMP или нет покрытия по тикеру)." />;
+  const rev = rows.map((r) => r.revenue ?? 0);
+  const maxRev = Math.max(1, ...rev.map((x) => Math.abs(x)));
+  const yoy = (i: number, key: keyof IncomeRow) => {
+    const cur = rows[i][key] as number | null, prev = i >= 4 ? (rows[i - 4][key] as number | null) : null;
+    return cur != null && prev != null && prev !== 0 ? cur / prev - 1 : null;
+  };
+  const lastN = rows.slice(-8).reverse();
+  const li = rows.length - 1;
+  return (
+    <div className="card">
+      <h2><span className="ht">Фундаментал в динамике</span> <span className="badge">{rows.length} кварталов</span></h2>
+      <p className="desc">Выручка по кварталам и тренд маржи/EPS. YoY — к тому же кварталу год назад.</p>
+      <div className="fbars">
+        {rows.map((r, i) => (
+          <div key={i} className="fbar" title={`${r.date}: выручка ${fmtBig(r.revenue)}${yoy(i, 'revenue') != null ? ' · YoY ' + pct(yoy(i, 'revenue') as number) : ''}`}>
+            <span className="fb" style={{ height: clamp(Math.abs(r.revenue ?? 0) / maxRev * 60, 2, 60), background: 'var(--tk-blue)' }} />
+          </div>
+        ))}
+      </div>
+      <div className="row" style={{ gap: 18, marginTop: 8, flexWrap: 'wrap' }}>
+        <KPI k="Выручка (посл.кв)" v={fmtBig(rows[li].revenue)} sub={yoy(li, 'revenue') != null ? 'YoY ' + pct(yoy(li, 'revenue') as number) : ''} subPos={(yoy(li, 'revenue') ?? 0) >= 0} />
+        <KPI k="EPS (посл.кв)" v={rows[li].eps != null ? (rows[li].eps as number).toFixed(2) : '—'} sub={yoy(li, 'eps') != null ? 'YoY ' + pct(yoy(li, 'eps') as number) : ''} subPos={(yoy(li, 'eps') ?? 0) >= 0} />
+        <KPI k="Чистая маржа" v={rows[li].netMargin != null ? pctRaw(rows[li].netMargin as number, 1) : '—'} sub="" subPos />
+        <KPI k="Опер. маржа" v={rows[li].opMargin != null ? pctRaw(rows[li].opMargin as number, 1) : '—'} sub="" subPos />
+      </div>
+      <table style={{ marginTop: 12 }}>
+        <tbody>
+          <tr><th className="l">Квартал</th><th>выручка</th><th>YoY</th><th>EPS</th><th>чист. маржа</th></tr>
+          {lastN.map((r, k) => {
+            const i = rows.indexOf(r);
+            const y = yoy(i, 'revenue');
+            return (
+              <tr key={k}>
+                <td className="l">{r.date}{r.period ? ' · ' + r.period : ''}</td>
+                <td>{fmtBig(r.revenue)}</td>
+                <td className={y == null ? 'mut' : (y >= 0 ? 'pos' : 'neg')}>{y == null ? '—' : pct(y)}</td>
+                <td>{r.eps != null ? r.eps.toFixed(2) : '—'}</td>
+                <td className="mut">{r.netMargin != null ? pctRaw(r.netMargin, 1) : '—'}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+function KPI({ k, v, sub, subPos }: { k: string; v: string; sub: string; subPos: boolean }) {
+  return <div className="stat" style={{ minWidth: 120 }}><div className="k">{k}</div><div className="v">{v}</div>{sub ? <div className={'p ' + (subPos ? 'pos' : 'neg')}>{sub}</div> : null}</div>;
+}
+
+function NewsTab({ insight }: { insight: TickerInsight | null }) {
+  if (!insight) return <EmptyTab msg="Загрузка новостей…" />;
+  const n = insight.news;
+  if (!n.length) return <EmptyTab msg="Лента новостей пуста (нужен ключ FMP или нет покрытия по тикеру)." />;
+  return (
+    <div className="card">
+      <h2><span className="ht">Последние новости</span> <span className="badge">{n.length}</span></h2>
+      <div className="news">
+        {n.map((x, i) => (
+          <a key={i} className="newsitem" href={x.url || undefined} target="_blank" rel="noreferrer">
+            <div className="nw-top"><span className="nw-date">{relDate(x.date)}</span>{x.site ? <span className="nw-site">{x.site}</span> : null}</div>
+            <div className="nw-title">{x.title}</div>
+            {x.snippet ? <div className="nw-snip">{x.snippet.length > 180 ? x.snippet.slice(0, 180) + '…' : x.snippet}</div> : null}
+          </a>
+        ))}
+      </div>
     </div>
   );
 }
