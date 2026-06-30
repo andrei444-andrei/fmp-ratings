@@ -500,14 +500,15 @@ function Detail(props: {
     <div className="detail">
       <div className="detail-top">
         <div className="detail-cell">
-          <div className="small dt-title"><b>Decay по горизонтам</b> (edge) {mono
+          <div className="small dt-title"><b>Decay по горизонтам</b> (edge)</div>
+          <div className="decay-flag">{mono
             ? <span className="flag good">монотонно — признак паттерна</span>
             : <span className="flag gray">немонотонно — вероятно шум</span>}</div>
           <div className="decay">
             {decay.map((d) => (
-              <div key={d.h} className="b"><span>{pct(d.edge, 1)}</span>
+              <div key={d.h} className="b"><span className="dv">{pct(d.edge, 1)}</span>
                 <span className="bar" style={{ height: clamp(Math.abs(d.edge) / maxE * 40, 2, 40), background: d.lowN ? 'var(--tk-soft)' : (d.edge > 0 ? 'var(--tk-up)' : 'var(--tk-down)') }} />
-                <span>{d.h}д</span></div>
+                <span className="dl">{d.h}д</span></div>
             ))}
           </div>
         </div>
