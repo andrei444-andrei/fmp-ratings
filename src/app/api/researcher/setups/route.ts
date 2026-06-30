@@ -21,7 +21,7 @@ export async function POST(req: Request) {
   try {
     const b = await req.json().catch(() => ({}));
     if (!b?.id || !b?.name || !b?.config) return Response.json({ error: 'id, name и config обязательны' }, { status: 400 });
-    await upsertSetup({ id: String(b.id), name: String(b.name), description: b.description, config: b.config, snapshot: b.snapshot, stream: b.stream });
+    await upsertSetup({ id: String(b.id), name: String(b.name), description: b.description, config: b.config, snapshot: b.snapshot, stream: b.stream, streamCols: b.streamCols });
     return Response.json({ ok: true });
   } catch (e: any) {
     const msg = e?.message || String(e);

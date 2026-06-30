@@ -37,4 +37,29 @@ describe('research_setups (libSQL)', () => {
     await deleteSetup('b');
     expect((await listSetups()).map((x) => x.id)).toEqual(['a']);
   });
+
+  it('расширенный поток: факторы на входе (streamCols) + обратная совместимость v1', async () => {
+    // v2: поток несёт значения факторных колонок на дату входа (индексы 7+ выровнены к streamCols)
+    const cols = ['momentum_63', 'vol_21'];
+    const stream2 = [
+      ['2012-05-01', 'XLK', 3.0, 0.5, 6.0, -1.0, -2.0, 12.5, 18.3],
+      ['2012-06-01', 'XLF', -1.0, -0.2, 1.0, -3.0, -3.5, -4.1, 22.0],
+    ];
+    await upsertSetup({ id: 'fx', name: 'top-K', config: CFG, stream: stream2, streamCols: cols });
+    const got = await getSetup('fx');
+    expect(got!.streamCols).toEqual(cols);
+    // значение momentum_63 на входе 1-й сделки = stream[0][7 + indexOf('momentum_63')] (ранжируемое, без look-ahead)
+    expect(got!.stream![0][7 + got!.streamCols!.indexOf('momentum_63')]).toBe(12.5);
+    expect(got!.stream![1][7 + got!.streamCols!.indexOf('vol_21')]).toBe(22.0);
+
+    // v1 (старый формат в БД): голый массив сделок без факторов → streamCols=[], поток по-прежнему читается
+    await libsqlClient.execute({
+      sql: `INSERT INTO research_setups (id,name,description,config,snapshot,stream,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)`,
+      args: ['v1old', 'old', '', JSON.stringify(CFG), '{}', JSON.stringify([['2009-01-02', 'GLD', 1.1, 0.1, 2, -1, -1]]), '2020-01-01', '2020-01-01'],
+    });
+    const old = await getSetup('v1old');
+    expect(old!.streamCols).toEqual([]);
+    expect(old!.stream!.length).toBe(1);
+    expect(old!.stream![0][1]).toBe('GLD');
+  });
 });
