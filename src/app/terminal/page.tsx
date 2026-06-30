@@ -389,26 +389,28 @@ export default function TerminalPage() {
                 ) : null,
               blocks: (
                 <div>
-                  <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+                  {/* masonry: разновысокие карточки укладываются плотно по высоте контента (без «хвостов» пустоты) */}
+                  <div className="columns-1 gap-3.5 sm:columns-2">
                     {data.blocks.map((b) => (
-                      <BlockCard
-                        key={b.def.id}
-                        block={b}
-                        mode={mode}
-                        cell={cell}
-                        spy={spy}
-                        isFav={isFav}
-                        onToggleFav={toggleFav}
-                        onPick={(m, title) => setSel({ block: b, m, title })}
-                        onCompare={loadBlockToCompare}
-                        onEdit={() => setEditor({ block: b, mode: 'edit' })}
-                        onDelete={() => deleteBlock(b.def.custom ? 'custom' : 'seed', b.def.id)}
-                      />
+                      <div key={b.def.id} className="mb-3.5 break-inside-avoid">
+                        <BlockCard
+                          block={b}
+                          mode={mode}
+                          cell={cell}
+                          spy={spy}
+                          isFav={isFav}
+                          onToggleFav={toggleFav}
+                          onPick={(m, title) => setSel({ block: b, m, title })}
+                          onCompare={loadBlockToCompare}
+                          onEdit={() => setEditor({ block: b, mode: 'edit' })}
+                          onDelete={() => deleteBlock(b.def.custom ? 'custom' : 'seed', b.def.id)}
+                        />
+                      </div>
                     ))}
                     <button
                       type="button"
                       onClick={openCreateBasket}
-                      className="flex min-h-[120px] items-center justify-center gap-2 rounded-fk border-2 border-dashed border-line-strong text-[13px] font-semibold text-ink-2 transition-colors hover:border-brand hover:bg-brand-50 hover:text-brand-700"
+                      className="flex min-h-[120px] w-full break-inside-avoid items-center justify-center gap-2 rounded-fk border-2 border-dashed border-line-strong text-[13px] font-semibold text-ink-2 transition-colors hover:border-brand hover:bg-brand-50 hover:text-brand-700"
                     >
                       ＋ Создать корзину
                     </button>
@@ -469,14 +471,14 @@ function DashboardGrid({ cfg, nodes }: { cfg: TermConfig | null; nodes: Record<s
   const order = cfg ? reconcileLayout(cfg.layout) : [...WIDGET_KEYS];
   const hidden = new Set(cfg?.hiddenWidgets ?? []);
   return (
-    <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
+    <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-2">
       {order
         .filter((k) => !hidden.has(k))
         .map((k) => {
           const n = nodes[k];
           if (!n) return null;
           return (
-            <div key={k} className={WIDGET_META[k]?.wide ? 'xl:col-span-2' : ''}>
+            <div key={k} className={WIDGET_META[k]?.wide ? 'lg:col-span-2' : ''}>
               {n}
             </div>
           );
