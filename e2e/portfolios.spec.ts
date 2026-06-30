@@ -12,7 +12,8 @@ function makeStream() {
   const today = Date.now();
   return rets.map((ret, i) => {
     const d = new Date(today - (300 - i * 32) * 864e5).toISOString().slice(0, 10);
-    return [d, 'AAA', ret, ret - 0.5, Math.max(0, ret) + 1, Math.min(0, ret) - 1, Math.min(0, ret) - 2];
+    const sym = i % 2 ? 'BBB' : 'AAA';
+    return [d, sym, ret, ret - 0.5, Math.max(0, ret) + 1, Math.min(0, ret) - 1, Math.min(0, ret) - 2];
   });
 }
 
@@ -53,7 +54,7 @@ test.describe('Портфели /portfolios', () => {
     await expect(page.getByTestId('portfolio-equity-svg')).toBeVisible({ timeout: 30000 });
     // метрика «Загрузка» содержит процент
     await expect(page.getByTestId('portfolio-metrics')).toContainText('Загрузка');
-    await expect(page.getByTestId('portfolio-meta')).toContainText('сделок');
+    await expect(page.getByTestId('portfolio-meta')).toContainText('сигналов');
 
     // уборка
     await request.delete(`/api/researcher/setups?id=${encodeURIComponent(setupId)}`);
