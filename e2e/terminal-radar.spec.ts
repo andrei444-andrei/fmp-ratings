@@ -41,15 +41,33 @@ function cpiHistory() {
   };
 }
 
+// Минимальный overview, чтобы дашборд отрисовался МГНОВЕННО и детерминированно (без обращения к
+// медленному реальному бэкенду в CI). Пустой blocks — допустимо (грид рендерится, движение дня пустое).
+const OVERVIEW_FIXTURE = {
+  asOf: '2026-06-29',
+  blocks: [],
+  regime: { score: 42, avgCorr: 0.35, volRegime: 1.1, breadth: 55, label: 'neutral' },
+  correlation: null,
+  synthetic: false,
+  live: false,
+};
+
 test.describe('Радар событий /terminal — всплывашка истории + masonry', () => {
   test.beforeEach(async ({ page }) => {
-    test.setTimeout(120_000); // холодный старт /terminal + синтетический overview под параллельной нагрузкой
-    await page.route('**/api/market/radar', (r: Route) => r.fulfill({ json: RADAR_FIXTURE }));
-    await page.route('**/api/market/indicator**', (r: Route) => {
-      const url = r.request().url();
-      if (url.includes('id=cpi')) return r.fulfill({ json: cpiHistory() });
-      // прочее — пустой ряд (валидно для качественных событий)
-      return r.fulfill({ json: { kind: 'macro', id: null, ticker: null, title: '—', eng: null, desc: 'нет данных', unit: '', fmt: 'raw', goodHigh: null, points: [], hasSeries: false, synthetic: false } });
+    test.setTimeout(120_000);
+    // Единый детерминированный мок всех market-эндпоинтов: ни одного обращения к реальному бэкенду
+    // (в CI он медленный/делает сетевые вызовы FMP) → дашборд и радар рендерятся сразу.
+    await page.route('**/api/market/**', (r: Route) => {
+      const u = r.request().url();
+      if (u.includes('/overview')) return r.fulfill({ json: OVERVIEW_FIXTURE });
+      if (u.includes('/config')) return r.fulfill({ json: {} });
+      if (u.includes('/radar')) return r.fulfill({ json: RADAR_FIXTURE });
+      if (u.includes('/indicator')) {
+        if (u.includes('id=cpi')) return r.fulfill({ json: cpiHistory() });
+        return r.fulfill({ json: { kind: 'macro', id: null, ticker: null, title: '—', eng: null, desc: 'нет данных', unit: '', fmt: 'raw', goodHigh: null, points: [], hasSeries: false, synthetic: false } });
+      }
+      // прочие карточки (ротация/ставки/риск/корреляция) — не предмет теста; пусть отрисуют состояние ошибки
+      return r.fulfill({ status: 500, json: { error: 'mocked' } });
     });
   });
 
