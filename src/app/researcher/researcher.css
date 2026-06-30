@@ -170,6 +170,11 @@
 .rsx .setupbar .chip.setup .m { color: var(--fk-text-3); font-weight: 500; font-variant-numeric: tabular-nums; }
 .rsx .setupbar .chip.setup .bx { margin-left: 2px; color: var(--fk-text-3); font-size: 10px; }
 .rsx .setupbar .chip.setup .bx:hover { color: var(--fk-down-text, #c81e3c); }
+/* активный сетап (текущий рецепт совпадает) — сплошная заливка */
+.rsx .setupbar .chip.setup.on { background: var(--fk-brand-700, #2563eb); color: #fff; border-color: transparent; box-shadow: var(--fk-shadow-sm); }
+.rsx .setupbar .chip.setup.on .m { color: rgba(255,255,255,.82); }
+.rsx .setupbar .chip.setup.on .bx { color: rgba(255,255,255,.72); }
+.rsx .setupbar .chip.setup.on .bx:hover { color: #fff; }
 .rsx .setupbar .rfin { font: inherit; font-size: 12px; border: 1px solid var(--fk-line-strong); border-radius: 7px; padding: 4px 7px; background: #fff; }
 
 /* график сделок: сетка карточек «цена актива + периоды сделок» */

@@ -74,6 +74,8 @@ function validateFormula(name: string, expr: string): string | null {
 const cls = (v: number | null) => (v == null ? 'flat' : v > 0 ? 'up' : v < 0 ? 'down' : 'flat');
 const fnum = (v: number | null, d = 1) => (v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(d));
 const r2 = (x: number) => Math.round(x * 100) / 100; // компактные числа в потоке/снимке сетапа
+// Подпись «рецепта» сетапа (вселенная+условия+горизонт+окно) — для определения активного сетапа.
+const recipeSig = (uni: string[], blocks: unknown, horizon?: number, years?: number) => JSON.stringify({ u: uni.join(','), b: blocks ?? [], h: horizon, y: years });
 const isRsiKey = (k: string) => k.startsWith('rsi');
 
 // Дефолты конфигурации скринера (для старта и кнопки «Сбросить»).
@@ -324,6 +326,12 @@ export default function Researcher() {
   const byYraw = useMemo(() => (panel ? screenByYear(panel, blk, minYear, fmap) : []), [panel, blocks, minYear, fmap]); // eslint-disable-line react-hooks/exhaustive-deps
   const allDeals = useMemo(() => (panel ? screenAllDeals(panel, blk, minYear, fmap) : []), [panel, blocks, minYear, fmap]); // eslint-disable-line react-hooks/exhaustive-deps
   const consol = useMemo(() => dealStats(allDeals), [allDeals]);
+
+  // Активный сетап: текущий рецепт совпадает с сохранённым → подсветка чипа + метка в шапке.
+  // Сбрасывается сам при любом изменении вселенной/условий/горизонта/окна.
+  const curSig = useMemo(() => recipeSig(universe, blocks, horizon, years), [universe, blocks, horizon, years]);
+  const activeSetupId = useMemo(() => setups.find((s) => recipeSig(parseUni(s.config?.uniText ?? ''), s.config?.blocks, s.config?.horizon, s.config?.years) === curSig)?.id ?? null, [setups, curSig]);
+  const activeSetup = activeSetupId ? setups.find((s) => s.id === activeSetupId) : null;
 
   // Сетапы — сохранённые находки скринера (рецепт + снимок цифр + поток сделок) в БД, навсегда.
   const saveSetup = useCallback(async (name: string, description: string) => {
@@ -609,7 +617,10 @@ export default function Researcher() {
       <div className="card">
         <div className="card-b">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
-            <span className="card-t">5 · Результаты</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span className="card-t">5 · Результаты</span>
+              {activeSetup && <span className="badge brand" data-testid="active-setup" title="текущий рецепт совпадает с этим сетапом">✓ Сетап: {activeSetup.name}</span>}
+            </div>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
               <span className="sub">{!panel ? '' : view === 'all' ? `${consol.n} сделок · ${consol.tickers} тикеров`
                 : view === 'tickers' ? `${matchedN} сделок · ${byT.length}${byT.length !== byTraw.length ? `/${byTraw.length}` : ''} тикеров`
@@ -624,9 +635,9 @@ export default function Researcher() {
           <div className="setupbar">
             <span className="lbl">Сетапы:</span>
             {setups.map((s) => (
-              <button key={s.id} type="button" data-testid="setup-chip" className="chip setup" onClick={() => loadSetup(s)}
+              <button key={s.id} type="button" data-testid="setup-chip" className={`chip setup${activeSetupId === s.id ? ' on' : ''}`} onClick={() => loadSetup(s)}
                 title={`${s.description || 'без описания'}\nвселенная: ${s.config?.uniText || '—'}\nсделок ${s.snapshot?.n ?? '—'} · доля+ ${s.snapshot?.hitPct ?? '—'}% · ср.return ${s.snapshot?.avgRet ?? '—'}% · t-стат ${s.snapshot?.tstat ?? '—'} · горизонт ${s.config?.horizon ?? '—'}д · клик — загрузить`}>
-                <b>{s.name}</b>
+                <b>{activeSetupId === s.id ? '✓ ' : ''}{s.name}</b>
                 <span className="m">N {s.snapshot?.n ?? '—'} · ret {s.snapshot?.avgRet ?? '—'}% · t {s.snapshot?.tstat ?? '—'}</span>
                 <span className="bx" onClick={(e) => { e.stopPropagation(); removeSetup(s.id); }} title="удалить сетап">✕</span>
               </button>
