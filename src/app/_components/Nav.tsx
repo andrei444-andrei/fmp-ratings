@@ -8,9 +8,6 @@ const LINKS = [
   { href: '/ticker', label: 'Анализ тикера' },
   { href: '/researcher', label: 'Скринер' },
   { href: '/portfolios', label: 'Портфели' },
-  { href: '/signals', label: 'Модель сигналов' },
-  { href: '/switch', label: 'Переключение A/B' },
-  { href: '/backtest', label: 'Тестирование стратегий' },
   { href: '/quant', label: 'Аналитика алгоритмов' },
   // Polymarket временно скрыт из навигации (страницы /polymarket и /polymarket/wallets живы)
   { href: '/admin', label: 'Admin' },

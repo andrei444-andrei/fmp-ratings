@@ -29,7 +29,7 @@ export default defineConfig({
     command: process.env.CI
       ? `npm run build && npx next start -p ${PORT}`
       : `npx next start -p ${PORT}`,
-    url: `${baseURL}/signals`,
+    url: `${baseURL}/terminal`,
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,
     // Локальная SQLite + детерминизм: без ключей AIMLAPI/FMP. Дефолтного скрипта в

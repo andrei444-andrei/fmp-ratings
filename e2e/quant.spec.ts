@@ -127,7 +127,7 @@ test.describe('Аналитика алгоритмов /quant', () => {
   test('навигация содержит ссылки на разделы', async ({ page }) => {
     await page.goto('/quant');
     await expect(page.getByRole('link', { name: 'Аналитика алгоритмов' })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Тестирование стратегий' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Рыночный терминал' })).toBeVisible();
   });
 
   test('страница всегда светлая, даже при глобальной тёмной теме', async ({ page }) => {
