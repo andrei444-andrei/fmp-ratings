@@ -155,6 +155,7 @@ export default function PortfoliosPage() {
   const [err, setErr] = useState('');
   const [gran, setGran] = useState<Gran>('year');
   const [hoverP, setHoverP] = useState<number>(-1);
+  const [selWeek, setSelWeek] = useState<string | null>(null); // выбранная неделя (drill-down)
 
   const loadSetups = useCallback(async () => {
     try {
@@ -347,6 +348,8 @@ export default function PortfoliosPage() {
     [result, gran],
   );
   const hp = hoverP >= 0 && hoverP < periods.length ? periods[hoverP] : null;
+  const weekDetail = useMemo(() => (result && selWeek ? result.weeks.find((w) => w.start === selWeek) || null : null), [result, selWeek]);
+  useEffect(() => { setSelWeek(null); }, [result, gran]);
 
   const canNext = step === 1 ? selected.size > 0 : true;
   const selectedNames = setups.filter((s) => selected.has(s.id)).map((s) => s.name);
@@ -570,8 +573,11 @@ export default function PortfoliosPage() {
                     {periods.slice(-120).reverse().map((p, i) => {
                       const realIdx = periods.length - 1 - i;
                       return (
-                        <tr key={p.key} className={`click${realIdx === hoverP ? ' on' : ''}`} onMouseEnter={() => setHoverP(realIdx)} onMouseLeave={() => setHoverP(-1)}>
-                          <td className="l">{p.label}</td>
+                        <tr key={p.key} data-testid={gran === 'week' ? 'pf-week-row' : undefined}
+                          className={`click${realIdx === hoverP ? ' on' : ''}${gran === 'week' && selWeek === p.label ? ' sel' : ''}`}
+                          onMouseEnter={() => setHoverP(realIdx)} onMouseLeave={() => setHoverP(-1)}
+                          onClick={() => gran === 'week' && setSelWeek(p.label)}>
+                          <td className="l">{p.label}{gran === 'week' && <span className="pf-drill"> ↳</span>}</td>
                           <td className={signCls(p.ret)}>{signPct(p.ret)}</td>
                           <td>{signPct(p.spyRet)}</td>
                           <td className={signCls(p.ret - p.spyRet)}>{signPct(p.ret - p.spyRet)}</td>
@@ -583,6 +589,39 @@ export default function PortfoliosPage() {
                 </table>
               </div>
               {periods.length > 120 && <div className="pf-note">Показаны последние 120 периодов из {periods.length}.</div>}
+              {gran === 'week' && <div className="pf-note">Грануляция «Неделя»: кликни строку ↳ — состав недели, экспозиция по именам и причина (сетапы).</div>}
+            </div></div>
+          )}
+
+          {/* Drill-down недели: что держалось, экспозиция в %, причины */}
+          {ran && gran === 'week' && weekDetail && (
+            <div className="card"><div className="card-b">
+              <div className="pf-period-head">
+                <div className="card-t">Неделя {weekDetail.start} — состав и причины</div>
+                <button className="btn sm" data-testid="pf-week-close" onClick={() => setSelWeek(null)}>✕ закрыть</button>
+              </div>
+              <div className="pf-week-meta" data-testid="pf-week-meta">
+                доходность <span className={signCls(weekDetail.ret)}>{signPct(weekDetail.ret)}</span> · SPY {signPct(weekDetail.spyRet)} · загрузка {pct(weekDetail.loading, 0)} · в паркинге {pct(weekDetail.parkingShare, 0)}
+              </div>
+              {weekDetail.setupsActive.length > 0 && (
+                <div className="pf-note">Причина экспозиции — активные сигналы сетапов: <b>{weekDetail.setupsActive.join(', ')}</b>.</div>
+              )}
+              <div className="pf-ptable-wrap" style={{ marginTop: 10 }}>
+                <table className="pf-ptable" data-testid="pf-week-positions">
+                  <thead><tr><th className="l">Тикер</th><th>Экспозиция</th><th>Дней</th><th className="l">Сетапы</th></tr></thead>
+                  <tbody>
+                    {weekDetail.positions.map((p) => (
+                      <tr key={p.symbol}>
+                        <td className="l sy">{p.symbol}</td>
+                        <td>{pct(p.weight, 1)}</td>
+                        <td>{p.days}</td>
+                        <td className="l">{p.setups.join(', ')}</td>
+                      </tr>
+                    ))}
+                    {!weekDetail.positions.length && <tr><td className="l" colSpan={4}>всю неделю в паркинге — позиций нет</td></tr>}
+                  </tbody>
+                </table>
+              </div>
             </div></div>
           )}
         </>

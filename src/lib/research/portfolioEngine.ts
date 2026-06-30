@@ -58,12 +58,25 @@ export type PortfolioMetrics = {
   sharpeVsSpyActive: number | null; // sharpeActive ÷ spySharpeActive
 };
 
+export type WeekPosition = { symbol: string; weight: number; days: number; setups: string[] }; // ср. вес за неделю, дней держания, какие сетапы дали имя
+export type WeekSnapshot = {
+  start: string; // понедельник недели
+  end: string; // последний торговый день недели в периоде
+  loading: number; // доля дней недели в рынке
+  ret: number; // доходность портфеля за неделю
+  spyRet: number; // SPY за неделю
+  parkingShare: number; // средняя доля в паркинге за неделю
+  positions: WeekPosition[]; // что держалось (топ по весу)
+  setupsActive: string[]; // сетапы, давшие имена на этой неделе (причина экспозиции)
+};
+
 export type PortfolioResult = {
   metrics: PortfolioMetrics;
   equity: DayPoint[];
   benchEquity: DayPoint[];
   deployment: number[]; // доля развёрнутого капитала по дням (для графика загрузки)
   inMarket: boolean[]; // по дням: открыта ли ≥1 реальная позиция (для разбивки загрузки по периодам)
+  weeks: WeekSnapshot[]; // понедельные снимки состава (для drill-down: что держится + % + причины)
 };
 
 const TRADING_DAYS = 252;
@@ -152,7 +165,7 @@ export function buildPortfolio(
   bil: Bar[] | null,
   panel: PricePanel,
 ): PortfolioResult {
-  const empty: PortfolioResult = { metrics: emptyMetrics(setups.length), equity: [], benchEquity: [], deployment: [], inMarket: [] };
+  const empty: PortfolioResult = { metrics: emptyMetrics(setups.length), equity: [], benchEquity: [], deployment: [], inMarket: [], weeks: [] };
 
   const cal = dedupSortBars(spy);
   if (cal.length < 2 || !setups.length) return empty;
@@ -174,6 +187,7 @@ export function buildPortfolio(
   // сигналы → день входа (индекс календаря) → множество тикеров (объединение сетапов = режим «все»)
   const signalsByDay = new Map<number, Set<string>>();
   const symbols = new Set<string>();
+  const symbolToSetups = new Map<string, Set<string>>(); // тикер → какие сетапы его давали (для «почему»)
   let nSignals = 0;
   let minEntry = Infinity;
   let lastEntry = -Infinity;
@@ -187,6 +201,9 @@ export function buildPortfolio(
       if (!set) signalsByDay.set(e, (set = new Set()));
       set.add(sym);
       symbols.add(sym);
+      let ss = symbolToSetups.get(sym);
+      if (!ss) symbolToSetups.set(sym, (ss = new Set()));
+      ss.add(s.name);
       nSignals++;
       if (e < minEntry) minEntry = e;
       if (e > lastEntry) lastEntry = e;
@@ -225,6 +242,16 @@ export function buildPortfolio(
     return c > 0 ? sum / c : NaN;
   };
 
+  // тикеры корзины с валидной ценой на день k (для назначения весов состава)
+  const basketValid = (basket: Set<string>, k: number): string[] => {
+    const out: string[] = [];
+    for (const sym of basket) {
+      const p = calPrices.get(sym);
+      if (p && Number.isFinite(p[k - 1]) && Number.isFinite(p[k]) && p[k - 1] > 0) out.push(sym);
+    }
+    return out;
+  };
+
   const N_LAD = clampN(cfg.ladderN);
   const maxHold = cfg.execution === 'ladder' ? N_LAD : cfg.execution === 'weekly' ? 5 : 21;
   const start = minEntry;
@@ -233,6 +260,8 @@ export function buildPortfolio(
   const equity: number[] = [1];
   const inMarket: boolean[] = [false];
   const deployment: number[] = [0];
+  const dayWeights: Map<string, number>[] = [new Map()]; // по дням: тикер → вес в портфеле
+  const dayParking: number[] = [1]; // по дням: доля в паркинге
   let v = 1;
 
   if (cfg.execution === 'ladder') {
@@ -240,28 +269,39 @@ export function buildPortfolio(
     for (let k = start + 1; k <= end; k++) {
       let sum = 0;
       let real = 0;
+      const wmap = new Map<string, number>();
+      let park = 0;
       for (let j = 1; j <= N_LAD; j++) {
         const e = k - j;
-        let r: number;
         if (e < start) {
-          r = parkRate(k); // капитал ещё не развёрнут → слот в паркинге
-        } else {
-          const basket = signalsByDay.get(e);
-          const br = basket && basket.size ? eqwReturn(basket, k) : NaN;
-          if (Number.isFinite(br)) {
-            r = br;
-            real++;
-          } else {
-            r = parkRate(k); // пустой день или нет цен → паркинг
-          }
+          sum += parkRate(k); // капитал ещё не развёрнут → слот в паркинге
+          park += 1 / N_LAD;
+          continue;
         }
-        sum += r;
+        const basket = signalsByDay.get(e);
+        const valid = basket && basket.size ? basketValid(basket, k) : [];
+        if (valid.length) {
+          let sr = 0;
+          for (const s of valid) {
+            const p = calPrices.get(s)!;
+            sr += p[k] / p[k - 1] - 1;
+          }
+          sum += sr / valid.length;
+          real++;
+          const w = 1 / N_LAD / valid.length;
+          for (const s of valid) wmap.set(s, (wmap.get(s) || 0) + w);
+        } else {
+          sum += parkRate(k); // пустой день или нет цен → паркинг
+          park += 1 / N_LAD;
+        }
       }
       const dayRet = sum / N_LAD;
       v *= 1 + dayRet;
       equity.push(v);
       inMarket.push(real > 0);
       deployment.push(real / N_LAD);
+      dayWeights.push(wmap);
+      dayParking.push(park);
     }
   } else {
     // периодический ребаланс: на границе недели/месяца на 100% в имена с сигналом за прошедший период
@@ -309,6 +349,13 @@ export function buildPortfolio(
       equity.push(v);
       inMarket.push(hv > 0);
       deployment.push(v > 0 ? hv / v : 0);
+      const wmap = new Map<string, number>();
+      for (const [sym, u] of holdings) {
+        const p = calPrices.get(sym)?.[k];
+        if (Number.isFinite(p as number) && v > 0) wmap.set(sym, (u * (p as number)) / v);
+      }
+      dayWeights.push(wmap);
+      dayParking.push(v > 0 ? cash / v : 0);
     }
   }
 
@@ -392,6 +439,58 @@ export function buildPortfolio(
     sharpeVsSpyActive,
   };
 
+  // понедельные снимки состава (drill-down: что держится + % экспозиции + причины)
+  const weekKeyOf = (calIdx: number): number => Math.floor((Date.parse(calDates[calIdx] + 'T00:00:00Z') / 86400000 - 4) / 7);
+  const weeks: WeekSnapshot[] = [];
+  {
+    let a = 0;
+    let curWk = weekKeyOf(start);
+    const flushWeek = (b: number) => {
+      const wAgg = new Map<string, { w: number; days: number }>();
+      let parkSum = 0;
+      let inm = 0;
+      let cnt = 0;
+      const from = Math.max(a, 1);
+      for (let i = from; i <= b; i++) {
+        cnt++;
+        if (inMarket[i]) inm++;
+        parkSum += dayParking[i] ?? 0;
+        const wm = dayWeights[i];
+        if (wm) for (const [s, w] of wm) {
+          const e = wAgg.get(s) || { w: 0, days: 0 };
+          e.w += w;
+          if (w > 0) e.days++;
+          wAgg.set(s, e);
+        }
+      }
+      if (cnt === 0) return;
+      const baseIdx = a === 0 ? 0 : a - 1;
+      const ret = equity[baseIdx] > 0 ? equity[b] / equity[baseIdx] - 1 : 0;
+      const sBase = spyClose[start + baseIdx];
+      const spyRet = sBase > 0 ? spyClose[start + b] / sBase - 1 : 0;
+      const positions: WeekPosition[] = [...wAgg.entries()]
+        .map(([symbol, e]) => ({ symbol, weight: e.w / cnt, days: e.days, setups: [...(symbolToSetups.get(symbol) || [])] }))
+        .filter((p) => p.weight > 1e-6)
+        .sort((x, y) => y.weight - x.weight)
+        .slice(0, 30);
+      weeks.push({
+        start: new Date((curWk * 7 + 4) * 86400000).toISOString().slice(0, 10),
+        end: calDates[start + b],
+        loading: cnt ? inm / cnt : 0,
+        ret,
+        spyRet,
+        parkingShare: cnt ? parkSum / cnt : 0,
+        positions,
+        setupsActive: [...new Set(positions.flatMap((p) => p.setups))],
+      });
+    };
+    for (let i = 1; i < equity.length; i++) {
+      const wk = weekKeyOf(start + i);
+      if (wk !== curWk) { flushWeek(i - 1); a = i; curWk = wk; }
+    }
+    flushWeek(equity.length - 1);
+  }
+
   const equityPts: DayPoint[] = equity.map((vv, i) => ({ d: calDates[start + i], v: vv }));
-  return { metrics, equity: equityPts, benchEquity, deployment, inMarket };
+  return { metrics, equity: equityPts, benchEquity, deployment, inMarket, weeks };
 }
