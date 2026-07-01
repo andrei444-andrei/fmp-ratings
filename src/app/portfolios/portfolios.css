@@ -17,13 +17,22 @@
 .rsx .pf-controls .btn.apply.on { background: var(--fk-brand-700, #2563eb); color: #fff; border-color: transparent; }
 .rsx .pf-controls .grow { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 
-/* сохранённые портфели */
-.rsx .pf-saved { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; padding: 8px 10px; background: var(--fk-surface-2); border-radius: 10px; }
-.rsx .pf-saved .lbl { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--fk-text-3); }
-.rsx .pf-saved .chip.pf { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--fk-brand-100); background: var(--fk-brand-50); color: var(--fk-brand-700); border-radius: 999px; padding: 4px 10px; font-size: 11.5px; cursor: pointer; }
-.rsx .pf-saved .chip.pf:hover { filter: brightness(.98); }
-.rsx .pf-saved .chip.pf .bx { margin-left: 2px; color: var(--fk-text-3); font-size: 10px; }
-.rsx .pf-saved .chip.pf .bx:hover { color: var(--fk-down-text, #c81e3c); }
+/* библиотека тестов (таблица) */
+.rsx .pf-lib-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.rsx .pf-lib-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.rsx .seg.pf-sort { width: auto; }
+.rsx .seg.pf-sort button { padding: 4px 12px; }
+.rsx table.pf-lib td, .rsx table.pf-lib th { padding: 7px 11px; font-variant-numeric: tabular-nums; }
+.rsx table.pf-lib tbody tr.click { cursor: pointer; }
+.rsx table.pf-lib tbody tr.click:hover td { background: var(--fk-surface-2); }
+.rsx table.pf-lib tbody tr.sel td { background: var(--fk-brand-50); }
+.rsx table.pf-lib tbody tr.fav td { background: color-mix(in srgb, var(--fk-warn-text, #b5740a) 8%, transparent); }
+.rsx table.pf-lib tbody tr.fav.sel td { background: color-mix(in srgb, var(--fk-warn-text, #b5740a) 14%, var(--fk-brand-50)); }
+.rsx table.pf-lib td.pf-star { text-align: center; color: var(--fk-warn-text, #b5740a); font-size: 15px; cursor: pointer; user-select: none; width: 30px; }
+.rsx table.pf-lib td.pf-star:hover { filter: brightness(1.1); }
+.rsx table.pf-lib td.sy { font-weight: 650; }
+.rsx table.pf-lib td.bx { text-align: center; color: var(--fk-text-3); cursor: pointer; width: 30px; }
+.rsx table.pf-lib td.bx:hover { color: var(--fk-down-text, #c81e3c); }
 
 /* сетка метрик */
 .rsx .statgrid .stat .v.up { color: var(--fk-up-text, #0a8a60); }

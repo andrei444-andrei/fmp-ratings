@@ -100,19 +100,31 @@ test.describe('Портфели /portfolios', () => {
     await runWizard(page, name);
     await expect(page.getByTestId('portfolio-metrics')).toBeVisible({ timeout: 30000 });
 
-    // автосохранённый тест появился чипом (запасное имя содержит имя сетапа)
+    // автосохранённый тест появился строкой в библиотеке (запасное имя содержит имя сетапа)
     const pchip = page.getByTestId('portfolio-chip').filter({ hasText: name });
     await expect(pchip).toBeVisible({ timeout: 15000 });
+    // библиотека показывает снимок метрик (таблица с колонками)
+    await expect(page.getByTestId('pf-lib-table')).toBeVisible();
 
     // персист после перезагрузки → открытие пересчитывает
     await page.reload();
     const pchip2 = page.getByTestId('portfolio-chip').filter({ hasText: name });
     await expect(pchip2).toBeVisible({ timeout: 15000 });
-    await pchip2.click();
+
+    // избранное: звезда помечает тест (строка получает класс fav, закрепляется сверху)
+    await pchip2.getByTestId('portfolio-fav').click();
+    await expect(page.getByTestId('portfolio-chip').filter({ hasText: name })).toHaveClass(/fav/, { timeout: 10000 });
+
+    // поиск по имени фильтрует список
+    await page.getByTestId('pf-lib-search').fill(name);
+    await expect(page.getByTestId('portfolio-chip').filter({ hasText: name })).toBeVisible();
+    await page.getByTestId('pf-lib-search').fill('');
+
+    await page.getByTestId('portfolio-chip').filter({ hasText: name }).click();
     await expect(page.getByTestId('portfolio-metrics')).toBeVisible({ timeout: 30000 });
 
     // уборка
-    await pchip2.locator('[data-testid="portfolio-chip-del"]').click();
+    await page.getByTestId('portfolio-chip').filter({ hasText: name }).locator('[data-testid="portfolio-chip-del"]').click();
     await expect(page.getByTestId('portfolio-chip').filter({ hasText: name })).toHaveCount(0);
     await request.delete(`/api/researcher/setups?id=${encodeURIComponent(setupId)}`);
   });
