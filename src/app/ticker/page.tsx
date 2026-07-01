@@ -330,14 +330,16 @@ export default function TickerPage() {
               {chartEngine === 'lwc' ? (
                 <LwcChart panel={panel} sma50On={sma50On} sma200On={sma200On} logOn={logOn} range={chartRange} />
               ) : (
-                <Chart panel={panel} sma50On={sma50On} sma200On={sma200On} ddOn={ddOn} logOn={logOn} range={chartRange} tipRef={tipRef} hlRef={hlRef} />
+                <Chart panel={panel} sma50On={sma50On} sma200On={sma200On} ddOn={ddOn} logOn={logOn} range={chartRange} tipRef={tipRef} hlRef={hlRef} events={insight?.events || []} />
               )}
               <div className="legend">
                 <span><i style={{ background: 'var(--tk-blue)' }} />Цена</span>
                 {sma50On && <span><i style={{ background: 'var(--tk-sma50)' }} />SMA50</span>}
                 {sma200On && <span><i style={{ background: 'var(--tk-sma200)' }} />SMA200</span>}
+                {chartEngine === 'svg' && insight?.events?.length ? <><span><i style={{ background: 'var(--tk-blue)', borderRadius: '50%' }} />отчёт</span><span><i style={{ background: 'var(--tk-up)', borderRadius: '50%' }} />дивиденд</span></> : null}
                 <span className="small">{panel.symbol} · {years[0]}–{years[years.length - 1]} · {panel.dates.length} баров</span>
               </div>
+              <EventTimeline events={insight?.events || []} />
             </div>
 
             <div className="card">
@@ -1050,9 +1052,25 @@ function AiBox({ panel, results, hidden, H, baselineMean, outLabel }: { panel: T
   );
 }
 
-function Chart({ panel, sma50On, sma200On, ddOn, logOn, range, tipRef, hlRef }: {
+function EventTimeline({ events }: { events: TickerInsight['events'] }) {
+  if (!events?.length) return null;
+  const recent = [...events].reverse().slice(0, 12); // новые/ожидаемые — первыми
+  return (
+    <div className="evtl">
+      <span className="evtl-h">События:</span>
+      {recent.map((e, i) => (
+        <span key={i} className="evi" title={e.date + ' · ' + e.label}>
+          <i className={'evd ' + (e.type === 'dividend' ? 'div' : e.up === true ? 'up' : e.up === false ? 'down' : 'ern')} />
+          <b>{e.date.slice(0, 7)}</b> {e.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+function Chart({ panel, sma50On, sma200On, ddOn, logOn, range, tipRef, hlRef, events }: {
   panel: TickerPanel; sma50On: boolean; sma200On: boolean; ddOn: boolean; logOn: boolean; range: number;
   tipRef: React.RefObject<HTMLDivElement | null>; hlRef: React.RefObject<SVGLineElement | null>;
+  events?: TickerInsight['events'];
 }) {
   const W = 560, Hh = 240, pad = { l: 38, r: 8, t: 8, b: 18 };
   const geom = useMemo(() => {
@@ -1082,6 +1100,24 @@ function Chart({ panel, sma50On, sma200On, ddOn, logOn, range, tipRef, hlRef }: 
     return { n, s0, span, step, xs, priceD: path(c), sma50D: path(panel.sma50), sma200D: path(panel.sma200), gridArr, dd, yticks };
   }, [panel, logOn, ddOn, range]);
 
+  // Маркеры событий (отчёты/дивиденды) по низу оси. Дату события кладём на ближайший торговый день ≤ даты.
+  const markers = useMemo(() => {
+    if (!events?.length) return [] as { x: number; type: string; up: boolean | null; label: string; date: string }[];
+    const dates = panel.dates, n = dates.length;
+    const idxOf = (d: string) => { let lo = 0, hi = n - 1, res = -1; while (lo <= hi) { const m = (lo + hi) >> 1; if (dates[m] <= d) { res = m; lo = m + 1; } else hi = m - 1; } return res; };
+    const showDiv = (n - geom.s0) < 1600; // на длинном окне дивиденды не показываем — было бы месиво
+    const out: { x: number; type: string; up: boolean | null; label: string; date: string }[] = [];
+    for (const e of events) {
+      if (e.type === 'dividend' && !showDiv) continue;
+      const i = idxOf(e.date);
+      if (i < geom.s0 || i > n - 1) continue;
+      out.push({ x: geom.xs(i), type: e.type, up: e.up, label: e.label, date: e.date });
+    }
+    return out;
+  }, [events, panel, geom]);
+  const markerColor = (m: { type: string; up: boolean | null }) =>
+    m.type === 'dividend' ? 'var(--tk-soft)' : m.up === true ? 'var(--tk-up)' : m.up === false ? 'var(--tk-down)' : 'var(--tk-blue)';
+
   function onMove(e: React.MouseEvent<SVGSVGElement>) {
     const svg = e.currentTarget, r = svg.getBoundingClientRect();
     const xpix = (e.clientX - r.left) / r.width * W;
@@ -1109,6 +1145,11 @@ function Chart({ panel, sma50On, sma200On, ddOn, logOn, range, tipRef, hlRef }: 
         {sma200On && <path d={geom.sma200D} fill="none" stroke="var(--tk-sma200)" strokeWidth="1.2" opacity="0.9" />}
         {sma50On && <path d={geom.sma50D} fill="none" stroke="var(--tk-sma50)" strokeWidth="1.2" opacity="0.9" />}
         <path d={geom.priceD} fill="none" stroke="var(--tk-blue)" strokeWidth="1.4" />
+        {markers.map((m, i) => (
+          <circle key={'m' + i} cx={m.x} cy={Hh - pad.b - 2} r="2.3" fill={markerColor(m)} opacity="0.85" stroke="var(--tk-card)" strokeWidth="0.5">
+            <title>{m.date} · {m.label}</title>
+          </circle>
+        ))}
         <line ref={hlRef} x1="0" y1={pad.t} x2="0" y2={Hh - pad.b} stroke="var(--tk-soft)" strokeDasharray="3 3" opacity="0" />
       </svg>
       <div ref={tipRef} className="tip" />

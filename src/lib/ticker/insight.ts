@@ -1,6 +1,6 @@
 import { libsqlClient } from '@/db/client';
 import { getFundamentals } from '@/lib/research/fundamentals';
-import { fmpGrades, fmpGradesHistorical, fmpPriceTargetConsensus, fmpStockNews, fmpIncomeStatement, fmpRatios, fmpKeyMetrics, fmpProfile, fmpAnalystEstimates, fmpPriceTargetSummary, fmpRatiosTtm, fmpPeers } from '@/lib/fmp';
+import { fmpGrades, fmpGradesHistorical, fmpPriceTargetConsensus, fmpStockNews, fmpIncomeStatement, fmpRatios, fmpKeyMetrics, fmpProfile, fmpAnalystEstimates, fmpPriceTargetSummary, fmpRatiosTtm, fmpPeers, fmpEarnings, fmpDividends } from '@/lib/fmp';
 import { translateMany } from './translate';
 
 // Контентный слой «картина акции» для /ticker: грейды sell-side (лента действий + консенсус во времени),
@@ -389,6 +389,39 @@ export async function getPeers(symbol: string, force = false): Promise<PeerRow[]
   return (await getBlob<PeerRow[]>(sym, 'peers')) ?? [];
 }
 
+/* ----------------------------- события (отчёты/дивиденды) ----------------------------- */
+export type EventItem = { date: string; type: 'earnings' | 'dividend'; label: string; up: boolean | null };
+
+export async function getEvents(symbol: string, force = false): Promise<EventItem[]> {
+  await ensureTables();
+  const sym = symbol.toUpperCase();
+  if (hasKey() && (force || !(await isFresh(sym, 'events', 24 * 3600e3)))) {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const [earn, divs]: any[] = await Promise.all([fmpEarnings(sym).catch(() => []), fmpDividends(sym).catch(() => [])]);
+      const out: EventItem[] = [];
+      for (const e of Array.isArray(earn) ? earn : []) {
+        const d = String(e?.date ?? '').slice(0, 10); if (!d) continue;
+        const a = num(e?.epsActual), est = num(e?.epsEstimated);
+        if (a == null && d > today) { out.push({ date: d, type: 'earnings', label: 'Отчёт (ожидается)', up: null }); continue; }
+        if (a == null) continue; // прошлый отчёт без факта — пропускаем
+        const surprise = est != null ? a - est : null;
+        const label = `Отчёт: EPS ${a.toFixed(2)}${est != null ? ` (прогноз ${est.toFixed(2)})` : ''}`;
+        out.push({ date: d, type: 'earnings', label, up: surprise == null ? null : surprise >= 0 });
+      }
+      for (const dv of Array.isArray(divs) ? divs : []) {
+        const d = String(dv?.date ?? '').slice(0, 10); if (!d) continue;
+        const amt = num(dv?.dividend ?? dv?.adjDividend);
+        out.push({ date: d, type: 'dividend', label: `Дивиденд${amt != null ? ' ' + amt.toFixed(2) : ''}`, up: null });
+      }
+      out.sort((a, b) => (a.date < b.date ? -1 : 1));
+      await putBlob(sym, 'events', out);
+      await markFetched(sym, 'events');
+    } catch { /* graceful */ }
+  }
+  return (await getBlob<EventItem[]>(sym, 'events')) ?? [];
+}
+
 /* ----------------------------- профиль-досье ----------------------------- */
 export type Profile = {
   symbol: string; company: string | null; sector: string | null; industry: string | null;
@@ -431,12 +464,13 @@ export type TickerInsight = {
   funda: FundaData;
   estimates: Estimates;
   peers: PeerRow[];
+  events: EventItem[];
   news: NewsRow[];
 };
 export async function getTickerInsight(symbol: string, force = false): Promise<TickerInsight> {
   const sym = symbol.toUpperCase().trim();
-  const [profile, grades, consensus, target, funda, estimates, peers, news] = await Promise.all([
-    getProfile(sym), getGrades(sym, force), getConsensus(sym, force), getPriceTarget(sym, force), getFunda(sym, force), getEstimates(sym, force), getPeers(sym, force), getNews(sym, force),
+  const [profile, grades, consensus, target, funda, estimates, peers, events, news] = await Promise.all([
+    getProfile(sym), getGrades(sym, force), getConsensus(sym, force), getPriceTarget(sym, force), getFunda(sym, force), getEstimates(sym, force), getPeers(sym, force), getEvents(sym, force), getNews(sym, force),
   ]);
   // Перевод на русский: описание компании + заголовки/сниппеты новостей (кэш, graceful).
   try {
@@ -452,5 +486,5 @@ export async function getTickerInsight(symbol: string, force = false): Promise<T
       }
     }
   } catch { /* перевод не обязателен */ }
-  return { symbol: sym, profile, grades, consensus, target, funda, estimates, peers, news };
+  return { symbol: sym, profile, grades, consensus, target, funda, estimates, peers, events, news };
 }
