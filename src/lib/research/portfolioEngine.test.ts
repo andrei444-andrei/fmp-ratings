@@ -13,7 +13,7 @@ function series(n: number, startISO = '2015-01-01', startPrice = 100, dailyRet =
   }
   return out;
 }
-const cfg = (execution: EngineConfig['execution'], ladderN: number, parking: EngineConfig['parking'], maxWeight = 0): EngineConfig => ({ execution, ladderN, parking, selection: 'all', maxWeight });
+const cfg = (execution: EngineConfig['execution'], ladderN: number, parking: EngineConfig['parking'], maxWeight = 0, maxLeverage = 1): EngineConfig => ({ execution, ladderN, parking, selection: 'all', maxWeight, maxLeverage });
 // сигналы по тикеру на индексах календаря [from..to]
 const signalsOn = (dates: string[], from: number, to: number, symbol: string): Signal[] => {
   const out: Signal[] = [];
@@ -187,6 +187,30 @@ describe('buildPortfolio (price-panel simulation)', () => {
     expect(capped.metrics.loading!).toBeLessThan(0.5);
     expect(full.metrics.loading!).toBeGreaterThan(0.9);
     expect(capped.metrics.loading!).toBeLessThan(full.metrics.loading!);
+  });
+
+  it('плечо: много имён + плечо 1.5 → загрузка ~150%; SPY-паркинг плечо выключает', () => {
+    const spy = series(90, '2015-01-01', 100, 0.0003);
+    const dates = spy.map((b) => b.date);
+    const panel: PricePanel = new Map();
+    const syms = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+    syms.forEach((s, i) => panel.set(s, series(90, '2015-01-01', 40 + i, 0.001)));
+    const sigs: Signal[] = [];
+    for (const s of syms) for (const sig of signalsOn(dates, 5, 80, s)) sigs.push(sig);
+    const setups: EngineSetup[] = [{ id: 's', name: 'S', signals: sigs }];
+    const lev = buildPortfolio(setups, cfg('weekly', 5, 'CASH', 0.2, 1.5), spy, null, panel);
+    const flat = buildPortfolio(setups, cfg('weekly', 5, 'CASH', 0.2, 1.0), spy, null, panel);
+    // 8 имён, потолок 20% → per=min(1.5/8,0.2)=0.1875, размещено 1.5 (плечо); без плеча per=0.125, 100%
+    const rb = lev.rebalances.find((r) => r.positions.length >= 8)!;
+    expect(rb.positions[0].weight).toBeCloseTo(0.1875, 4);
+    const rbFlat = flat.rebalances.find((r) => r.positions.length >= 8)!;
+    expect(rbFlat.positions[0].weight).toBeCloseTo(0.125, 4);
+    expect(lev.metrics.loading!).toBeGreaterThan(1.3); // загрузка сверх 100% (плечо)
+    expect(flat.metrics.loading!).toBeLessThan(1.05);
+    expect(lev.metrics.loading!).toBeGreaterThan(flat.metrics.loading!);
+    // SPY-паркинг выключает плечо → загрузка ~100%, не 150%
+    const spyLev = buildPortfolio(setups, cfg('weekly', 5, 'SPY', 0.2, 1.5), spy, null, panel);
+    expect(spyLev.metrics.loading!).toBeLessThan(1.05);
   });
 
   it('пустые входы не валятся', () => {

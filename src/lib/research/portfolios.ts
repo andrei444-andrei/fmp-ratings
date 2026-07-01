@@ -14,6 +14,8 @@ export type PortfolioConfig = {
   ladderN: number; // длина лестницы (дней удержания транша), актуально для execution='ladder'
   parking: Parking; // паркинг простоя
   maxWeight: number; // потолок веса на 1 тикер (доля 0..1); 0 = без лимита. Остаток сверх лимита → паркинг
+  maxLeverage: number; // макс. плечо (1 = без плеча); при SPY-паркинге не используется
+  startYear: number; // год начала бэктеста (0 = с первого сигнала)
 };
 // Снимок ключевых метрик последнего расчёта — чтобы список тестов показывал цифры без пересчёта.
 export type PortfolioSnapshot = {
@@ -62,7 +64,11 @@ function normConfig(raw: any): PortfolioConfig {
   const ladderN = Number.isFinite(ln) && ln > 0 ? Math.min(60, Math.round(ln)) : 5;
   const mw = Number(raw?.maxWeight);
   const maxWeight = Number.isFinite(mw) && mw > 0 && mw < 1 ? Math.round(mw * 1000) / 1000 : 0; // 0 = без лимита; ≥1 бессмысленно
-  return { setupIds, selection: 'all', execution, ladderN, parking, maxWeight };
+  const lv = Number(raw?.maxLeverage);
+  const maxLeverage = Number.isFinite(lv) && lv > 1 ? Math.min(3, Math.round(lv * 100) / 100) : 1; // 1 = без плеча; клампим до 3
+  const sy = Number(raw?.startYear);
+  const startYear = Number.isFinite(sy) && sy >= 1990 && sy <= 2100 ? Math.round(sy) : 0; // 0 = с первого сигнала
+  return { setupIds, selection: 'all', execution, ladderN, parking, maxWeight, maxLeverage, startYear };
 }
 
 const rowToPortfolio = (x: any): PortfolioRow => ({
