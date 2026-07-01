@@ -58,10 +58,16 @@ test.describe('Портфели /portfolios', () => {
     await expect(page.getByTestId('portfolio-meta')).toContainText('сигналов');
     // автосохранение присвоило имя (запасное без ключа AIMLAPI)
     await expect(page.getByTestId('portfolio-name')).not.toHaveValue('');
+    // метрика win-rate vs SPY + подписи лет по оси X
+    await expect(page.getByTestId('portfolio-metrics')).toContainText('Win-rate vs SPY');
+    await expect(page.getByTestId('pf-xaxis')).toBeVisible();
 
     // разбивка по периодам с бенчмарком + переключение грануляции
     await expect(page.getByTestId('pf-period-svg')).toBeVisible();
     await expect(page.getByTestId('pf-period-table')).toBeVisible();
+    // тумблер «SPY на загрузке» добавляет колонку
+    await page.getByTestId('pf-loaded-toggle').click();
+    await expect(page.getByTestId('pf-period-table')).toContainText('SPY (загр)');
     await page.getByTestId('pf-gran').getByRole('button', { name: 'Месяц' }).click();
     await expect(page.getByTestId('pf-period-table')).toBeVisible();
 
@@ -80,6 +86,8 @@ test.describe('Портфели /portfolios', () => {
     await rrow.click();
     await expect(page.getByTestId('pf-reb-positions')).toBeVisible();
     await expect(page.getByTestId('pf-stack').first()).toBeVisible();
+    // доходность выбранной сделки vs SPY
+    await expect(page.getByTestId('pf-reb-sel')).toContainText('доходность');
 
     await request.delete(`/api/researcher/setups?id=${encodeURIComponent(setupId)}`);
   });

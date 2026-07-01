@@ -56,6 +56,9 @@ export type PortfolioMetrics = {
   excessActive: number | null; // activeTotal − spyActiveTotal (превышение vs SPY на нагрузку)
   spySharpeActive: number | null; // Sharpe SPY по дням нагрузки
   sharpeVsSpyActive: number | null; // sharpeActive ÷ spySharpeActive
+  winRateVsSpy: number | null; // доля сделок (ребалансов/входов), обогнавших SPY за то же окно
+  winTrades: number; // сколько сделок обогнали SPY
+  totalTrades: number; // всего сделок с составом
 };
 
 export type WeekPosition = { symbol: string; weight: number; days: number; setups: string[] }; // ср. вес за неделю, дней держания, какие сетапы дали имя
@@ -77,16 +80,19 @@ export type RebalanceEvent = {
   kind: 'rebalance' | 'tranche'; // ребаланс (100%) или дневной вход лестницы (1/N капитала)
   scope: number; // доля капитала этого решения (1 для ребаланса, 1/N для лестницы)
   positions: RebalancePos[]; // доли ВНУТРИ решения (сумма ≈ 1)
+  ret: number; // доходность этого решения за его окно удержания
+  spyRet: number; // SPY за то же окно (для сравнения / win-rate)
 };
 
 export type PortfolioResult = {
   metrics: PortfolioMetrics;
   equity: DayPoint[];
   benchEquity: DayPoint[];
+  benchLoadedEquity: DayPoint[]; // SPY «на той же загрузке»: держим SPY только в дни в рынке, иначе паркинг (старт = 1)
   deployment: number[]; // доля развёрнутого капитала по дням (для графика загрузки)
   inMarket: boolean[]; // по дням: открыта ли ≥1 реальная позиция (для разбивки загрузки по периодам)
   weeks: WeekSnapshot[]; // понедельные снимки состава (для drill-down: что держится + % + причины)
-  rebalances: RebalanceEvent[]; // состав по каждому ребалансу/входу (тикеры + доли)
+  rebalances: RebalanceEvent[]; // состав по каждому ребалансу/входу (тикеры + доли + доходность)
 };
 
 const TRADING_DAYS = 252;
@@ -162,6 +168,7 @@ function emptyMetrics(nSetups: number): PortfolioMetrics {
     sharpeActive: null, returnOnLoading: null, spyTotal: null, spyCagr: null, spyMaxDD: null,
     spySharpe: null, excessTotal: null, excessCagr: null, alphaOnLoading: null, sharpeVsSpy: null,
     activeTotal: null, spyActiveTotal: null, excessActive: null, spySharpeActive: null, sharpeVsSpyActive: null,
+    winRateVsSpy: null, winTrades: 0, totalTrades: 0,
   };
 }
 
@@ -175,7 +182,7 @@ export function buildPortfolio(
   bil: Bar[] | null,
   panel: PricePanel,
 ): PortfolioResult {
-  const empty: PortfolioResult = { metrics: emptyMetrics(setups.length), equity: [], benchEquity: [], deployment: [], inMarket: [], weeks: [], rebalances: [] };
+  const empty: PortfolioResult = { metrics: emptyMetrics(setups.length), equity: [], benchEquity: [], benchLoadedEquity: [], deployment: [], inMarket: [], weeks: [], rebalances: [] };
 
   const cal = dedupSortBars(spy);
   if (cal.length < 2 || !setups.length) return empty;
@@ -325,6 +332,8 @@ export function buildPortfolio(
         kind: 'tranche',
         scope: 1 / N_LAD,
         positions: names.map((s) => ({ symbol: s, weight: 1 / names.length, setups: setupsOf(s) })),
+        ret: 0,
+        spyRet: 0,
       });
     }
     rebalances.sort((a, b) => (a.date < b.date ? -1 : 1));
@@ -363,6 +372,8 @@ export function buildPortfolio(
         kind: 'rebalance',
         scope: valid.length ? 1 : 0,
         positions: valid.map((s) => ({ symbol: s, weight: 1 / valid.length, setups: setupsOf(s) })),
+        ret: 0,
+        spyRet: 0,
       });
       prevReb = k;
     };
@@ -437,6 +448,48 @@ export function buildPortfolio(
   const spySharpeActive = sharpeOf(spyActiveRets);
   const sharpeVsSpyActive = sharpeActive != null && spySharpeActive != null && spySharpeActive > 0 ? sharpeActive / spySharpeActive : null;
 
+  // SPY «на той же загрузке»: держим SPY только в дни, когда стратегия в рынке, иначе паркинг
+  const benchLoadedEquity: DayPoint[] = [{ d: calDates[start], v: 1 }];
+  {
+    let lv = 1;
+    for (let i = 1; i < equity.length; i++) {
+      const k = start + i;
+      const r = inMarket[i] ? (spyClose[k - 1] > 0 ? spyClose[k] / spyClose[k - 1] - 1 : 0) : parkRate(k);
+      lv *= 1 + r;
+      benchLoadedEquity.push({ d: calDates[k], v: lv });
+    }
+  }
+
+  // доходность каждого решения (ребаланс/вход) за его окно удержания + SPY за то же окно
+  const eqwWindow = (syms: string[], a: number, b: number): number => {
+    let sum = 0;
+    let c = 0;
+    for (const s of syms) {
+      const p = calPrices.get(s);
+      if (p && Number.isFinite(p[a]) && Number.isFinite(p[b]) && p[a] > 0) {
+        sum += p[b] / p[a] - 1;
+        c++;
+      }
+    }
+    return c > 0 ? sum / c : 0;
+  };
+  for (let j = 0; j < rebalances.length; j++) {
+    const ev = rebalances[j];
+    const kj = firstIndexGE(ev.date);
+    if (kj >= N) continue;
+    const exit = ev.kind === 'rebalance'
+      ? (j + 1 < rebalances.length ? firstIndexGE(rebalances[j + 1].date) : end) // до следующего ребаланса
+      : Math.min(kj + N_LAD, end); // транш: N дней
+    ev.ret = ev.kind === 'rebalance'
+      ? (equity[kj - start] > 0 ? equity[exit - start] / equity[kj - start] - 1 : 0) // портфель 100% в корзине
+      : eqwWindow(ev.positions.map((p) => p.symbol), kj, exit); // равновзвешенный buy&hold корзины входа
+    ev.spyRet = spyClose[kj] > 0 ? spyClose[exit] / spyClose[kj] - 1 : 0;
+  }
+  const tradedEvents = rebalances.filter((r) => r.positions.length > 0);
+  const winTrades = tradedEvents.filter((r) => r.ret > r.spyRet).length;
+  const totalTrades = tradedEvents.length;
+  const winRateVsSpy = totalTrades ? winTrades / totalTrades : null;
+
   const metrics: PortfolioMetrics = {
     nSetups: setups.length,
     nSignals,
@@ -468,6 +521,9 @@ export function buildPortfolio(
     excessActive,
     spySharpeActive,
     sharpeVsSpyActive,
+    winRateVsSpy,
+    winTrades,
+    totalTrades,
   };
 
   // понедельные снимки состава (drill-down: что держится + % экспозиции + причины)
@@ -523,5 +579,5 @@ export function buildPortfolio(
   }
 
   const equityPts: DayPoint[] = equity.map((vv, i) => ({ d: calDates[start + i], v: vv }));
-  return { metrics, equity: equityPts, benchEquity, deployment, inMarket, weeks, rebalances: rebalances.slice(-1500) };
+  return { metrics, equity: equityPts, benchEquity, benchLoadedEquity, deployment, inMarket, weeks, rebalances: rebalances.slice(-1500) };
 }
