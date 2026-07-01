@@ -106,7 +106,8 @@ export type PortfolioResult = {
   equity: DayPoint[];
   benchEquity: DayPoint[];
   benchLoadedEquity: DayPoint[]; // SPY «на той же загрузке»: держим SPY в той же капитальной пропорции, иначе паркинг (старт = 1)
-  deployment: number[]; // доля развёрнутого капитала по дням (для графика загрузки)
+  deployment: number[]; // доля развёрнутого капитала в СЕТАПЫ по дням (для состава/экспозиции)
+  loadingByDay: number[]; // капитальная загрузка по дням под рыночным риском (SPY-паркинг = в рынке)
   inMarket: boolean[]; // по дням: открыта ли ≥1 реальная позиция (для разбивки загрузки по периодам)
   weeks: WeekSnapshot[]; // понедельные снимки состава (для drill-down: что держится + % + причины)
   rebalances: RebalanceEvent[]; // состав по каждому ребалансу/входу (тикеры + доли + доходность)
@@ -200,7 +201,7 @@ export function buildPortfolio(
   bil: Bar[] | null,
   panel: PricePanel,
 ): PortfolioResult {
-  const empty: PortfolioResult = { metrics: emptyMetrics(setups.length), equity: [], benchEquity: [], benchLoadedEquity: [], deployment: [], inMarket: [], weeks: [], rebalances: [], days: [] };
+  const empty: PortfolioResult = { metrics: emptyMetrics(setups.length), equity: [], benchEquity: [], benchLoadedEquity: [], deployment: [], loadingByDay: [], inMarket: [], weeks: [], rebalances: [], days: [] };
 
   const cal = dedupSortBars(spy);
   if (cal.length < 2 || !setups.length) return empty;
@@ -458,8 +459,12 @@ export function buildPortfolio(
     }
   }
   const transitions = equity.length - 1;
-  // КАПИТАЛЬНАЯ загрузка: средняя доля капитала в активах (не BIL) по всем торговым дням периода
-  const loading = transitions > 0 ? meanOf(deployment.slice(1)) : null;
+  // КАПИТАЛЬНАЯ загрузка: средняя доля капитала под РЫНОЧНЫМ риском по всем торговым дням.
+  // BIL/кэш — безрисковый паркинг (НЕ загрузка); SPY-паркинг — тоже рынок, поэтому в этом режиме
+  // простаивающий капитал считается загруженным (deployment + доля в паркинге ≈ 1 → загрузка ≈ 100%).
+  const parkedIsMarket = cfg.parking === 'SPY';
+  const loadingByDay = deployment.map((d, i) => (parkedIsMarket ? Math.min(1, (d ?? 0) + (dayParking[i] ?? 0)) : (d ?? 0)));
+  const loading = transitions > 0 ? meanOf(loadingByDay.slice(1)) : null;
   const timeInMarket = transitions > 0 ? inMarketDays / transitions : null; // бинарный time-in-market (для справки)
   const years = (dts(calDates[end]) - dts(calDates[start])) / (365.25 * 86400);
   const total = v - 1;
@@ -658,5 +663,5 @@ export function buildPortfolio(
   }
 
   const equityPts: DayPoint[] = equity.map((vv, i) => ({ d: calDates[start + i], v: vv }));
-  return { metrics, equity: equityPts, benchEquity, benchLoadedEquity, deployment, inMarket, weeks, rebalances: rebalances.slice(-1500), days };
+  return { metrics, equity: equityPts, benchEquity, benchLoadedEquity, deployment, loadingByDay, inMarket, weeks, rebalances: rebalances.slice(-1500), days };
 }

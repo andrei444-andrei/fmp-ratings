@@ -148,6 +148,24 @@ describe('buildPortfolio (price-panel simulation)', () => {
     expect(spyp.metrics.total!).toBeGreaterThan(cash.metrics.total!); // пустые слоты «запаркованы» в растущий SPY
   });
 
+  it('загрузка: SPY-паркинг = капитал в рынке → загрузка ≈ 100% (BIL/кэш — нет)', () => {
+    const spy = series(60, '2015-01-01', 100, 0.0004);
+    const dates = spy.map((b) => b.date);
+    const aaa = series(60, '2015-01-01', 50, 0.003);
+    const panel: PricePanel = new Map([['AAA', aaa]]);
+    // редкие сигналы → в сетапах капитал лишь малую часть дней
+    const setups: EngineSetup[] = [{ id: 's', name: 'S', signals: [{ date: dates[10], symbol: 'AAA' }, { date: dates[40], symbol: 'AAA' }] }];
+    const cash = buildPortfolio(setups, cfg('ladder', 5, 'CASH'), spy, null, panel);
+    const spyp = buildPortfolio(setups, cfg('ladder', 5, 'SPY'), spy, null, panel);
+    // кэш: загрузка = только капитал в сетапах (мало)
+    expect(cash.metrics.loading!).toBeLessThan(0.5);
+    // SPY-паркинг: простой капитал в SPY → загрузка практически полная
+    expect(spyp.metrics.loading!).toBeGreaterThan(0.98);
+    // loadingByDay согласован с метрикой и в режиме SPY ≈ 1 каждый день
+    expect(spyp.loadingByDay.slice(1).every((x) => x > 0.98)).toBe(true);
+    expect(cash.loadingByDay.length).toBe(cash.deployment.length);
+  });
+
   it('пустые входы не валятся', () => {
     const spy = series(30);
     expect(buildPortfolio([], cfg('ladder', 5, 'CASH'), spy, null, new Map()).metrics.nSignals).toBe(0);
