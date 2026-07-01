@@ -15,7 +15,15 @@ export type PortfolioConfig = {
   parking: Parking; // паркинг простоя
   maxWeight: number; // потолок веса на 1 тикер (доля 0..1); 0 = без лимита. Остаток сверх лимита → паркинг
 };
-export type PortfolioRow = { id: string; name: string; description: string; config: PortfolioConfig };
+// Снимок ключевых метрик последнего расчёта — чтобы список тестов показывал цифры без пересчёта.
+export type PortfolioSnapshot = {
+  cagr?: number | null; loading?: number | null; excessActive?: number | null; sharpe?: number | null;
+  maxDD?: number | null; winRateVsSpy?: number | null; total?: number | null; start?: string | null; end?: string | null;
+};
+export type PortfolioRow = {
+  id: string; name: string; description: string; config: PortfolioConfig;
+  favorite: boolean; snapshot: PortfolioSnapshot | null; createdAt: string;
+};
 
 let ensured = false;
 export async function ensurePortfoliosTable(): Promise<void> {
@@ -28,6 +36,11 @@ export async function ensurePortfoliosTable(): Promise<void> {
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
+  // само-миграция: избранное + снимок метрик (для старых таблиц без этих колонок)
+  const info = await libsqlClient.execute(`PRAGMA table_info(research_portfolios)`);
+  const cols = new Set((info.rows as any[]).map((r) => String(r.name)));
+  if (!cols.has('favorite')) await libsqlClient.execute(`ALTER TABLE research_portfolios ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0`);
+  if (!cols.has('snapshot')) await libsqlClient.execute(`ALTER TABLE research_portfolios ADD COLUMN snapshot TEXT`);
   ensured = true;
 }
 
@@ -52,26 +65,31 @@ function normConfig(raw: any): PortfolioConfig {
   return { setupIds, selection: 'all', execution, ladderN, parking, maxWeight };
 }
 
+const rowToPortfolio = (x: any): PortfolioRow => ({
+  id: String(x.id),
+  name: String(x.name),
+  description: String(x.description ?? ''),
+  config: normConfig(parseJson(String(x.config), {})),
+  favorite: Number(x.favorite) === 1,
+  snapshot: x.snapshot ? parseJson<PortfolioSnapshot | null>(String(x.snapshot), null) : null,
+  createdAt: String(x.created_at ?? ''),
+});
+
 export async function listPortfolios(): Promise<PortfolioRow[]> {
   await ensurePortfoliosTable();
-  const r = await libsqlClient.execute(`SELECT id, name, description, config FROM research_portfolios ORDER BY created_at ASC`);
-  return (r.rows as any[]).map((x) => ({
-    id: String(x.id),
-    name: String(x.name),
-    description: String(x.description ?? ''),
-    config: normConfig(parseJson(String(x.config), {})),
-  }));
+  // избранные сверху, затем по свежести обновления
+  const r = await libsqlClient.execute(`SELECT id, name, description, config, favorite, snapshot, created_at FROM research_portfolios ORDER BY favorite DESC, updated_at DESC`);
+  return (r.rows as any[]).map(rowToPortfolio);
 }
 
 export async function getPortfolio(id: string): Promise<PortfolioRow | null> {
   await ensurePortfoliosTable();
-  const r = await libsqlClient.execute({ sql: `SELECT id, name, description, config FROM research_portfolios WHERE id=?`, args: [String(id)] });
+  const r = await libsqlClient.execute({ sql: `SELECT id, name, description, config, favorite, snapshot, created_at FROM research_portfolios WHERE id=?`, args: [String(id)] });
   const x = r.rows[0] as any;
-  if (!x) return null;
-  return { id: String(x.id), name: String(x.name), description: String(x.description ?? ''), config: normConfig(parseJson(String(x.config), {})) };
+  return x ? rowToPortfolio(x) : null;
 }
 
-export async function upsertPortfolio(p: { id: string; name: string; description?: string; config: any }): Promise<void> {
+export async function upsertPortfolio(p: { id: string; name: string; description?: string; config: any; snapshot?: PortfolioSnapshot; favorite?: boolean }): Promise<void> {
   await ensurePortfoliosTable();
   const id = String(p.id).slice(0, 80);
   const name = String(p.name).trim().slice(0, 64);
@@ -80,11 +98,27 @@ export async function upsertPortfolio(p: { id: string; name: string; description
   const config = normConfig(p.config);
   if (!config.setupIds.length) throw new Error('нужен непустой список сетапов (setupIds)');
   const now = new Date().toISOString();
+  // snapshot/favorite не переданы → сохраняем прежние значения (COALESCE) при обновлении
+  const snap = p.snapshot !== undefined ? JSON.stringify(p.snapshot) : null;
+  const fav = p.favorite === undefined ? null : p.favorite ? 1 : 0;
   await libsqlClient.execute({
-    sql: `INSERT INTO research_portfolios (id, name, description, config, created_at, updated_at) VALUES (?,?,?,?,?,?)
-          ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description, config=excluded.config, updated_at=excluded.updated_at`,
-    args: [id, name, description, JSON.stringify(config), now, now],
+    sql: `INSERT INTO research_portfolios (id, name, description, config, favorite, snapshot, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)
+          ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description, config=excluded.config, updated_at=excluded.updated_at,
+            favorite=COALESCE(?, research_portfolios.favorite), snapshot=COALESCE(?, research_portfolios.snapshot)`,
+    args: [id, name, description, JSON.stringify(config), fav ?? 0, snap, now, now, fav, snap],
   });
+}
+
+// Точечное обновление метаданных теста без переписывания config/name (избранное и/или снимок метрик).
+export async function updatePortfolioMeta(id: string, meta: { favorite?: boolean; snapshot?: PortfolioSnapshot }): Promise<void> {
+  await ensurePortfoliosTable();
+  const sets: string[] = [];
+  const args: (string | number)[] = [];
+  if (meta.favorite !== undefined) { sets.push('favorite=?'); args.push(meta.favorite ? 1 : 0); }
+  if (meta.snapshot !== undefined) { sets.push('snapshot=?'); args.push(JSON.stringify(meta.snapshot)); }
+  if (!sets.length) return;
+  args.push(String(id));
+  await libsqlClient.execute({ sql: `UPDATE research_portfolios SET ${sets.join(', ')} WHERE id=?`, args });
 }
 
 export async function deletePortfolio(id: string): Promise<void> {

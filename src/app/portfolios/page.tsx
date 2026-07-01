@@ -10,7 +10,9 @@ import type { PortfolioResult, DayPoint } from '@/lib/research/portfolioEngine';
 type Parking = 'BIL' | 'SPY' | 'CASH';
 type ExecMode = 'ladder' | 'weekly' | 'monthly';
 type SetupItem = { id: string; name: string; snapshot?: Record<string, number | string> };
-type SavedPortfolio = { id: string; name: string; description: string; config: { setupIds: string[]; execution: ExecMode; ladderN: number; parking: Parking; maxWeight?: number } };
+type PortfolioSnapshot = { cagr?: number | null; loading?: number | null; excessActive?: number | null; sharpe?: number | null; maxDD?: number | null; winRateVsSpy?: number | null; total?: number | null; start?: string | null; end?: string | null };
+type SavedPortfolio = { id: string; name: string; description: string; config: { setupIds: string[]; execution: ExecMode; ladderN: number; parking: Parking; maxWeight?: number }; favorite?: boolean; snapshot?: PortfolioSnapshot | null; createdAt?: string };
+type LibSort = 'recent' | 'cagr' | 'loading' | 'excess';
 type ComputeMeta = { setups: string[]; execution: ExecMode; ladderN: number; parking: Parking; maxWeight?: number; synthetic: boolean; syntheticSymbols?: number; truncatedSymbols?: number };
 
 const EXEC_LABEL: Record<ExecMode, string> = { ladder: 'лестница', weekly: 'ребаланс/нед', monthly: 'ребаланс/мес' };
@@ -31,6 +33,12 @@ function fallbackName(setupNames: string[], exec: ExecMode, n: number, parking: 
   const cap = maxWeight > 0 ? ` · потолок ${Math.round(maxWeight * 100)}%` : '';
   return `${head} · ${ex} · ${parking}${cap}`.slice(0, 63);
 }
+
+// Снимок ключевых метрик для списка тестов (сохраняется, чтобы библиотека не пересчитывала).
+const snapOf = (m: PortfolioResult['metrics']): PortfolioSnapshot => ({
+  cagr: m.cagr, loading: m.loading, excessActive: m.excessActive, sharpe: m.sharpe,
+  maxDD: m.maxDD, winRateVsSpy: m.winRateVsSpy, total: m.total, start: m.start, end: m.end,
+});
 
 // SVG-кривая капитала: портфель, SPY (buy&hold) и опц. SPY «на загрузке»; годовые метки по оси X.
 function EquityChart({ equity, bench, loaded, showLoaded }: { equity: DayPoint[]; bench: DayPoint[]; loaded?: DayPoint[]; showLoaded?: boolean }) {
@@ -207,6 +215,8 @@ export default function PortfoliosPage() {
   const [selWeek, setSelWeek] = useState<string | null>(null); // выбранная неделя (drill-down)
   const [selDay, setSelDay] = useState<number>(-1); // индекс выбранного дня (drill-down экспозиции)
   const [dayFilter, setDayFilter] = useState(''); // фильтр дней по тикеру
+  const [libQuery, setLibQuery] = useState(''); // поиск по библиотеке тестов
+  const [libSort, setLibSort] = useState<LibSort>('recent'); // сортировка библиотеки
 
   const loadSetups = useCallback(async () => {
     try {
@@ -311,7 +321,7 @@ export default function PortfoliosPage() {
         await fetch('/api/researcher/portfolios', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ id, name: title, config: { setupIds: ids, selection: 'all', execution: exec, ladderN, parking, maxWeight } }),
+          body: JSON.stringify({ id, name: title, config: { setupIds: ids, selection: 'all', execution: exec, ladderN, parking, maxWeight }, snapshot: snapOf(m) }),
         });
         await loadSaved();
       } catch {
@@ -359,13 +369,37 @@ export default function PortfoliosPage() {
       setErr('');
       setBusy(true);
       try {
-        await computeOnly(ids, { execution: p.config.execution, ladderN: p.config.ladderN ?? 5, parking: p.config.parking, maxWeight: mw });
+        const res = await computeOnly(ids, { execution: p.config.execution, ladderN: p.config.ladderN ?? 5, parking: p.config.parking, maxWeight: mw });
         setRan(true);
+        // освежаем снимок метрик в библиотеке (в т.ч. для старых тестов без него)
+        if (res?.metrics) {
+          fetch('/api/researcher/portfolios', {
+            method: 'PATCH', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ id: p.id, snapshot: snapOf(res.metrics) }),
+          }).then(() => loadSaved()).catch(() => {});
+        }
       } finally {
         setBusy(false);
       }
     },
-    [computeOnly],
+    [computeOnly, loadSaved],
+  );
+
+  // избранное: закреплённые тесты выводятся выше и выделены
+  const toggleFavorite = useCallback(
+    async (id: string, favorite: boolean) => {
+      setSaved((prev) => prev.map((p) => (p.id === id ? { ...p, favorite } : p))); // оптимистично
+      try {
+        await fetch('/api/researcher/portfolios', {
+          method: 'PATCH', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ id, favorite }),
+        });
+        await loadSaved();
+      } catch {
+        /* graceful */
+      }
+    },
+    [loadSaved],
   );
 
   const removeSaved = useCallback(
@@ -419,6 +453,26 @@ export default function PortfoliosPage() {
   const selDayEvent = useMemo(() => (result?.days && selDay >= 0 ? result.days[selDay] || null : null), [result, selDay]);
   useEffect(() => { setSelDay(-1); setDayFilter(''); }, [result]);
 
+  // библиотека тестов: поиск по имени + сортировка; избранные всегда закреплены сверху
+  const libRows = useMemo(() => {
+    const q = libQuery.trim().toLowerCase();
+    const filtered = saved.filter((p) => !q || p.name.toLowerCase().includes(q));
+    const metricKey = (p: SavedPortfolio): number => {
+      const s = p.snapshot || {};
+      if (libSort === 'cagr') return s.cagr ?? -Infinity;
+      if (libSort === 'loading') return s.loading ?? -Infinity;
+      if (libSort === 'excess') return s.excessActive ?? -Infinity;
+      return 0;
+    };
+    return [...filtered].sort((a, b) => {
+      const fav = Number(!!b.favorite) - Number(!!a.favorite);
+      if (fav) return fav; // избранные сверху
+      if (libSort === 'recent') return 0; // серверный порядок (updated_at desc)
+      return metricKey(b) - metricKey(a);
+    });
+  }, [saved, libQuery, libSort]);
+  const favCount = useMemo(() => saved.filter((p) => p.favorite).length, [saved]);
+
   const canNext = step === 1 ? selected.size > 0 : true;
   const selectedNames = setups.filter((s) => selected.has(s.id)).map((s) => s.name);
 
@@ -441,17 +495,52 @@ export default function PortfoliosPage() {
           {/* Главная: сохранённые тесты + «Новый тест» */}
           {step === 0 && (
             <div className="card"><div className="card-b">
-              <div className="card-t">Тесты</div>
-              <div className="pf-saved" data-testid="pf-saved" style={{ marginTop: 10 }}>
-                <button className="btn apply on" data-testid="new-test" onClick={newTest}>➕ Новый тест</button>
-                {saved.map((p) => (
-                  <span key={p.id} className={`chip pf${p.id === curId ? ' on' : ''}`} data-testid="portfolio-chip" onClick={() => openSaved(p)}>
-                    {p.name}
-                    <span className="bx" data-testid="portfolio-chip-del" onClick={(e) => { e.stopPropagation(); removeSaved(p.id); }}>✕</span>
-                  </span>
-                ))}
-                {!saved.length && <span className="sub" style={{ color: 'var(--fk-text-3)' }}>сохранённых тестов пока нет — создай новый</span>}
+              <div className="pf-lib-head">
+                <div className="card-t">Тесты ({saved.length}{favCount > 0 ? `, ★ ${favCount}` : ''})</div>
+                <div className="pf-lib-tools">
+                  <button className="btn apply on" data-testid="new-test" onClick={newTest}>➕ Новый тест</button>
+                  <input className="nin" placeholder="Поиск по имени…" data-testid="pf-lib-search" value={libQuery} onChange={(e) => setLibQuery(e.target.value)} />
+                  <div className="seg pf-sort" data-testid="pf-lib-sort">
+                    {([['recent', 'Свежие'], ['cagr', 'CAGR'], ['loading', 'Загрузка'], ['excess', 'vs SPY']] as [LibSort, string][]).map(([k, l]) => (
+                      <button key={k} className={libSort === k ? 'on' : ''} onClick={() => setLibSort(k)}>{l}</button>
+                    ))}
+                  </div>
+                </div>
               </div>
+              {saved.length === 0 ? (
+                <div className="pf-empty" data-testid="pf-lib-empty">Сохранённых тестов пока нет — создай новый через «➕ Новый тест». После запуска тест сохранится сюда автоматически.</div>
+              ) : (
+                <div className="pf-ptable-wrap" style={{ maxHeight: 460 }}>
+                  <table className="pf-ptable pf-lib" data-testid="pf-lib-table">
+                    <thead><tr>
+                      <th></th><th className="l">Название</th><th>CAGR</th><th>Загрузка</th><th>vs SPY (нагр.)</th>
+                      <th>Sharpe</th><th>Просадка</th><th>Win</th><th className="l">Механика</th><th>Создан</th><th></th>
+                    </tr></thead>
+                    <tbody>
+                      {libRows.map((p) => {
+                        const s = p.snapshot || {};
+                        const cfgSum = `${EXEC_LABEL[p.config.execution]}${p.config.execution === 'ladder' ? ` N=${p.config.ladderN}` : ''} · ${p.config.parking}${(p.config.maxWeight ?? 0) > 0 ? ` · ≤${Math.round((p.config.maxWeight as number) * 100)}%` : ''}`;
+                        return (
+                          <tr key={p.id} data-testid="portfolio-chip" className={`click${p.favorite ? ' fav' : ''}${p.id === curId ? ' sel' : ''}`} onClick={() => openSaved(p)}>
+                            <td className="pf-star" data-testid="portfolio-fav" onClick={(e) => { e.stopPropagation(); toggleFavorite(p.id, !p.favorite); }} title={p.favorite ? 'Убрать из избранного' : 'В избранное'}>{p.favorite ? '★' : '☆'}</td>
+                            <td className="l sy">{p.name}</td>
+                            <td className={signCls(s.cagr)}>{signPct(s.cagr)}</td>
+                            <td>{pct(s.loading, 0)}</td>
+                            <td className={signCls(s.excessActive)}>{signPct(s.excessActive)}</td>
+                            <td>{numFmt(s.sharpe)}</td>
+                            <td className="down">{pct(s.maxDD)}</td>
+                            <td>{s.winRateVsSpy == null ? '—' : pct(s.winRateVsSpy, 0)}</td>
+                            <td className="l">{cfgSum}</td>
+                            <td>{(p.createdAt || '').slice(0, 10) || '—'}</td>
+                            <td className="bx" data-testid="portfolio-chip-del" onClick={(e) => { e.stopPropagation(); removeSaved(p.id); }}>✕</td>
+                          </tr>
+                        );
+                      })}
+                      {!libRows.length && <tr><td className="l" colSpan={11}>ничего не найдено по «{libQuery}»</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div></div>
           )}
 
