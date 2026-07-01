@@ -138,6 +138,13 @@ test.describe('Скринер /researcher', () => {
     // зум к выделению работает
     await page.getByTestId('detail-zoom-sel').click();
     await expect(page.getByRole('button', { name: 'Сбросить масштаб' })).toBeEnabled();
+
+    // читка «просадка → доходность по децилям» (dd_pctile из сделок актива, point-in-time) — в конце,
+    // т.к. клик по кнопке окна прокручивает модалку и увёл бы SVG из вида до перетаскивания выше
+    await expect(page.getByTestId('dd-deciles')).toBeVisible();
+    await expect(page.getByTestId('dd-deciles-rows')).toBeVisible();
+    await page.getByTestId('dd-deciles').getByRole('button', { name: '63д' }).click();
+    await expect(page.getByTestId('dd-deciles-rows')).toBeVisible();
   });
 
   // Сетапы: сохранение находки (рецепт + снимок + поток) в БД, персист, загрузка, удаление.
