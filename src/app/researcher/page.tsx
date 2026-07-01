@@ -127,6 +127,7 @@ export default function Researcher() {
   const [presetSave, setPresetSave] = useState<{ name: string; description: string } | null>(null); // форма сохранения пресета
   const [setups, setSetups] = useState<SetupDef[]>([]); // сохранённые сетапы-находки (БД, навсегда)
   const [setupSave, setSetupSave] = useState<{ name: string; description: string } | null>(null); // форма сохранения сетапа
+  const [compareOpen, setCompareOpen] = useState(false); // модалка сравнения двух сетапов (пересечение/исключение)
   const [priceSeries, setPriceSeries] = useState<Record<string, { date: string; close: number }[]>>({}); // дневные цены для графиков сделок
   const [pricesLoading, setPricesLoading] = useState(false);
   const [detailSym, setDetailSym] = useState<string | null>(null); // открытый детальный график актива (зум + метрики периода)
@@ -661,6 +662,7 @@ export default function Researcher() {
                   <button type="button" className="btn sm ghost" onClick={() => setSetupSave(null)}>отмена</button>
                 </span>
               )}
+            {setups.length >= 2 && setupSave === null && <button type="button" className="btn sm ghost" data-testid="setup-compare-open" onClick={() => setCompareOpen(true)}>⚖ Сравнить</button>}
             {setups.length === 0 && setupSave === null && <span className="sub">сохрани находку: вселенная + условия + цифры → кирпичик для будущих стратегий</span>}
           </div>
 
@@ -738,6 +740,8 @@ export default function Researcher() {
       {basketModal && <BasketModal existing={baskets} onSave={saveBasket} onClose={() => setBasketModal(false)} />}
 
       {formulaHelp && <FormulaHelp onInsert={(name, expr) => setFormulas((p) => [...p, { id: newId(), name, expr, savedName: '', savedExpr: '' }])} onClose={() => setFormulaHelp(false)} />}
+
+      {compareOpen && <SetupCompare setups={setups} initialA={activeSetupId || undefined} onClose={() => setCompareOpen(false)} />}
 
       <FormulaChat
         factors={MID.map((id) => ({ id, label: METRICS[id].label, periods: METRICS[id].periods }))}
@@ -1146,6 +1150,137 @@ function DrawdownDeciles({ sym, deals, horizon }: { sym: string; deals: Deal[]; 
         <div className="sub" style={{ marginTop: 6 }}>Последний вход {sym}: просадка ≈ {latestDec * 10}–{latestDec * 10 + 10}-й перцентиль (дециль подсвечен).{latestDec === 0 ? ' Сейчас — редкая глубокая просадка.' : latestDec >= 8 ? ' Сейчас — у максимума, просадки почти нет.' : ''}</div>
       )}
       <div className="sub" style={{ marginTop: 4, opacity: 0.8 }}>Описательно, не прогноз: выборка на актив мала, эпизоды просадок склеены во времени. Смотрите также MAE/MDD в метриках выше.</div>
+    </div>
+  );
+}
+
+// Сравнение двух сетапов: доходность каждого + теоретико-множественные операции над потоками сделок по
+// ключу дата×тикер — ПЕРЕСЕЧЕНИЕ (A∩B, сделки в обоих) и ИСКЛЮЧЕНИЯ (A∖B, B∖A). Потоки уже сохранены
+// (условие уже применено при сохранении), статистика каждого множества — тем же dealStats, что в результатах.
+// Помогает понять, дублируют ли сетапы друг друга или дополняют (кирпичик для комбинирования в «Портфели»).
+function SetupCompare({ setups, initialA, onClose }: { setups: SetupDef[]; initialA?: string; onClose: () => void }) {
+  const first = initialA && setups.some((s) => s.id === initialA) ? initialA : (setups[0]?.id || '');
+  const [aId, setAId] = useState(first);
+  const [bId, setBId] = useState(setups.find((s) => s.id !== first)?.id || '');
+  const [streams, setStreams] = useState<{ a: Deal[]; b: Deal[] } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    if (!aId || !bId || aId === bId) { setStreams(null); return; }
+    let dead = false;
+    const toDeals = (setup: any): Deal[] => (Array.isArray(setup?.stream) ? setup.stream : [])
+      .map((s: any[]) => ({ date: String(s[0]), symbol: String(s[1]), ret: Number(s[2]), exc: Number(s[3]), mfe: Number(s[4]), mae: Number(s[5]), mdd: Number(s[6]), vals: {} }))
+      .filter((d: Deal) => Number.isFinite(d.ret));
+    (async () => {
+      setLoading(true); setErr('');
+      try {
+        const [ra, rb] = await Promise.all([
+          fetch(`/api/researcher/setups?id=${encodeURIComponent(aId)}`).then((r) => r.json()),
+          fetch(`/api/researcher/setups?id=${encodeURIComponent(bId)}`).then((r) => r.json()),
+        ]);
+        if (!dead) setStreams({ a: toDeals(ra?.setup), b: toDeals(rb?.setup) });
+      } catch (e: any) { if (!dead) setErr(e?.message || 'не удалось загрузить потоки сетапов'); }
+      finally { if (!dead) setLoading(false); }
+    })();
+    return () => { dead = true; };
+  }, [aId, bId]);
+
+  const setupA = setups.find((s) => s.id === aId);
+  const setupB = setups.find((s) => s.id === bId);
+
+  const rows = useMemo(() => {
+    if (!streams) return null;
+    const key = (d: Deal) => `${d.date}|${d.symbol}`;
+    const mapA = new Map<string, Deal>(); for (const d of streams.a) mapA.set(key(d), d);
+    const mapB = new Map<string, Deal>(); for (const d of streams.b) mapB.set(key(d), d);
+    const inter: Deal[] = [], aOnly: Deal[] = [], bOnly: Deal[] = [];
+    for (const [k, d] of mapA) (mapB.has(k) ? inter : aOnly).push(d);
+    for (const [k, d] of mapB) if (!mapA.has(k)) bOnly.push(d);
+    const union = streams.a.concat(bOnly);
+    const mk = (label: string, cn: string, deals: Deal[], hint: string) => ({ label, cn, hint, st: dealStats(deals) });
+    return {
+      list: [
+        mk(`A · ${setupA?.name || 'A'}`, 'a', streams.a, 'все сделки сетапа A'),
+        mk(`B · ${setupB?.name || 'B'}`, 'b', streams.b, 'все сделки сетапа B'),
+        mk('A ∩ B — пересечение', 'inter', inter, 'сделки, попавшие в ОБА сетапа (одна дата и тикер)'),
+        mk('только A (A ∖ B)', 'aonly', aOnly, 'сделки A, которых нет в B'),
+        mk('только B (B ∖ A)', 'bonly', bOnly, 'сделки B, которых нет в A'),
+        mk('A ∪ B — объединение', 'union', union, 'все уникальные сделки обоих сетапов'),
+      ],
+      inter: inter.length, union: union.length,
+    };
+  }, [streams, setupA?.name, setupB?.name]);
+
+  const jac = rows && rows.union ? rows.inter / rows.union : 0;
+  const hzA = setupA?.snapshot?.horizon, hzB = setupB?.snapshot?.horizon;
+  const hzMismatch = hzA != null && hzB != null && Number(hzA) !== Number(hzB);
+  const cell = (st: ReturnType<typeof dealStats>, v: number, d = 1) => (st.n ? fnum(v, d) + '%' : '—');
+
+  return (
+    <div className="rsx">
+      <div className="rsx-scrim" style={{ zIndex: 70 }} onClick={onClose} />
+      <div className="rsx-detail cmp" data-testid="setup-compare">
+        <div className="dr-h">
+          <div style={{ fontSize: 15, fontWeight: 700 }}>Сравнение сетапов</div>
+          <span className="x" onClick={onClose}>✕</span>
+        </div>
+        <div className="dt-b">
+          <div className="cmp-pick">
+            <label>A&nbsp;<select data-testid="setup-compare-a" value={aId} onChange={(e) => setAId(e.target.value)}>{setups.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
+            <span className="cmp-vs">против</span>
+            <label>B&nbsp;<select data-testid="setup-compare-b" value={bId} onChange={(e) => setBId(e.target.value)}>{setups.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
+          </div>
+
+          {aId === bId ? <div className="sub" style={{ padding: '12px 0' }}>Выберите два разных сетапа.</div>
+            : err ? <div className="sub" style={{ padding: '12px 0', color: 'var(--fk-down-text,#c81e3c)' }}>{err}</div>
+            : loading || !rows ? <div className="sub" style={{ padding: '12px 0' }}>Считаю пересечение…</div>
+            : (
+            <>
+              <div className="cmp-recipes">
+                {[setupA, setupB].map((s, i) => s && (
+                  <div key={i} className="cmp-rec">
+                    <div className="cmp-rec-h">{i === 0 ? 'A' : 'B'} · {s.name}</div>
+                    <div className="cmp-rec-b">
+                      <div><span>вселенная</span><b>{s.config?.uniText || s.config?.group || '—'}</b></div>
+                      <div><span>условий</span><b>{(s.config?.blocks || []).reduce((n: number, blk: any) => n + (blk?.conds?.length || 0), 0)}</b></div>
+                      <div><span>горизонт</span><b>{s.config?.horizon ?? s.snapshot?.horizon ?? '—'}д</b></div>
+                      <div><span>окно</span><b>{s.config?.years ?? '—'}л</b></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {hzMismatch && <div className="cmp-warn" data-testid="setup-compare-hzwarn">⚠ Горизонты разные ({String(hzA)}д и {String(hzB)}д): даты входа сэмплированы по-разному → пересечение занижено, а доходности считаются за разные окна. Для честного сравнения выровняйте горизонт.</div>}
+
+              <table className="cmp-tab" data-testid="setup-compare-table">
+                <thead><tr><th>Множество</th><th>Сделок</th><th>Тикеров</th><th>Ср. дох.</th><th>Доля +</th><th>vs SPY</th><th>t-стат</th></tr></thead>
+                <tbody>
+                  {rows.list.map((r) => (
+                    <tr key={r.cn} className={`cmp-r ${r.cn}`} title={r.hint}>
+                      <td className="cmp-lb">{r.label}</td>
+                      <td className="num">{r.st.n}</td>
+                      <td className="num">{r.st.tickers}</td>
+                      <td className={`num ${cls(r.st.avgRet)}`}>{cell(r.st, r.st.avgRet)}</td>
+                      <td className="num">{r.st.n ? r.st.hitPct.toFixed(0) + '%' : '—'}</td>
+                      <td className={`num ${cls(r.st.avgExc)}`}>{cell(r.st, r.st.avgExc)}</td>
+                      <td className={`num ${r.st.n && Math.abs(r.st.tstat) >= 2 ? 'up' : ''}`}>{r.st.n ? r.st.tstat.toFixed(2) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div className="cmp-verdict">
+                Пересечение: <b>{rows.inter}</b> из {rows.union} сделок (Jaccard <b>{(jac * 100).toFixed(0)}%</b>). {jac >= 0.6 ? 'Сетапы сильно дублируют друг друга — комбинировать почти нечего.' : jac <= 0.2 ? 'Пересечение мало — сетапы почти независимы (кандидаты на диверсификацию портфеля).' : 'Частичное пересечение — есть общее ядро и своя специфика у каждого.'}
+              </div>
+              <div className="sub" style={{ marginTop: 6, opacity: 0.8 }}>Доходности — из сохранённых потоков (на момент сохранения сетапа), point-in-time. Пересечение/исключение — по ключу дата×тикер.</div>
+            </>
+          )}
+        </div>
+        <div className="cmp-f">
+          <button type="button" className="btn ghost sm" onClick={onClose}>Закрыть</button>
+        </div>
+      </div>
     </div>
   );
 }
