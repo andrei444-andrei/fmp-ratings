@@ -203,8 +203,8 @@ export default function PortfoliosPage() {
   const [hoverP, setHoverP] = useState<number>(-1);
   const [showLoaded, setShowLoaded] = useState(false); // сравнение с SPY «на той же загрузке»
   const [selWeek, setSelWeek] = useState<string | null>(null); // выбранная неделя (drill-down)
-  const [selReb, setSelReb] = useState<number>(-1); // индекс выбранного ребаланса/входа
-  const [rebFilter, setRebFilter] = useState(''); // фильтр сделок по тикеру
+  const [selDay, setSelDay] = useState<number>(-1); // индекс выбранного дня (drill-down экспозиции)
+  const [dayFilter, setDayFilter] = useState(''); // фильтр дней по тикеру
 
   const loadSetups = useCallback(async () => {
     try {
@@ -381,7 +381,7 @@ export default function PortfoliosPage() {
   const stats = useMemo(() => {
     if (!m) return [];
     return [
-      { k: 'Загрузка', v: pct(m.loading, 1), sub: `${m.inMarketDays}/${Math.max(0, m.days - 1)} дн. · разв. ${pct(m.avgDeployment, 0)}`, cls: '' },
+      { k: 'Загрузка (капитал)', v: pct(m.loading, 1), sub: `в рынке ${pct(m.timeInMarket, 0)} дней (${m.inMarketDays}/${Math.max(0, m.days - 1)})`, cls: '' },
       { k: 'Годовая (CAGR)', v: signPct(m.cagr), sub: `всего ${signPct(m.total)}`, cls: signCls(m.cagr) },
       { k: 'Макс. просадка', v: pct(m.maxDD), sub: `SPY ${pct(m.spyMaxDD)}`, cls: 'down' },
       { k: 'Sharpe (всего)', v: numFmt(m.sharpe), sub: `SPY ${numFmt(m.spySharpe)}`, cls: signCls(m.sharpe) },
@@ -401,14 +401,16 @@ export default function PortfoliosPage() {
   const weekDetail = useMemo(() => (result && selWeek ? result.weeks.find((w) => w.start === selWeek) || null : null), [result, selWeek]);
   useEffect(() => { setSelWeek(null); }, [result, gran]);
 
-  // сделки по ребалансам/входам: список (новые сверху) с фильтром по тикеру
-  const rebList = useMemo(() => {
-    const all = result?.rebalances ? [...result.rebalances].map((r, idx) => ({ r, idx })).reverse() : [];
-    const f = rebFilter.trim().toUpperCase();
-    return f ? all.filter(({ r }) => r.positions.some((p) => p.symbol.includes(f))) : all;
-  }, [result, rebFilter]);
-  const selRebEvent = useMemo(() => (result?.rebalances && selReb >= 0 ? result.rebalances[selReb] || null : null), [result, selReb]);
-  useEffect(() => { setSelReb(-1); setRebFilter(''); }, [result]);
+  // посуточная экспозиция и сделки: список (новые сверху) с фильтром по тикеру
+  const dayList = useMemo(() => {
+    const all = result?.days ? result.days.map((d, idx) => ({ d, idx })).reverse() : [];
+    const f = dayFilter.trim().toUpperCase();
+    return f
+      ? all.filter(({ d }) => d.positions.some((p) => p.symbol.includes(f)) || d.bought.some((t) => t.symbol.includes(f)) || d.sold.some((t) => t.symbol.includes(f)))
+      : all;
+  }, [result, dayFilter]);
+  const selDayEvent = useMemo(() => (result?.days && selDay >= 0 ? result.days[selDay] || null : null), [result, selDay]);
+  useEffect(() => { setSelDay(-1); setDayFilter(''); }, [result]);
 
   const canNext = step === 1 ? selected.size > 0 : true;
   const selectedNames = setups.filter((s) => selected.has(s.id)).map((s) => s.name);
@@ -693,53 +695,58 @@ export default function PortfoliosPage() {
             </div></div>
           )}
 
-          {/* Состав по ребалансам / входам: какие тикеры взяты и в каких долях */}
-          {ran && result && result.rebalances.length > 0 && (
+          {/* Экспозиция и сделки по дням: полная реальная экспозиция каждого дня + что куплено/продано */}
+          {ran && result && result.days.length > 0 && (
             <div className="card"><div className="card-b">
               <div className="pf-period-head">
-                <div className="card-t">Состав по ребалансам / входам ({result.rebalances.length})</div>
-                <input className="nin" placeholder="Фильтр по тикеру…" data-testid="pf-reb-filter" value={rebFilter} onChange={(e) => setRebFilter(e.target.value)} />
+                <div className="card-t">Экспозиция и сделки по дням ({result.days.length})</div>
+                <input className="nin" placeholder="Фильтр по тикеру…" data-testid="pf-reb-filter" value={dayFilter} onChange={(e) => setDayFilter(e.target.value)} />
               </div>
-              {selRebEvent ? (
+              {selDayEvent ? (
                 <>
                   <div className="pf-week-meta" data-testid="pf-reb-sel">
-                    <b>{selRebEvent.date}</b> · {selRebEvent.kind === 'rebalance' ? 'ребаланс' : 'вход (транш)'} · доля решения {pct(selRebEvent.scope, 0)} · имён {selRebEvent.positions.length}
-                    {' '}· доходность <span className={signCls(selRebEvent.ret)}>{signPct(selRebEvent.ret)}</span> · SPY {signPct(selRebEvent.spyRet)} · превышение{' '}
-                    <span className={signCls(selRebEvent.ret - selRebEvent.spyRet)}>{signPct(selRebEvent.ret - selRebEvent.spyRet)}</span>
+                    <b>{selDayEvent.date}</b> · экспозиция {pct(selDayEvent.deployment, 0)} · паркинг {pct(selDayEvent.parking, 0)} · имён {selDayEvent.positions.length}
+                    {' '}· день <span className={signCls(selDayEvent.ret)}>{signPct(selDayEvent.ret)}</span> · SPY {signPct(selDayEvent.spyRet)}
                   </div>
-                  <StackedBar positions={selRebEvent.positions} />
+                  <StackedBar positions={selDayEvent.positions} />
                   <div className="pf-ptable-wrap" style={{ marginTop: 10, maxHeight: 220 }}>
                     <table className="pf-ptable" data-testid="pf-reb-positions">
-                      <thead><tr><th className="l">Тикер</th><th>Доля</th><th className="l">Сетапы</th></tr></thead>
+                      <thead><tr><th className="l">Тикер</th><th>Экспозиция</th><th className="l">Сетапы</th></tr></thead>
                       <tbody>
-                        {selRebEvent.positions.map((p) => (<tr key={p.symbol}><td className="l sy">{p.symbol}</td><td>{pct(p.weight, 1)}</td><td className="l">{p.setups.join(', ')}</td></tr>))}
-                        {!selRebEvent.positions.length && <tr><td className="l" colSpan={3}>в паркинге — позиций нет</td></tr>}
+                        {selDayEvent.positions.map((p) => (<tr key={p.symbol}><td className="l sy">{p.symbol}</td><td>{pct(p.weight, 1)}</td><td className="l">{p.setups.join(', ')}</td></tr>))}
+                        {!selDayEvent.positions.length && <tr><td className="l" colSpan={3}>в паркинге — позиций нет</td></tr>}
                       </tbody>
                     </table>
                   </div>
+                  {(selDayEvent.bought.length > 0 || selDayEvent.sold.length > 0) && (
+                    <div className="pf-trades" data-testid="pf-day-trades">
+                      <div className="tr-col"><span className="tr-h buy">Куплено сегодня</span>{selDayEvent.bought.length ? selDayEvent.bought.map((t) => <span key={t.symbol} className="tr-item">{t.symbol} <b>{pct(t.weight, 1)}</b></span>) : <span className="muted">—</span>}</div>
+                      <div className="tr-col"><span className="tr-h sell">Продано сегодня</span>{selDayEvent.sold.length ? selDayEvent.sold.map((t) => <span key={t.symbol} className="tr-item">{t.symbol} <b>{pct(t.weight, 1)}</b></span>) : <span className="muted">—</span>}</div>
+                    </div>
+                  )}
                 </>
               ) : (
-                <div className="pf-period-sel muted">кликни сделку ниже — наглядно доли тикеров в этом ребалансе/входе</div>
+                <div className="pf-period-sel muted">кликни день ниже — полная экспозиция дня и что куплено/продано. Лестница = ежедневный ребаланс на 1/N капитала.</div>
               )}
               <div className="pf-ptable-wrap" style={{ marginTop: 12 }}>
                 <table className="pf-ptable" data-testid="pf-reb-table">
-                  <thead><tr><th className="l">Дата</th><th className="l">Тип</th><th>Доля</th><th>Имён</th><th>Доходность</th><th>vs SPY</th><th className="l">Состав (доли)</th></tr></thead>
+                  <thead><tr><th className="l">Дата</th><th>Экспозиция</th><th>Имён</th><th>Сделки</th><th>День</th><th>vs SPY</th><th className="l">Состав (доли)</th></tr></thead>
                   <tbody>
-                    {rebList.slice(0, 300).map(({ r, idx }) => (
-                      <tr key={idx} data-testid="pf-reb-row" className={`click${idx === selReb ? ' sel' : ''}`} onClick={() => setSelReb(idx)}>
-                        <td className="l">{r.date}</td>
-                        <td className="l">{r.kind === 'rebalance' ? 'ребаланс' : 'вход'}</td>
-                        <td>{pct(r.scope, 0)}</td>
-                        <td>{r.positions.length}</td>
-                        <td className={signCls(r.ret)}>{signPct(r.ret)}</td>
-                        <td className={signCls(r.ret - r.spyRet)}>{signPct(r.ret - r.spyRet)}</td>
-                        <td className="l" style={{ minWidth: 200 }}><StackedBar positions={r.positions.slice(0, 12)} /></td>
+                    {dayList.slice(0, 400).map(({ d, idx }) => (
+                      <tr key={idx} data-testid="pf-reb-row" className={`click${idx === selDay ? ' sel' : ''}`} onClick={() => setSelDay(idx)}>
+                        <td className="l">{d.date}</td>
+                        <td>{pct(d.deployment, 0)}</td>
+                        <td>{d.positions.length}</td>
+                        <td>{d.bought.length + d.sold.length > 0 ? `${d.bought.length}↑ ${d.sold.length}↓` : '—'}</td>
+                        <td className={signCls(d.ret)}>{signPct(d.ret)}</td>
+                        <td className={signCls(d.ret - d.spyRet)}>{signPct(d.ret - d.spyRet)}</td>
+                        <td className="l" style={{ minWidth: 200 }}><StackedBar positions={d.positions.slice(0, 12)} /></td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-              {rebList.length > 300 && <div className="pf-note">Показаны первые 300 из {rebList.length}. Уточни фильтром по тикеру.</div>}
+              {dayList.length > 400 && <div className="pf-note">Показаны первые 400 из {dayList.length} дней. Уточни фильтром по тикеру.</div>}
             </div></div>
           )}
         </>

@@ -31,7 +31,10 @@ describe('buildPortfolio (price-panel simulation)', () => {
     const res = buildPortfolio(setups, cfg('ladder', 5, 'CASH'), spy, null, panel);
     expect(res.metrics.nSignals).toBe(31);
     expect(res.metrics.nSymbols).toBe(1);
-    expect(res.metrics.loading).toBeCloseTo(1, 6);
+    // капитальная загрузка = средняя доля развёрнутого капитала (0..1), time-in-market бинарный = 1
+    expect(res.metrics.timeInMarket).toBeCloseTo(1, 6);
+    expect(res.metrics.loading!).toBeGreaterThan(0.5);
+    expect(res.metrics.loading!).toBeLessThanOrEqual(1);
     expect(res.metrics.maxDD).toBe(0);
     expect(res.metrics.total!).toBeGreaterThan(0);
     expect(res.equity.length).toBeGreaterThan(2);
@@ -60,6 +63,13 @@ describe('buildPortfolio (price-panel simulation)', () => {
     expect(res.benchLoadedEquity.length).toBe(res.equity.length);
     expect(res.metrics.totalTrades).toBeGreaterThan(0);
     expect(res.metrics.winRateVsSpy!).toBeGreaterThan(0.5); // AAA (+1%/д) обгоняет SPY (+0.03%/д)
+    // посуточная лента: полная экспозиция дня + сделки; в «полный» день AAA держится на 100% (5 траншей)
+    expect(res.days.length).toBeGreaterThan(0);
+    const full = res.days.find((d) => d.deployment > 0.99)!;
+    expect(full).toBeTruthy();
+    expect(full.positions[0].symbol).toBe('AAA');
+    expect(full.positions.reduce((s, p) => s + p.weight, 0)).toBeCloseTo(full.deployment, 6);
+    expect(res.days.some((d) => d.bought.length > 0)).toBe(true);
   });
 
   it('метрики «на нагрузку»: SPY считается ТОЛЬКО за дни в рынке (≠ SPY за весь период)', () => {
