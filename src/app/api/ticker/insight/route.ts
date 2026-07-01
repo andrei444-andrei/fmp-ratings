@@ -10,9 +10,11 @@ export const maxDuration = 300;
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const symbol = (url.searchParams.get('symbol') || '').toUpperCase().trim();
+  // ?refresh=1 — принудительно обойти кэш свежести и перетянуть данные из FMP (напр. после смены схемы метрик).
+  const force = /^(1|true|yes)$/i.test(url.searchParams.get('refresh') || '');
   try {
     if (!symbol) return Response.json({ ok: false, error: 'no symbol' }, { status: 400 });
-    const insight = await getTickerInsight(symbol);
+    const insight = await getTickerInsight(symbol, force);
     return Response.json({ ok: true, ...insight });
   } catch (e: any) {
     logAppError({ route: '/api/ticker/insight', message: e?.message || String(e), stack: e?.stack, meta: { symbol } }).catch(() => {});
