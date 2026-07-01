@@ -35,7 +35,14 @@ export async function POST(req: Request) {
       const maxLeverage = Number.isFinite(lv) && lv > 1 ? Math.min(3, Math.round(lv * 100) / 100) : 1;
       const sy = Number(b?.startYear);
       const startYear = Number.isFinite(sy) && sy >= 1990 && sy <= 2100 ? Math.round(sy) : 0;
-      cfg = { setupIds, selection: 'all', execution, ladderN: Number.isFinite(ln) && ln > 0 ? Math.min(60, Math.round(ln)) : 5, parking, maxWeight, maxLeverage, startYear };
+      const selection: 'all' | 'limit' = b?.selection === 'limit' ? 'limit' : 'all';
+      const mp = Number(b?.maxPositions);
+      const maxPositions = Number.isFinite(mp) && mp > 0 ? Math.min(500, Math.round(mp)) : 0;
+      const setupPriority: Record<string, number> = {};
+      if (b?.setupPriority && typeof b.setupPriority === 'object') {
+        for (const [k, v] of Object.entries(b.setupPriority)) { const n = Number(v); if (k && Number.isFinite(n) && n >= 0) setupPriority[String(k)] = n; }
+      }
+      cfg = { setupIds, selection, maxPositions, setupPriority, execution, ladderN: Number.isFinite(ln) && ln > 0 ? Math.min(60, Math.round(ln)) : 5, parking, maxWeight, maxLeverage, startYear };
     }
     if (!cfg.setupIds.length) return Response.json({ error: 'нужен непустой список сетапов' }, { status: 400 });
 
@@ -45,11 +52,20 @@ export async function POST(req: Request) {
     >[];
     // год начала бэктеста: отбрасываем сигналы раньше startYear-01-01
     const minDate = cfg.startYear && cfg.startYear >= 1990 ? `${cfg.startYear}-01-01` : '';
+    // ранжирующая колонка сетапа (point-in-time, без look-ahead): из конфига, иначе dd_pctile, иначе первая факторная
+    const rankColOf = (cols: string[]): string | null => (cols.includes('dd_pctile') ? 'dd_pctile' : cols[0] || null);
     const engineSetups: EngineSetup[] = setupRows.map((s) => {
+      const cols = s.streamCols || [];
+      const rc = rankColOf(cols);
+      const rIdx = rc ? 7 + cols.indexOf(rc) : -1; // индекс значения фактора на входе в сделке
       const signals: Signal[] = (s.stream || [])
-        .map((d) => ({ date: String(d[0]), symbol: String(d[1]).toUpperCase() }))
+        .map((d) => {
+          const rv = rIdx >= 0 ? Number(d[rIdx]) : NaN;
+          return { date: String(d[0]), symbol: String(d[1]).toUpperCase(), rank: Number.isFinite(rv) ? rv : 0 };
+        })
         .filter((x) => x.date && x.symbol && (!minDate || x.date >= minDate));
-      return { id: s.id, name: s.name, signals };
+      const priority = cfg.setupPriority?.[s.id];
+      return { id: s.id, name: s.name, signals, priority: Number.isFinite(priority as number) && (priority as number) > 0 ? (priority as number) : 1 };
     });
 
     const names = engineSetups.map((s) => s.name);
@@ -93,7 +109,7 @@ export async function POST(req: Request) {
       result,
       meta: {
         setups: names, execution: cfg.execution, ladderN: cfg.ladderN, parking: cfg.parking, maxWeight: cfg.maxWeight,
-        maxLeverage: cfg.maxLeverage, startYear: cfg.startYear,
+        maxLeverage: cfg.maxLeverage, startYear: cfg.startYear, selection: cfg.selection, maxPositions: cfg.maxPositions,
         synthetic, syntheticSymbols: synthSyms.length, truncatedSymbols: truncated ? symbols.length - MAX_SYMBOLS : 0,
       },
     });

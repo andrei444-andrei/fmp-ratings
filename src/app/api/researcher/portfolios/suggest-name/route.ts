@@ -27,6 +27,8 @@ export async function POST(req: Request) {
       maxWeight: Number.isFinite(mw) && mw > 0 && mw < 1 ? mw : 0,
       maxLeverage: Number.isFinite(lv) && lv > 1 ? lv : 1,
       startYear: Number.isFinite(sy) && sy >= 1990 ? Math.round(sy) : 0,
+      selection: b?.selection === 'limit' ? 'limit' : 'all',
+      maxPositions: Number(b?.maxPositions) > 0 ? Math.round(Number(b.maxPositions)) : 0,
       metrics: b?.metrics && typeof b.metrics === 'object' ? b.metrics : undefined,
       existing,
     });

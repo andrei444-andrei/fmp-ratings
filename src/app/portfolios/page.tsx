@@ -11,10 +11,10 @@ type Parking = 'BIL' | 'SPY' | 'CASH';
 type ExecMode = 'ladder' | 'weekly' | 'monthly';
 type SetupItem = { id: string; name: string; snapshot?: Record<string, number | string> };
 type PortfolioSnapshot = { cagr?: number | null; loading?: number | null; excessActive?: number | null; sharpe?: number | null; maxDD?: number | null; winRateVsSpy?: number | null; total?: number | null; start?: string | null; end?: string | null };
-type SavedConfig = { setupIds: string[]; execution: ExecMode; ladderN: number; parking: Parking; maxWeight?: number; maxLeverage?: number; startYear?: number };
+type SavedConfig = { setupIds: string[]; execution: ExecMode; ladderN: number; parking: Parking; maxWeight?: number; maxLeverage?: number; startYear?: number; selection?: 'all' | 'limit'; maxPositions?: number; setupPriority?: Record<string, number> };
 type SavedPortfolio = { id: string; name: string; description: string; config: SavedConfig; favorite?: boolean; snapshot?: PortfolioSnapshot | null; createdAt?: string };
 type LibSort = 'recent' | 'cagr' | 'loading' | 'excess';
-type ComputeMeta = { setups: string[]; execution: ExecMode; ladderN: number; parking: Parking; maxWeight?: number; maxLeverage?: number; startYear?: number; synthetic: boolean; syntheticSymbols?: number; truncatedSymbols?: number };
+type ComputeMeta = { setups: string[]; execution: ExecMode; ladderN: number; parking: Parking; maxWeight?: number; maxLeverage?: number; startYear?: number; selection?: 'all' | 'limit'; maxPositions?: number; synthetic: boolean; syntheticSymbols?: number; truncatedSymbols?: number };
 
 const EXEC_LABEL: Record<ExecMode, string> = { ladder: 'лестница', weekly: 'ребаланс/нед', monthly: 'ребаланс/мес' };
 const EXEC_FULL: Record<ExecMode, string> = { ladder: 'Лестница', weekly: 'Недельный ребаланс', monthly: 'Месячный ребаланс' };
@@ -29,13 +29,14 @@ const signPct = (x: number | null | undefined, dp = 1) => (x == null || !Number.
 const numFmt = (x: number | null | undefined, dp = 2) => (x == null || !Number.isFinite(x) ? '—' : x.toFixed(dp));
 const signCls = (x: number | null | undefined) => (x == null || !Number.isFinite(x) ? '' : x > 0 ? 'up' : x < 0 ? 'down' : '');
 
-function fallbackName(setupNames: string[], exec: ExecMode, n: number, parking: Parking, maxWeight: number, maxLeverage = 1, startYear = 0): string {
+function fallbackName(setupNames: string[], exec: ExecMode, n: number, parking: Parking, maxWeight: number, maxLeverage = 1, startYear = 0, selection: 'all' | 'limit' = 'all', maxPositions = 0): string {
   const head = setupNames.slice(0, 2).join(' + ') + (setupNames.length > 2 ? ` +${setupNames.length - 2}` : '');
   const ex = exec === 'ladder' ? `лестница ${n}` : exec === 'weekly' ? 'нед. ребаланс' : 'мес. ребаланс';
+  const lim = selection === 'limit' && maxPositions > 0 ? ` · топ-${maxPositions}` : '';
   const cap = maxWeight > 0 ? ` · потолок ${Math.round(maxWeight * 100)}%` : '';
   const lev = maxLeverage > 1 ? ` · ${maxLeverage}×` : '';
   const yr = startYear > 1990 ? ` · с ${startYear}` : '';
-  return `${head} · ${ex} · ${parking}${cap}${lev}${yr}`.slice(0, 63);
+  return `${head} · ${ex}${lim} · ${parking}${cap}${lev}${yr}`.slice(0, 63);
 }
 
 // Снимок ключевых метрик для списка тестов (сохраняется, чтобы библиотека не пересчитывала).
@@ -213,6 +214,9 @@ export default function PortfoliosPage() {
   const [maxWeightPct, setMaxWeightPct] = useState<number>(0); // потолок веса на тикер, % (0 = без лимита)
   const [maxLeverage, setMaxLeverage] = useState<number>(1); // макс. плечо (1 = без плеча)
   const [startYear, setStartYear] = useState<number>(0); // год начала бэктеста (0 = с первого сигнала)
+  const [selection, setSelection] = useState<'all' | 'limit'>('all'); // отбор: все имена / лимит K
+  const [maxPositions, setMaxPositions] = useState<number>(10); // K — максимум имён при лимите
+  const [setupPriority, setSetupPriority] = useState<Record<string, number>>({}); // setupId → приоритет (вес)
 
   const [result, setResult] = useState<PortfolioResult | null>(null);
   const [meta, setMeta] = useState<ComputeMeta | null>(null);
@@ -269,6 +273,9 @@ export default function PortfoliosPage() {
     setMaxWeightPct(0);
     setMaxLeverage(1);
     setStartYear(0);
+    setSelection('all');
+    setMaxPositions(10);
+    setSetupPriority({});
     setResult(null);
     setMeta(null);
     setRan(false);
@@ -279,11 +286,11 @@ export default function PortfoliosPage() {
 
   // расчёт без автосохранения (используется и мастером, и при открытии сохранённого теста)
   const computeOnly = useCallback(
-    async (ids: string[], cfg: { execution: ExecMode; ladderN: number; parking: Parking; maxWeight: number; maxLeverage: number; startYear: number }): Promise<PortfolioResult | null> => {
+    async (ids: string[], cfg: { execution: ExecMode; ladderN: number; parking: Parking; maxWeight: number; maxLeverage: number; startYear: number; selection: 'all' | 'limit'; maxPositions: number; setupPriority: Record<string, number> }): Promise<PortfolioResult | null> => {
       const r = await fetch('/api/researcher/portfolios/compute', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ setupIds: ids, execution: cfg.execution, ladderN: cfg.ladderN, parking: cfg.parking, maxWeight: cfg.maxWeight, maxLeverage: cfg.maxLeverage, startYear: cfg.startYear }),
+        body: JSON.stringify({ setupIds: ids, execution: cfg.execution, ladderN: cfg.ladderN, parking: cfg.parking, maxWeight: cfg.maxWeight, maxLeverage: cfg.maxLeverage, startYear: cfg.startYear, selection: cfg.selection, maxPositions: cfg.maxPositions, setupPriority: cfg.setupPriority }),
       }).then((x) => x.json());
       if (r?.error) {
         setErr(String(r.error));
@@ -309,8 +316,9 @@ export default function PortfoliosPage() {
     setBusy(true);
     setErr('');
     const maxWeight = maxWeightPct > 0 ? Math.min(1, maxWeightPct / 100) : 0;
+    const prio = Object.fromEntries(ids.map((id) => [id, setupPriority[id] ?? 1]));
     try {
-      const res = await computeOnly(ids, { execution: exec, ladderN, parking, maxWeight, maxLeverage, startYear });
+      const res = await computeOnly(ids, { execution: exec, ladderN, parking, maxWeight, maxLeverage, startYear, selection, maxPositions, setupPriority: prio });
       if (!res) return;
       setRan(true);
       setStep(0);
@@ -322,13 +330,13 @@ export default function PortfoliosPage() {
         const rn = await fetch('/api/researcher/portfolios/suggest-name', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ setups: setupNames, execution: exec, ladderN, parking, maxWeight, maxLeverage, startYear, metrics: { cagr: m.cagr, loading: m.loading, excessTotal: m.excessTotal, sharpe: m.sharpe } }),
+          body: JSON.stringify({ setups: setupNames, execution: exec, ladderN, parking, maxWeight, maxLeverage, startYear, selection, maxPositions, metrics: { cagr: m.cagr, loading: m.loading, excessTotal: m.excessTotal, sharpe: m.sharpe } }),
         }).then((x) => x.json());
         if (rn?.title) title = String(rn.title);
       } catch {
         /* graceful — запасное имя ниже */
       }
-      if (!title) title = fallbackName(setupNames, exec, ladderN, parking, maxWeight, maxLeverage, startYear);
+      if (!title) title = fallbackName(setupNames, exec, ladderN, parking, maxWeight, maxLeverage, startYear, selection, maxPositions);
       const id = newId();
       setName(title);
       setCurId(id);
@@ -336,7 +344,7 @@ export default function PortfoliosPage() {
         await fetch('/api/researcher/portfolios', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ id, name: title, config: { setupIds: ids, selection: 'all', execution: exec, ladderN, parking, maxWeight, maxLeverage, startYear }, snapshot: snapOf(m) }),
+          body: JSON.stringify({ id, name: title, config: { setupIds: ids, selection, maxPositions, setupPriority: prio, execution: exec, ladderN, parking, maxWeight, maxLeverage, startYear }, snapshot: snapOf(m) }),
         });
         await loadSaved();
       } catch {
@@ -347,7 +355,7 @@ export default function PortfoliosPage() {
     } finally {
       setBusy(false);
     }
-  }, [selected, exec, ladderN, parking, maxWeightPct, maxLeverage, startYear, setups, computeOnly, loadSaved]);
+  }, [selected, exec, ladderN, parking, maxWeightPct, maxLeverage, startYear, selection, maxPositions, setupPriority, setups, computeOnly, loadSaved]);
 
   // переименование текущего теста (сохранённого)
   const rename = useCallback(
@@ -356,17 +364,19 @@ export default function PortfoliosPage() {
       if (!curId || !nm.trim()) return;
       try {
         const maxWeight = maxWeightPct > 0 ? Math.min(1, maxWeightPct / 100) : 0;
+        const ids = [...selected];
+        const prio = Object.fromEntries(ids.map((id) => [id, setupPriority[id] ?? 1]));
         await fetch('/api/researcher/portfolios', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ id: curId, name: nm.trim(), config: { setupIds: [...selected], selection: 'all', execution: exec, ladderN, parking, maxWeight, maxLeverage, startYear } }),
+          body: JSON.stringify({ id: curId, name: nm.trim(), config: { setupIds: ids, selection, maxPositions, setupPriority: prio, execution: exec, ladderN, parking, maxWeight, maxLeverage, startYear } }),
         });
         await loadSaved();
       } catch {
         /* graceful */
       }
     },
-    [curId, selected, exec, ladderN, parking, maxWeightPct, maxLeverage, startYear, loadSaved],
+    [curId, selected, exec, ladderN, parking, maxWeightPct, maxLeverage, startYear, selection, maxPositions, setupPriority, loadSaved],
   );
 
   const openSaved = useCallback(
@@ -375,6 +385,9 @@ export default function PortfoliosPage() {
       const mw = p.config.maxWeight ?? 0;
       const lev = p.config.maxLeverage ?? 1;
       const sy = p.config.startYear ?? 0;
+      const sel = p.config.selection === 'limit' ? 'limit' : 'all';
+      const mp = p.config.maxPositions ?? 10;
+      const prio = p.config.setupPriority || {};
       setSelected(new Set(ids));
       setExec(p.config.execution);
       setLadderN(p.config.ladderN ?? 5);
@@ -382,13 +395,16 @@ export default function PortfoliosPage() {
       setMaxWeightPct(mw > 0 ? Math.round(mw * 100) : 0);
       setMaxLeverage(lev > 1 ? lev : 1);
       setStartYear(sy > 1990 ? sy : 0);
+      setSelection(sel);
+      setMaxPositions(mp > 0 ? mp : 10);
+      setSetupPriority(prio);
       setCurId(p.id);
       setName(p.name);
       setStep(0);
       setErr('');
       setBusy(true);
       try {
-        const res = await computeOnly(ids, { execution: p.config.execution, ladderN: p.config.ladderN ?? 5, parking: p.config.parking, maxWeight: mw, maxLeverage: lev, startYear: sy });
+        const res = await computeOnly(ids, { execution: p.config.execution, ladderN: p.config.ladderN ?? 5, parking: p.config.parking, maxWeight: mw, maxLeverage: lev, startYear: sy, selection: sel, maxPositions: mp, setupPriority: prio });
         setRan(true);
         // освежаем снимок метрик в библиотеке (в т.ч. для старых тестов без него)
         if (res?.metrics) {
@@ -444,12 +460,13 @@ export default function PortfoliosPage() {
     setBusy(true);
     setErr('');
     const maxWeight = maxWeightPct > 0 ? Math.min(1, maxWeightPct / 100) : 0;
+    const prio = Object.fromEntries(ids.map((id) => [id, setupPriority[id] ?? 1]));
     try {
-      const res = await computeOnly(ids, { execution: exec, ladderN, parking, maxWeight, maxLeverage, startYear });
+      const res = await computeOnly(ids, { execution: exec, ladderN, parking, maxWeight, maxLeverage, startYear, selection, maxPositions, setupPriority: prio });
       if (res && curId) {
         await fetch('/api/researcher/portfolios', {
           method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ id: curId, name: name || fallbackName(setups.filter((s) => ids.includes(s.id)).map((s) => s.name), exec, ladderN, parking, maxWeight, maxLeverage, startYear), config: { setupIds: ids, selection: 'all', execution: exec, ladderN, parking, maxWeight, maxLeverage, startYear }, snapshot: snapOf(res.metrics) }),
+          body: JSON.stringify({ id: curId, name: name || fallbackName(setups.filter((s) => ids.includes(s.id)).map((s) => s.name), exec, ladderN, parking, maxWeight, maxLeverage, startYear, selection, maxPositions), config: { setupIds: ids, selection, maxPositions, setupPriority: prio, execution: exec, ladderN, parking, maxWeight, maxLeverage, startYear }, snapshot: snapOf(res.metrics) }),
         });
         await loadSaved();
       }
@@ -458,7 +475,7 @@ export default function PortfoliosPage() {
     } finally {
       setBusy(false);
     }
-  }, [selected, exec, ladderN, parking, maxWeightPct, maxLeverage, startYear, curId, name, setups, computeOnly, loadSaved]);
+  }, [selected, exec, ladderN, parking, maxWeightPct, maxLeverage, startYear, selection, maxPositions, setupPriority, curId, name, setups, computeOnly, loadSaved]);
 
   const m = result?.metrics;
   const parkShort = PARK_SHORT[(meta?.parking ?? parking) as Parking] || 'паркинг';
@@ -688,13 +705,51 @@ export default function PortfoliosPage() {
                         <input className="kin" type="number" min={0} max={2100} step={1} value={startYear || ''} placeholder="с начала" data-testid="pf-startyear"
                           onChange={(e) => setStartYear(Math.max(0, Math.min(2100, Math.floor(Number(e.target.value)) || 0)))} />
                       </div>
-                      <div className="ctl"><span className="lbl">Вес · отбор</span><span className="badge">равный · все имена</span></div>
+                      <div className="ctl">
+                        <span className="lbl">Отбор</span>
+                        <select value={selection} data-testid="pf-selection" onChange={(e) => setSelection(e.target.value as 'all' | 'limit')}>
+                          <option value="all">Все имена</option>
+                          <option value="limit">Лимит K</option>
+                        </select>
+                        {selection === 'limit' && (
+                          <input className="kin" type="number" min={1} max={500} value={maxPositions} data-testid="pf-maxpos"
+                            onChange={(e) => setMaxPositions(Math.max(1, Math.min(500, Math.round(Number(e.target.value) || 10))))} />
+                        )}
+                      </div>
+                      <div className="ctl"><span className="lbl">Вес</span><span className="badge">равный</span></div>
                     </div>
+                    {selection === 'limit' && selectedNames.length > 0 && (
+                      <div className="pf-prio" data-testid="pf-prio" style={{ marginTop: 10 }}>
+                        <div className="pf-note" style={{ marginTop: 0, marginBottom: 6 }}>
+                          Приоритет сетапов делит {maxPositions} слотов (нормируется). Недобор перетекает другим сетапам. Внутри сетапа —
+                          сильнейшие по фактору на входе (для просадочных — по глубине просадки).
+                        </div>
+                        <div className="pf-ptable-wrap" style={{ maxHeight: 220 }}>
+                          <table className="pf-ptable">
+                            <thead><tr><th className="l">Сетап</th><th>Приоритет</th><th>Доля слотов</th></tr></thead>
+                            <tbody>
+                              {setups.filter((s) => selected.has(s.id)).map((s) => {
+                                const list = setups.filter((x) => selected.has(x.id));
+                                const total = list.reduce((a, x) => a + (setupPriority[x.id] ?? 1), 0) || 1;
+                                const w = setupPriority[s.id] ?? 1;
+                                return (
+                                  <tr key={s.id} data-testid="pf-prio-row">
+                                    <td className="l sy">{s.name}</td>
+                                    <td><input className="kin" type="number" min={0} step={0.5} value={w} data-testid="pf-prio-input"
+                                      onChange={(e) => { const v = Math.max(0, Number(e.target.value) || 0); setSetupPriority((p) => ({ ...p, [s.id]: v })); }} /></td>
+                                    <td>{pct(w / total, 0)}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
                     <div className="pf-note" style={{ marginTop: 10 }}>
-                      Потолок на тикер ограничивает долю одного имени; если имён мало и равный вес превысил бы потолок, остаток уходит в паркинг.
-                      Плечо (напр. 1.5×) даёт долю на имя <b>min(плечо/N, потолок)</b> — суммарно &gt;100% набирается только когда имён достаточно
-                      («позиций много»). Простаивающий капитал паркуется как выбрано (SPY/BIL/кэш), а заёмная часть (сверх 100%) финансируется по
-                      безрисковой ставке (BIL). Год начала — с какого года гнать бэктест (пусто = с первого сигнала). Отбор — «все имена». Оценка in-sample.
+                      Отбор «Лимит K» держит максимум K имён: слоты делятся по приоритету сетапов, внутри сетапа берутся сильнейшие по фактору на
+                      входе (без look-ahead). Потолок на тикер и плечо применяются к отобранным. Простаивающий капитал паркуется как выбрано,
+                      заёмная часть (при плече) — по ставке BIL. Год начала — с какого года бэктест. Оценка in-sample.
                     </div>
                   </>
                 )}
@@ -708,7 +763,8 @@ export default function PortfoliosPage() {
                       <div className="row"><span className="k">Потолок на тикер</span><span>{maxWeightPct > 0 ? `${maxWeightPct}% (остаток → паркинг)` : 'без лимита'}</span></div>
                       <div className="row"><span className="k">Макс плечо</span><span>{maxLeverage > 1 ? `${maxLeverage}× (простой → паркинг; заём сверх 100% — по ставке BIL)` : 'без плеча'}</span></div>
                       <div className="row"><span className="k">Год начала</span><span>{startYear > 1990 ? startYear : 'с первого сигнала'}</span></div>
-                      <div className="row"><span className="k">Паркинг · вес · отбор</span><span>{PARK_LABEL[parking]} · равный · все имена</span></div>
+                      <div className="row"><span className="k">Отбор</span><span>{selection === 'limit' ? `лимит ${maxPositions} имён (квоты сетапов + ранг по фактору)` : 'все имена'}</span></div>
+                      <div className="row"><span className="k">Паркинг · вес</span><span>{PARK_LABEL[parking]} · равный</span></div>
                     </div>
                     <div className="pf-note" style={{ marginTop: 10 }}>После запуска тест автоматически сохранится с названием от AI (его можно изменить).</div>
                   </>
@@ -779,6 +835,17 @@ export default function PortfoliosPage() {
                   <input className="kin" type="number" min={0} max={2100} step={1} value={startYear || ''} placeholder="нач." data-testid="pf-rc-startyear"
                     onChange={(e) => setStartYear(Math.max(0, Math.min(2100, Math.floor(Number(e.target.value)) || 0)))} />
                 </div>
+                <div className="ctl">
+                  <span className="lbl">Отбор</span>
+                  <select value={selection} data-testid="pf-rc-selection" onChange={(e) => setSelection(e.target.value as 'all' | 'limit')}>
+                    <option value="all">Все</option>
+                    <option value="limit">Лимит</option>
+                  </select>
+                  {selection === 'limit' && (
+                    <input className="kin" type="number" min={1} max={500} value={maxPositions} data-testid="pf-rc-maxpos"
+                      onChange={(e) => setMaxPositions(Math.max(1, Math.min(500, Math.round(Number(e.target.value) || 10))))} />
+                  )}
+                </div>
                 <div className="grow">
                   <button className="btn apply on" data-testid="pf-recompute-run" onClick={recompute} disabled={busy}>{busy ? 'Считаю…' : '↻ Пересчитать'}</button>
                 </div>
@@ -799,6 +866,7 @@ export default function PortfoliosPage() {
                 {(meta?.maxWeight ?? 0) > 0 ? ` · потолок ${Math.round((meta!.maxWeight as number) * 100)}%` : ''}
                 {(meta?.maxLeverage ?? 1) > 1 ? ` · плечо ${meta!.maxLeverage}×` : ''}
                 {(meta?.startYear ?? 0) > 1990 ? ` · с ${meta!.startYear}` : ''}
+                {(meta?.selection ?? 'all') === 'limit' && (meta?.maxPositions ?? 0) > 0 ? ` · лимит ${meta!.maxPositions}` : ''}
                 {meta?.synthetic && <span className="badge warn" style={{ marginLeft: 8 }}>данные синтетические (без ключей)</span>}
                 {!meta?.synthetic && !!meta?.syntheticSymbols && <span className="badge warn" style={{ marginLeft: 8 }}>имён без реальных цен: {meta.syntheticSymbols} (синтетика)</span>}
                 {!!meta?.truncatedSymbols && <span className="badge warn" style={{ marginLeft: 8 }}>усечено имён: {meta.truncatedSymbols}</span>}

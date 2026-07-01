@@ -13,7 +13,7 @@ function series(n: number, startISO = '2015-01-01', startPrice = 100, dailyRet =
   }
   return out;
 }
-const cfg = (execution: EngineConfig['execution'], ladderN: number, parking: EngineConfig['parking'], maxWeight = 0, maxLeverage = 1): EngineConfig => ({ execution, ladderN, parking, selection: 'all', maxWeight, maxLeverage });
+const cfg = (execution: EngineConfig['execution'], ladderN: number, parking: EngineConfig['parking'], maxWeight = 0, maxLeverage = 1): EngineConfig => ({ execution, ladderN, parking, selection: 'all', maxPositions: 0, maxWeight, maxLeverage });
 // сигналы по тикеру на индексах календаря [from..to]
 const signalsOn = (dates: string[], from: number, to: number, symbol: string): Signal[] => {
   const out: Signal[] = [];
@@ -211,6 +211,36 @@ describe('buildPortfolio (price-panel simulation)', () => {
     // плечо работает при любом паркинге, в т.ч. SPY → загрузка тоже ~150%
     const spyLev = buildPortfolio(setups, cfg('weekly', 5, 'SPY', 0.2, 1.5), spy, null, panel);
     expect(spyLev.metrics.loading!).toBeGreaterThan(1.3);
+  });
+
+  it('отбор «лимит K»: слоты делятся по квотам сетапов, внутри сетапа — топ по rank', () => {
+    const spy = series(80, '2015-01-01', 100, 0.0003);
+    const dates = spy.map((b) => b.date);
+    const mk = (p: number) => series(80, '2015-01-01', 40 + p, 0.001);
+    const panel: PricePanel = new Map([['AA1', mk(1)], ['AA2', mk(2)], ['AA3', mk(3)], ['BB1', mk(4)], ['BB2', mk(5)]]);
+    const sig = (sym: string, rank: number): Signal[] => signalsOn(dates, 5, 60, sym).map((s) => ({ ...s, rank }));
+    const setups: EngineSetup[] = [
+      { id: 'A', name: 'A', priority: 1, signals: [...sig('AA1', 3), ...sig('AA2', 2), ...sig('AA3', 1)] },
+      { id: 'B', name: 'B', priority: 1, signals: [...sig('BB1', 3), ...sig('BB2', 1)] },
+    ];
+    const base: EngineConfig = { execution: 'weekly', ladderN: 5, parking: 'CASH', selection: 'limit', maxPositions: 2, maxWeight: 0, maxLeverage: 1 };
+    const res = buildPortfolio(setups, base, spy, null, panel);
+    // K=2, приоритеты равны → 1 слот A + 1 слот B; топ каждого по rank = AA1 и BB1
+    const rb = res.rebalances.find((r) => r.kind === 'rebalance' && r.positions.length > 0)!;
+    expect(rb.positions.length).toBe(2);
+    expect(rb.positions.map((p) => p.symbol).sort()).toEqual(['AA1', 'BB1']);
+    // без лимита корзина содержит все 5 имён
+    const all = buildPortfolio(setups, { ...base, selection: 'all', maxPositions: 0 }, spy, null, panel);
+    const rbAll = all.rebalances.find((r) => r.kind === 'rebalance' && r.positions.length > 0)!;
+    expect(rbAll.positions.length).toBe(5);
+    // приоритет: A=3, B=1 при K=4 → A получает 3 слота, B — 1
+    const skew = buildPortfolio(
+      [{ ...setups[0], priority: 3 }, { ...setups[1], priority: 1 }],
+      { ...base, maxPositions: 4 }, spy, null, panel,
+    );
+    const rbSkew = skew.rebalances.find((r) => r.kind === 'rebalance' && r.positions.length > 0)!;
+    const syms = rbSkew.positions.map((p) => p.symbol).sort();
+    expect(syms).toEqual(['AA1', 'AA2', 'AA3', 'BB1']); // все 3 из A + топ-1 из B
   });
 
   it('пустые входы не валятся', () => {

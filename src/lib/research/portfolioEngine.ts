@@ -24,10 +24,13 @@ export type ExecMode = 'ladder' | 'weekly' | 'monthly';
 // maxLeverage — макс. плечо (1 = без плеча). Доля на имя = min(L/m, потолок), итог = min(L, m·потолок):
 // >100% набирается только когда имён достаточно. Простаивающий капитал (загрузка <100%) паркуется как
 // выбрано (SPY/BIL/кэш); заёмная часть (>100%) финансируется по безрисковой ставке (BIL), независимо от паркинга.
-export type EngineConfig = { execution: ExecMode; ladderN: number; parking: Parking; selection: 'all'; maxWeight: number; maxLeverage: number };
+// selection/maxPositions — ОТБОР под лимит: 'all' = все имена (равный вес); 'limit' = максимум K=maxPositions
+// имён, отбор по квотам сетапов (priority) и рангу внутри сетапа (Signal.rank, сильнейшие первыми).
+export type EngineConfig = { execution: ExecMode; ladderN: number; parking: Parking; selection: 'all' | 'limit'; maxPositions: number; maxWeight: number; maxLeverage: number };
 
-export type Signal = { date: string; symbol: string }; // дата входа + тикер (из потока сделок сетапа)
-export type EngineSetup = { id: string; name: string; signals: Signal[] };
+// дата входа + тикер + rank (значение факторной колонки НА ВХОДЕ для ранжирования, без look-ahead)
+export type Signal = { date: string; symbol: string; rank?: number };
+export type EngineSetup = { id: string; name: string; signals: Signal[]; priority?: number }; // priority — квота сетапа при лимите
 export type Bar = { date: string; close: number };
 export type DayPoint = { d: string; v: number };
 export type PricePanel = Map<string, Bar[]>; // тикер → дневные бары
@@ -232,22 +235,25 @@ export function buildPortfolio(
     return lo;
   };
 
-  // сигналы → день входа (индекс календаря) → множество тикеров (объединение сетапов = режим «все»)
-  const signalsByDay = new Map<number, Set<string>>();
+  // сигналы → день входа (индекс календаря) → кандидаты дня {тикер, сетап, приоритет, ранг}.
+  // Для отбора под лимит нужен per-signal сетап (квоты) и ранг (сортировка внутри сетапа).
+  type Cand = { symbol: string; setupId: string; priority: number; rank: number };
+  const dayCand = new Map<number, Cand[]>();
   const symbols = new Set<string>();
   const symbolToSetups = new Map<string, Set<string>>(); // тикер → какие сетапы его давали (для «почему»)
   let nSignals = 0;
   let minEntry = Infinity;
   let lastEntry = -Infinity;
   for (const s of setups) {
+    const prio = s.priority && s.priority > 0 ? s.priority : 1;
     for (const sig of s.signals || []) {
       if (!sig || !sig.date || !sig.symbol) continue;
       const e = firstIndexGE(sig.date);
       if (e >= N) continue;
       const sym = sig.symbol.toUpperCase();
-      let set = signalsByDay.get(e);
-      if (!set) signalsByDay.set(e, (set = new Set()));
-      set.add(sym);
+      let arr = dayCand.get(e);
+      if (!arr) dayCand.set(e, (arr = []));
+      arr.push({ symbol: sym, setupId: s.id, priority: prio, rank: Number.isFinite(sig.rank as number) ? (sig.rank as number) : 0 });
       symbols.add(sym);
       let ss = symbolToSetups.get(sym);
       if (!ss) symbolToSetups.set(sym, (ss = new Set()));
@@ -258,6 +264,53 @@ export function buildPortfolio(
     }
   }
   if (!nSignals || minEntry === Infinity) return empty;
+
+  // ОТБОР: пул кандидатов за окно [from..to] (дедуп тикера по наибольшему приоритету сетапа, ранг — от него).
+  const K_LIMIT = cfg.selection === 'limit' && cfg.maxPositions > 0 ? Math.round(cfg.maxPositions) : 0;
+  const poolOver = (from: number, to: number): Map<string, Cand> => {
+    const m = new Map<string, Cand>();
+    for (let e = Math.max(0, from); e <= to; e++) {
+      const arr = dayCand.get(e);
+      if (!arr) continue;
+      for (const c of arr) {
+        const cur = m.get(c.symbol);
+        if (!cur || c.priority >= cur.priority) m.set(c.symbol, c); // выше приоритет / свежее при равенстве
+      }
+    }
+    return m;
+  };
+  // из пула выбираем ≤K имён: слоты делятся по квотам сетапов (priority), внутри сетапа — топ по rank.
+  const selectPool = (pool: Map<string, Cand>): Set<string> => {
+    if (!K_LIMIT || pool.size <= K_LIMIT) return new Set(pool.keys());
+    const bySetup = new Map<string, { symbol: string; rank: number }[]>();
+    const prioOf = new Map<string, number>();
+    for (const [sym, c] of pool) {
+      let g = bySetup.get(c.setupId);
+      if (!g) bySetup.set(c.setupId, (g = []));
+      g.push({ symbol: sym, rank: c.rank });
+      prioOf.set(c.setupId, c.priority);
+    }
+    const sids = [...bySetup.keys()];
+    for (const sid of sids) bySetup.get(sid)!.sort((a, b) => b.rank - a.rank); // сильнейшие первыми
+    const totalPrio = sids.reduce((s, sid) => s + (prioOf.get(sid) || 1), 0) || 1;
+    const avail = new Map(sids.map((sid) => [sid, bySetup.get(sid)!.length]));
+    const quota = new Map(sids.map((sid) => [sid, ((prioOf.get(sid) || 1) / totalPrio) * K_LIMIT]));
+    const alloc = new Map(sids.map((sid) => [sid, 0]));
+    let used = 0;
+    for (const sid of sids) { const a = Math.min(avail.get(sid)!, Math.floor(quota.get(sid)!)); alloc.set(sid, a); used += a; }
+    // недобор до K → добираем у сетапов со свободной ёмкостью по наибольшему остатку квоты
+    let remaining = K_LIMIT - used;
+    while (remaining > 0) {
+      const cand = sids.filter((sid) => alloc.get(sid)! < avail.get(sid)!);
+      if (!cand.length) break;
+      cand.sort((a, b) => (quota.get(b)! - alloc.get(b)!) - (quota.get(a)! - alloc.get(a)!));
+      alloc.set(cand[0], alloc.get(cand[0])! + 1);
+      remaining--;
+    }
+    const sel = new Set<string>();
+    for (const sid of sids) { const g = bySetup.get(sid)!; const a = alloc.get(sid)!; for (let i = 0; i < a; i++) sel.add(g[i].symbol); }
+    return sel;
+  };
 
   // цены тикеров, выровненные на календарь (carry-forward)
   const calPrices = new Map<string, number[]>();
@@ -312,17 +365,12 @@ export function buildPortfolio(
   const L = Math.max(1, Math.min(3, cfg.maxLeverage || 1)); // макс. плечо, клампим в [1, 3]
 
   // Лестница: корзина под-портфеля, ребалансированного на день входа e = «текущий отбор» —
-  // имена с сигналом за трейлинг-окно N дней (e−N+1..e). Та же логика, что у периодического
-  // ребаланса, но для одного из N сдвинутых по фазе под-портфелей. Мемоизируется по e.
+  // имена с сигналом за трейлинг-окно N дней (e−N+1..e), затем ОТБОР под лимит. Мемоизируется по e.
   const trancheCache = new Map<number, Set<string>>();
   const trancheBasket = (e: number): Set<string> => {
     let b = trancheCache.get(e);
     if (b) return b;
-    b = new Set<string>();
-    for (let t = Math.max(0, e - N_LAD + 1); t <= e; t++) {
-      const set = signalsByDay.get(t);
-      if (set) for (const s of set) b.add(s);
-    }
+    b = selectPool(poolOver(e - N_LAD + 1, e));
     trancheCache.set(e, b);
     return b;
   };
@@ -415,12 +463,8 @@ export function buildPortfolio(
         const p = calPrices.get(sym)?.[k];
         return s + (Number.isFinite(p as number) ? u * (p as number) : 0);
       }, 0);
-      // корзина = тикеры с сигналом в (prevReb, k]
-      const basket = new Set<string>();
-      for (let e = prevReb + 1; e <= k; e++) {
-        const set = signalsByDay.get(e);
-        if (set) for (const s of set) basket.add(s);
-      }
+      // корзина = отбор из тикеров с сигналом в (prevReb, k]
+      const basket = selectPool(poolOver(prevReb + 1, k));
       const valid = [...basket].filter((s) => Number.isFinite(calPrices.get(s)?.[k] as number) && (calPrices.get(s)![k] as number) > 0);
       holdings = new Map();
       const m = valid.length;
