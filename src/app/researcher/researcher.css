@@ -207,6 +207,34 @@
 .rsx-detail .ddx-v.down { color: var(--fk-down-text, #c81e3c); }
 .rsx-detail .ddx-n { font-size: 10.5px; color: var(--fk-text-3); text-align: right; font-variant-numeric: tabular-nums; }
 
+/* сравнение двух сетапов (пересечение/исключение) */
+.rsx-detail.cmp { width: min(880px, 96vw); }
+.rsx-detail .cmp-pick { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.rsx-detail .cmp-pick label { display: inline-flex; align-items: center; font-size: 12px; font-weight: 700; }
+.rsx-detail .cmp-pick select { font: inherit; font-size: 12.5px; border: 1px solid var(--fk-line-strong); border-radius: 8px; padding: 6px 8px; background: #fff; color: var(--fk-text); max-width: 260px; }
+.rsx-detail .cmp-vs { color: var(--fk-text-3); font-size: 12px; }
+.rsx-detail .cmp-recipes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.rsx-detail .cmp-rec { border: 1px solid var(--fk-line); border-radius: 10px; padding: 9px 11px; background: var(--fk-surface-2); }
+.rsx-detail .cmp-rec-h { font-size: 12px; font-weight: 700; color: var(--fk-brand-700); margin-bottom: 5px; }
+.rsx-detail .cmp-rec-b > div { display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; padding: 1px 0; }
+.rsx-detail .cmp-rec-b span { color: var(--fk-text-3); }
+.rsx-detail .cmp-rec-b b { font-variant-numeric: tabular-nums; text-align: right; word-break: break-word; }
+.rsx-detail .cmp-warn { background: var(--fk-warn-bg, #fff7ed); border: 1px solid var(--fk-warn-line, #fed7aa); color: var(--fk-warn-text, #b5740a); border-radius: 8px; padding: 8px 10px; font-size: 11.5px; margin-bottom: 12px; }
+.rsx-detail .cmp-tab { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.rsx-detail .cmp-tab th { text-align: right; font-weight: 700; color: var(--fk-text-3); padding: 6px 8px; border-bottom: 1px solid var(--fk-line); white-space: nowrap; }
+.rsx-detail .cmp-tab th:first-child { text-align: left; }
+.rsx-detail .cmp-tab td { padding: 6px 8px; border-bottom: 1px solid var(--fk-line); }
+.rsx-detail .cmp-tab td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.rsx-detail .cmp-tab .cmp-lb { font-weight: 600; }
+.rsx-detail .cmp-tab tr.a, .rsx-detail .cmp-tab tr.b { font-weight: 600; }
+.rsx-detail .cmp-tab tr.inter { background: var(--fk-brand-50, #eff4ff); }
+.rsx-detail .cmp-tab tr.inter .cmp-lb { color: var(--fk-brand-700); font-weight: 700; }
+.rsx-detail .cmp-tab tr.union td { border-top: 1px solid var(--fk-line-strong); }
+.rsx-detail .cmp-tab .up { color: var(--fk-up-text, #0a8a60); }
+.rsx-detail .cmp-tab .down { color: var(--fk-down-text, #c81e3c); }
+.rsx-detail .cmp-verdict { margin-top: 12px; font-size: 12.5px; background: var(--fk-surface-2); border-radius: 8px; padding: 9px 11px; line-height: 1.5; }
+.rsx-detail .cmp-f { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-top: 1px solid var(--fk-line); }
+
 /* модалка «Создать корзину» */
 .rsx-modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(560px, 94vw); max-height: 88vh; background: var(--fk-surface-elev); border: 1px solid var(--fk-line); border-radius: 14px; box-shadow: var(--fk-shadow, 0 12px 40px rgba(15,23,41,.18)); z-index: 51; display: flex; flex-direction: column; overflow: hidden; }
 .rsx-modal .dr-h { display: flex; align-items: center; justify-content: space-between; padding: 13px 16px; border-bottom: 1px solid var(--fk-line); }

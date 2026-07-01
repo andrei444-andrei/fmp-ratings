@@ -178,6 +178,49 @@ test.describe('Скринер /researcher', () => {
     await expect(page.getByTestId('setup-chip').filter({ hasText: name })).toHaveCount(0);
   });
 
+  // Сравнение двух сетапов: сохраняем A (с условиями) и B (без условий = надмножество), сверяем пересечение/исключения.
+  test('сравнение двух сетапов: пересечение и исключения', async ({ page }) => {
+    await page.goto('/researcher');
+    await expect(page.getByTestId('panel-meta')).toBeVisible({ timeout: 120000 });
+
+    const a = `E2E-CmpA-${Date.now()}`;
+    const b = `E2E-CmpB-${Date.now()}`;
+    // сетап A — с дефолтными условиями
+    await page.getByTestId('setup-save-open').click();
+    await page.getByTestId('setup-name-input').fill(a);
+    await page.getByTestId('setup-save-confirm').click();
+    await expect(page.getByTestId('setup-chip').filter({ hasText: a })).toBeVisible();
+    // сетап B — без условий (удаляем блок → все сделки, надмножество A)
+    await page.getByText('удалить блок').click();
+    await page.getByTestId('setup-save-open').click();
+    await page.getByTestId('setup-name-input').fill(b);
+    await page.getByTestId('setup-save-confirm').click();
+    await expect(page.getByTestId('setup-chip').filter({ hasText: b })).toBeVisible();
+
+    // открыть сравнение, явно выбрать A и B
+    await page.getByTestId('setup-compare-open').click();
+    const cmp = page.getByTestId('setup-compare');
+    await expect(cmp).toBeVisible();
+    await page.getByTestId('setup-compare-a').selectOption({ label: a });
+    await page.getByTestId('setup-compare-b').selectOption({ label: b });
+
+    // таблица множеств: пересечение (A∩B) и исключения (A∖B, B∖A) + вердикт с Jaccard
+    const tab = page.getByTestId('setup-compare-table');
+    await expect(tab).toBeVisible();
+    await expect(tab.getByText('A ∩ B — пересечение')).toBeVisible();
+    await expect(tab.getByText('только A (A ∖ B)')).toBeVisible();
+    await expect(tab.getByText('только B (B ∖ A)')).toBeVisible();
+    await expect(cmp.getByText(/Jaccard/)).toBeVisible();
+
+    // закрыть и почистить оба сетапа (модалка центрирована через transform → dispatchEvent)
+    await page.getByRole('button', { name: 'Закрыть' }).dispatchEvent('click');
+    await expect(cmp).toHaveCount(0);
+    for (const nm of [a, b]) {
+      await page.getByTestId('setup-chip').filter({ hasText: nm }).locator('.bx').click();
+      await expect(page.getByTestId('setup-chip').filter({ hasText: nm })).toHaveCount(0);
+    }
+  });
+
   // Справка по формулам: кнопка «? Справка» → модалка с синтаксисом/факторами → «Вставить» кладёт формулу в карточку 3.
   test('справка по формулам: открытие и вставка готовой формулы', async ({ page }) => {
     await page.goto('/researcher');
