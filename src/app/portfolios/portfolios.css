@@ -61,6 +61,11 @@
 .rsx .pf-wiz-nav { display: flex; align-items: center; gap: 10px; padding-top: 12px; border-top: 1px solid var(--fk-line); }
 .rsx .pf-wiz-nav .spacer { margin-left: auto; }
 
+/* чипы сетапов теста (в результатах) */
+.rsx .pf-setups { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: -2px 0 12px; }
+.rsx .pf-setups .lbl { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--fk-text-3); }
+.rsx .pf-setups .s { font-size: 12px; background: var(--fk-brand-50); color: var(--fk-brand-700); border: 1px solid var(--fk-brand-100); border-radius: 999px; padding: 3px 10px; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* итоговая сводка шага «Запуск» */
 .rsx .pf-summary { display: flex; flex-direction: column; gap: 7px; font-size: 13px; }
 .rsx .pf-summary .row { display: flex; gap: 10px; align-items: baseline; }

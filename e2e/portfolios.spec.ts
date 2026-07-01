@@ -62,6 +62,8 @@ test.describe('Портфели /portfolios', () => {
     await expect(page.getByTestId('portfolio-metrics')).toBeVisible({ timeout: 30000 });
     await expect(page.getByTestId('portfolio-equity-svg')).toBeVisible({ timeout: 30000 });
     await expect(page.getByTestId('portfolio-meta')).toContainText('сигналов');
+    // видно, какие сетапы в тесте (чипы по названиям)
+    await expect(page.getByTestId('pf-setups')).toContainText(name);
     // автосохранение присвоило имя (запасное без ключа AIMLAPI)
     await expect(page.getByTestId('portfolio-name')).not.toHaveValue('');
     // метрика win-rate vs SPY + подписи лет по оси X

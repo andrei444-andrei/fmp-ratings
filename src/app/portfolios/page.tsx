@@ -793,6 +793,13 @@ export default function PortfoliosPage() {
                 <input data-testid="portfolio-name" value={name} placeholder="Название теста…" onChange={(e) => setName(e.target.value)} onBlur={(e) => rename(e.target.value)} />
                 <button className="btn sm" data-testid="new-test-2" onClick={newTest}>➕ Новый тест</button>
               </div>
+              {/* какие сетапы в тесте (по названиям) */}
+              {(meta?.setups?.length ?? 0) > 0 && (
+                <div className="pf-setups" data-testid="pf-setups">
+                  <span className="lbl">Сетапы ({meta!.setups.length}):</span>
+                  {meta!.setups.map((n, i) => (<span key={`${n}-${i}`} className="s" title={n}>{n}</span>))}
+                </div>
+              )}
               {/* быстрая правка параметров + пересчёт без мастера */}
               <div className="pf-controls pf-recompute" data-testid="pf-recompute">
                 <div className="ctl">
