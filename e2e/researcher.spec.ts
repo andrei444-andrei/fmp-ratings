@@ -171,6 +171,34 @@ test.describe('Скринер /researcher', () => {
     await expect(page.getByTestId('setup-chip').filter({ hasText: name })).toHaveCount(0);
   });
 
+  // Справка по формулам: кнопка «? Справка» → модалка с синтаксисом/факторами → «Вставить» кладёт формулу в карточку 3.
+  test('справка по формулам: открытие и вставка готовой формулы', async ({ page }) => {
+    await page.goto('/researcher');
+    await expect(page.getByTestId('panel-meta')).toBeVisible({ timeout: 120000 });
+
+    const before = await page.locator('.fml').count();
+    await page.getByTestId('formula-help-open').click();
+    const help = page.getByTestId('formula-help');
+    await expect(help).toBeVisible();
+    // в справке есть таблица факторов и раздел готовых формул
+    await expect(help.getByText('Доступные факторы')).toBeVisible();
+    await expect(help.getByText('Готовые сложные формулы')).toBeVisible();
+
+    // «Вставить» первой готовой формулы → в карточке 3 добавляется строка-черновик.
+    // Кнопка видима и доступна; клик шлём через dispatchEvent — модалка центрируется через CSS transform,
+    // из-за чего на мобильном тач-вьюпорте hit-тест координат Playwright упирается в scrim (десктоп кликает по-настоящему).
+    const insert = help.getByTestId('formula-help-insert').first();
+    await insert.scrollIntoViewIfNeeded();
+    await expect(insert).toBeVisible();
+    await insert.dispatchEvent('click');
+    await expect(help.getByText('✓ вставлено').first()).toBeVisible();
+    // формула добавлена черновиком в карточку 3 (DOM-строки видны даже под открытой модалкой)
+    await expect(page.locator('.fml')).toHaveCount(before + 1);
+    // закрытие справки (dispatchEvent — тот же transform-центрированный оверлей)
+    await page.getByRole('button', { name: 'Закрыть' }).dispatchEvent('click');
+    await expect(help).toHaveCount(0);
+  });
+
   // Полоса-скруббер под графиком: тянем → выбирается период, метрики пересчитываются.
   test('детальный график: полоса-скруббер выбирает период', async ({ page }) => {
     await page.goto('/researcher');
