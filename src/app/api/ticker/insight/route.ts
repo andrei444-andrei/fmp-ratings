@@ -1,4 +1,5 @@
 import { getTickerInsight } from '@/lib/ticker/insight';
+import { fmpPeers, fmpRatiosTtm } from '@/lib/fmp';
 import { logAppError } from '@/lib/app-errors';
 
 export const runtime = 'nodejs';
@@ -14,6 +15,15 @@ export async function GET(req: Request) {
   const force = /^(1|true|yes)$/i.test(url.searchParams.get('refresh') || '');
   try {
     if (!symbol) return Response.json({ ok: false, error: 'no symbol' }, { status: 400 });
+    // ВРЕМЕННО: диагностика сырых форм ответов FMP для пиров/ratios-ttm.
+    if (url.searchParams.get('debug') === 'peers') {
+      const [peersRaw, ratRaw] = await Promise.all([
+        fmpPeers(symbol).catch((e) => ({ __error: String(e?.message || e) })),
+        fmpRatiosTtm(symbol).catch((e) => ({ __error: String(e?.message || e) })),
+      ]);
+      const rat0 = Array.isArray(ratRaw) ? ratRaw[0] : ratRaw;
+      return Response.json({ peersRaw, ratiosTtmKeys: rat0 && typeof rat0 === 'object' ? Object.keys(rat0) : rat0, ratiosTtmSample: rat0 });
+    }
     const insight = await getTickerInsight(symbol, force);
     return Response.json({ ok: true, ...insight });
   } catch (e: any) {
