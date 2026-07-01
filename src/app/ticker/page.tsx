@@ -610,11 +610,14 @@ function FundaTab({ insight }: { insight: TickerInsight | null }) {
   const [sel, setSel] = useState('revenue');
   if (!insight) return <EmptyTab msg="Загрузка фундаментала…" />;
   const f = insight.funda;
-  if (!f || !f.dates.length || !f.metrics.length) return <EmptyTab msg="Нет фундаментальных данных (нужен ключ FMP или нет покрытия по тикеру)." />;
+  const peers = <PeersPanel peers={insight.peers} />;
+  if (!f || !f.dates.length || !f.metrics.length) return <>{peers}<EmptyTab msg="Нет фундаментальных данных (нужен ключ FMP или нет покрытия по тикеру)." /></>;
   const chosen = f.metrics.find((m) => m.key === sel) || f.metrics[0];
   const groups = [...new Set(f.metrics.map((m) => m.group))];
   return (
-    <div className="card">
+    <>
+      {peers}
+      <div className="card">
       <h2><span className="ht">Фундаментал в динамике</span> <span className="badge">{f.metrics.length} метрик · {f.dates.length} кв.</span></h2>
       <p className="desc">Клик по метрике ниже — большой график по кварталам. YoY — к тому же кварталу год назад.</p>
       <MetricChart m={chosen} dates={f.dates} />
@@ -638,6 +641,38 @@ function FundaTab({ insight }: { insight: TickerInsight | null }) {
           </div>
         </div>
       ))}
+      </div>
+    </>
+  );
+}
+function PeersPanel({ peers }: { peers: TickerInsight['peers'] }) {
+  if (!peers || peers.length < 2) return null;
+  const cap = (v: number | null) => (v == null ? '—' : fmtMetric(v, 'usd'));
+  const x = (v: number | null) => (v == null ? '—' : v.toFixed(1) + '×');
+  const p = (v: number | null) => (v == null ? '—' : pctRaw(v, 1));
+  return (
+    <div className="card">
+      <h2><span className="ht">Сравнение с пирами</span> <span className="badge">{peers.length} компаний</span></h2>
+      <p className="desc">Текущий тикер (подсвечен) против компаний-аналогов сектора по оценке и прибыльности (TTM). Кап. — рыночная капитализация.</p>
+      <div className="peerwrap">
+        <table className="peers">
+          <thead><tr><th className="l">Тикер</th><th className="l">Компания</th><th>Кап.</th><th>P/E</th><th>P/S</th><th>Вал.маржа</th><th>Чист.маржа</th><th>ROE</th></tr></thead>
+          <tbody>
+            {peers.map((r) => (
+              <tr key={r.symbol} className={r.self ? 'peer-self' : ''}>
+                <td className="l"><b>{r.symbol}</b></td>
+                <td className="l peer-name" title={r.name || undefined}>{r.name || '—'}</td>
+                <td>{cap(r.mktCap)}</td>
+                <td>{x(r.pe)}</td>
+                <td>{x(r.ps)}</td>
+                <td>{p(r.grossMargin)}</td>
+                <td>{p(r.netMargin)}</td>
+                <td>{p(r.roe)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
