@@ -54,6 +54,12 @@ describe('buildPortfolio (price-panel simulation)', () => {
     expect(rb.scope).toBeCloseTo(1 / 5, 6);
     expect(rb.positions.reduce((s, p) => s + p.weight, 0)).toBeCloseTo(1, 6);
     expect(rb.positions[0].setups).toContain('S');
+    // доходность решения + SPY за то же окно; SPY-на-загрузке; win-rate vs SPY
+    expect(Number.isFinite(rb.ret)).toBe(true);
+    expect(Number.isFinite(rb.spyRet)).toBe(true);
+    expect(res.benchLoadedEquity.length).toBe(res.equity.length);
+    expect(res.metrics.totalTrades).toBeGreaterThan(0);
+    expect(res.metrics.winRateVsSpy!).toBeGreaterThan(0.5); // AAA (+1%/д) обгоняет SPY (+0.03%/д)
   });
 
   it('метрики «на нагрузку»: SPY считается ТОЛЬКО за дни в рынке (≠ SPY за весь период)', () => {

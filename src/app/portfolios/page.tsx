@@ -31,8 +31,8 @@ function fallbackName(setupNames: string[], exec: ExecMode, n: number, parking: 
   return `${head} · ${ex} · ${parking}`.slice(0, 63);
 }
 
-// SVG-кривая капитала портфеля и SPY (старт = 1), линейная шкала, даунсэмпл до ~400 точек.
-function EquityChart({ equity, bench }: { equity: DayPoint[]; bench: DayPoint[] }) {
+// SVG-кривая капитала: портфель, SPY (buy&hold) и опц. SPY «на загрузке»; годовые метки по оси X.
+function EquityChart({ equity, bench, loaded, showLoaded }: { equity: DayPoint[]; bench: DayPoint[]; loaded?: DayPoint[]; showLoaded?: boolean }) {
   const W = 820;
   const H = 240;
   const down = (a: DayPoint[]) => {
@@ -44,7 +44,8 @@ function EquityChart({ equity, bench }: { equity: DayPoint[]; bench: DayPoint[] 
   };
   const eq = down(equity);
   const bm = down(bench);
-  const vals = [...eq, ...bm].map((p) => p.v).filter((v) => Number.isFinite(v) && v > 0);
+  const ld = showLoaded && loaded && loaded.length ? down(loaded) : [];
+  const vals = [...eq, ...bm, ...ld].map((p) => p.v).filter((v) => Number.isFinite(v) && v > 0);
   if (vals.length < 2) return null;
   const lo = Math.min(...vals);
   const hi = Math.max(...vals);
@@ -58,17 +59,29 @@ function EquityChart({ equity, bench }: { equity: DayPoint[]; bench: DayPoint[] 
       return `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`;
     }).join(' ');
   const yOf = (v: number) => H - ((v - minV) / (maxV - minV)) * H;
+  const ticks: { x: number; year: string }[] = [];
+  for (let i = 1; i < eq.length; i++) {
+    const y = eq[i].d.slice(0, 4);
+    if (y !== eq[i - 1].d.slice(0, 4)) ticks.push({ x: (i / (eq.length - 1)) * 100, year: y });
+  }
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" data-testid="portfolio-equity-svg" role="img" aria-label="Кривая капитала портфеля против S&P 500">
-      <line x1={0} y1={yOf(1)} x2={W} y2={yOf(1)} stroke="var(--fk-line)" strokeWidth={1} strokeDasharray="4 4" />
-      <path d={path(bm)} fill="none" stroke="var(--fk-text-3)" strokeWidth={1.4} opacity={0.85} />
-      <path d={path(eq)} fill="none" stroke="var(--fk-brand-700, #2563eb)" strokeWidth={1.9} />
-    </svg>
+    <div className="pf-eqchart">
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" data-testid="portfolio-equity-svg" role="img" aria-label="Кривая капитала портфеля против S&P 500">
+        {ticks.map((t) => <line key={t.year} x1={(t.x / 100) * W} y1={0} x2={(t.x / 100) * W} y2={H} stroke="var(--fk-line)" strokeWidth={1} opacity={0.5} />)}
+        <line x1={0} y1={yOf(1)} x2={W} y2={yOf(1)} stroke="var(--fk-line)" strokeWidth={1} strokeDasharray="4 4" />
+        <path d={path(bm)} fill="none" stroke="var(--fk-text-3)" strokeWidth={1.4} opacity={0.85} />
+        {ld.length > 0 && <path d={path(ld)} fill="none" stroke="var(--fk-warn-text, #b5740a)" strokeWidth={1.4} strokeDasharray="5 3" opacity={0.9} />}
+        <path d={path(eq)} fill="none" stroke="var(--fk-brand-700, #2563eb)" strokeWidth={1.9} />
+      </svg>
+      <div className="pf-xaxis" data-testid="pf-xaxis">
+        {ticks.map((t) => <span key={t.year} style={{ left: `${t.x}%` }}>{t.year}</span>)}
+      </div>
+    </div>
   );
 }
 
 type Gran = 'year' | 'month' | 'week';
-type Period = { key: string; label: string; ret: number; spyRet: number; loading: number; days: number; start: string; end: string };
+type Period = { key: string; label: string; ret: number; spyRet: number; spyLoadedRet: number; loading: number; days: number; start: string; end: string };
 const GRAN_LABEL: Record<Gran, string> = { year: 'Год', month: 'Месяц', week: 'Неделя' };
 
 function periodKey(d: string, g: Gran): { key: string; label: string } {
@@ -80,8 +93,8 @@ function periodKey(d: string, g: Gran): { key: string; label: string } {
   return { key: String(wk), label: monday };
 }
 
-// Агрегирует дневные ряды (кривая, бенчмарк, загрузка) в периоды выбранной грануляции.
-function aggregatePeriods(equity: DayPoint[], bench: DayPoint[], deployment: number[], g: Gran): Period[] {
+// Агрегирует дневные ряды (кривая, бенчмарк, SPY-на-загрузке, загрузка) в периоды выбранной грануляции.
+function aggregatePeriods(equity: DayPoint[], bench: DayPoint[], loaded: DayPoint[], deployment: number[], g: Gran): Period[] {
   if (equity.length < 2) return [];
   const out: Period[] = [];
   let a = 0;
@@ -91,10 +104,11 @@ function aggregatePeriods(equity: DayPoint[], bench: DayPoint[], deployment: num
     const base = a === 0 ? 0 : a - 1; // цепляемся от последнего дня прошлого периода
     const ret = equity[base].v > 0 ? equity[b].v / equity[base].v - 1 : 0;
     const spyRet = bench[base] && bench[base].v > 0 ? bench[b].v / bench[base].v - 1 : 0;
+    const spyLoadedRet = loaded[base] && loaded[base].v > 0 ? loaded[b].v / loaded[base].v - 1 : 0;
     let inm = 0;
     let cnt = 0;
     for (let i = Math.max(a, 1); i <= b; i++) { cnt++; if (deployment[i] > 0) inm++; }
-    out.push({ key, label, ret, spyRet, loading: cnt ? inm / cnt : 0, days: b - a + 1, start: equity[a].d, end: equity[b].d });
+    out.push({ key, label, ret, spyRet, spyLoadedRet, loading: cnt ? inm / cnt : 0, days: b - a + 1, start: equity[a].d, end: equity[b].d });
   };
   for (let i = 1; i < equity.length; i++) {
     const k = periodKey(equity[i].d, g).key;
@@ -104,15 +118,16 @@ function aggregatePeriods(equity: DayPoint[], bench: DayPoint[], deployment: num
   return out;
 }
 
-// Интерактивный бар-чарт: доходность стратегии и SPY по периодам (наведение → детали периода).
-function PeriodChart({ periods, hovered, onHover }: { periods: Period[]; hovered: number; onHover: (i: number) => void }) {
+// Интерактивный бар-чарт: доходность стратегии, SPY и опц. SPY-на-загрузке по периодам.
+function PeriodChart({ periods, hovered, onHover, showLoaded }: { periods: Period[]; hovered: number; onHover: (i: number) => void; showLoaded?: boolean }) {
   const W = 820;
   const H = 180;
   const mid = H / 2;
   if (!periods.length) return null;
-  const maxAbs = Math.max(0.01, ...periods.flatMap((p) => [Math.abs(p.ret), Math.abs(p.spyRet)]));
+  const maxAbs = Math.max(0.01, ...periods.flatMap((p) => [Math.abs(p.ret), Math.abs(p.spyRet), showLoaded ? Math.abs(p.spyLoadedRet) : 0]));
   const slot = W / periods.length;
-  const barW = Math.max(1.2, Math.min(16, slot * 0.34));
+  const nBars = showLoaded ? 3 : 2;
+  const barW = Math.max(1, Math.min(showLoaded ? 11 : 16, (slot * 0.9) / nBars));
   const bar = (val: number) => {
     const h = (Math.abs(val) / maxAbs) * (mid - 6);
     return { y: val >= 0 ? mid - h : mid, h: Math.max(0.6, h) };
@@ -124,11 +139,23 @@ function PeriodChart({ periods, hovered, onHover }: { periods: Period[]; hovered
         const cx = i * slot + slot / 2;
         const s = bar(p.ret);
         const b = bar(p.spyRet);
+        const l = bar(p.spyLoadedRet);
+        const g = barW + 1;
         return (
           <g key={p.key} onMouseEnter={() => onHover(i)} onMouseLeave={() => onHover(-1)}>
             {hovered === i && <rect x={i * slot} y={0} width={slot} height={H} fill="var(--fk-surface-2)" />}
-            <rect x={cx - barW - 0.5} y={s.y} width={barW} height={s.h} rx={1} fill="var(--fk-brand-700, #2563eb)" />
-            <rect x={cx + 0.5} y={b.y} width={barW} height={b.h} rx={1} fill="var(--fk-text-3)" opacity={0.85} />
+            {showLoaded ? (
+              <>
+                <rect x={cx - g - barW / 2} y={s.y} width={barW} height={s.h} rx={1} fill="var(--fk-brand-700, #2563eb)" />
+                <rect x={cx - barW / 2} y={b.y} width={barW} height={b.h} rx={1} fill="var(--fk-text-3)" opacity={0.85} />
+                <rect x={cx + g - barW / 2} y={l.y} width={barW} height={l.h} rx={1} fill="var(--fk-warn-text, #b5740a)" opacity={0.9} />
+              </>
+            ) : (
+              <>
+                <rect x={cx - barW - 0.5} y={s.y} width={barW} height={s.h} rx={1} fill="var(--fk-brand-700, #2563eb)" />
+                <rect x={cx + 0.5} y={b.y} width={barW} height={b.h} rx={1} fill="var(--fk-text-3)" opacity={0.85} />
+              </>
+            )}
           </g>
         );
       })}
@@ -174,6 +201,7 @@ export default function PortfoliosPage() {
   const [err, setErr] = useState('');
   const [gran, setGran] = useState<Gran>('year');
   const [hoverP, setHoverP] = useState<number>(-1);
+  const [showLoaded, setShowLoaded] = useState(false); // сравнение с SPY «на той же загрузке»
   const [selWeek, setSelWeek] = useState<string | null>(null); // выбранная неделя (drill-down)
   const [selReb, setSelReb] = useState<number>(-1); // индекс выбранного ребаланса/входа
   const [rebFilter, setRebFilter] = useState(''); // фильтр сделок по тикеру
@@ -361,11 +389,12 @@ export default function PortfoliosPage() {
       { k: 'Sharpe (нагр.)', v: numFmt(m.sharpeActive), sub: `SPY(нагр) ${numFmt(m.spySharpeActive)}`, cls: signCls(m.sharpeActive) },
       { k: 'Sharpe к SPY (нагр.)', v: m.sharpeVsSpyActive == null ? '—' : `${numFmt(m.sharpeVsSpyActive)}×`, sub: `всего ${m.sharpeVsSpy == null ? '—' : numFmt(m.sharpeVsSpy) + '×'}`, cls: signCls((m.sharpeVsSpyActive ?? 1) - 1) },
       { k: 'Доходность / загрузка', v: signPct(m.returnOnLoading), sub: 'CAGR ÷ загрузка', cls: signCls(m.returnOnLoading) },
+      { k: 'Win-rate vs SPY', v: m.winRateVsSpy == null ? '—' : pct(m.winRateVsSpy, 0), sub: `${m.winTrades}/${m.totalTrades} сделок обогнали SPY`, cls: signCls((m.winRateVsSpy ?? 0.5) - 0.5) },
     ];
   }, [m]);
 
   const periods = useMemo(
-    () => (result && result.equity.length > 1 ? aggregatePeriods(result.equity, result.benchEquity, result.deployment, gran) : []),
+    () => (result && result.equity.length > 1 ? aggregatePeriods(result.equity, result.benchEquity, result.benchLoadedEquity, result.deployment, gran) : []),
     [result, gran],
   );
   const hp = hoverP >= 0 && hoverP < periods.length ? periods[hoverP] : null;
@@ -558,11 +587,12 @@ export default function PortfoliosPage() {
                 <>
                   <div className="card-t" style={{ marginTop: 14 }}>Кривая капитала (сложный процент)</div>
                   <div className="pf-chart" data-testid="portfolio-equity">
-                    <EquityChart equity={result.equity} bench={result.benchEquity} />
+                    <EquityChart equity={result.equity} bench={result.benchEquity} loaded={result.benchLoadedEquity} showLoaded={showLoaded} />
                   </div>
                   <div className="pf-legend">
                     <span><i style={{ background: 'var(--fk-brand-700, #2563eb)' }} />Портфель</span>
                     <span><i style={{ background: 'var(--fk-text-3)' }} />S&amp;P 500 (SPY, buy &amp; hold)</span>
+                    {showLoaded && <span><i style={{ background: 'var(--fk-warn-text, #b5740a)' }} />SPY на загрузке</span>}
                   </div>
                 </>
               )}
@@ -574,31 +604,38 @@ export default function PortfoliosPage() {
             <div className="card"><div className="card-b">
               <div className="pf-period-head">
                 <div className="card-t">Доходность и загрузка по периодам</div>
-                <div className="seg pf-gran" data-testid="pf-gran">
-                  {(['year', 'month', 'week'] as Gran[]).map((g) => (
-                    <button key={g} className={gran === g ? 'on' : ''} onClick={() => { setGran(g); setHoverP(-1); }}>{GRAN_LABEL[g]}</button>
-                  ))}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                  <label className="pf-toggle" data-testid="pf-loaded-toggle">
+                    <input type="checkbox" checked={showLoaded} onChange={(e) => setShowLoaded(e.target.checked)} /> SPY на загрузке
+                  </label>
+                  <div className="seg pf-gran" data-testid="pf-gran">
+                    {(['year', 'month', 'week'] as Gran[]).map((g) => (
+                      <button key={g} className={gran === g ? 'on' : ''} onClick={() => { setGran(g); setHoverP(-1); }}>{GRAN_LABEL[g]}</button>
+                    ))}
+                  </div>
                 </div>
               </div>
               {hp ? (
                 <div className="pf-period-sel" data-testid="pf-period-sel">
-                  <b>{hp.label}</b> · стратегия <span className={signCls(hp.ret)}>{signPct(hp.ret)}</span> · SPY {signPct(hp.spyRet)} · превышение{' '}
+                  <b>{hp.label}</b> · стратегия <span className={signCls(hp.ret)}>{signPct(hp.ret)}</span> · SPY {signPct(hp.spyRet)}
+                  {showLoaded && <> · SPY(загр) {signPct(hp.spyLoadedRet)}</>} · превышение{' '}
                   <span className={signCls(hp.ret - hp.spyRet)}>{signPct(hp.ret - hp.spyRet)}</span> · загрузка {pct(hp.loading, 0)}
                 </div>
               ) : (
                 <div className="pf-period-sel muted">наведи на столбец — доходность периода, сравнение с SPY и загрузка</div>
               )}
               <div className="pf-chart">
-                <PeriodChart periods={periods} hovered={hoverP} onHover={setHoverP} />
+                <PeriodChart periods={periods} hovered={hoverP} onHover={setHoverP} showLoaded={showLoaded} />
               </div>
               <div className="pf-legend">
                 <span><i style={{ background: 'var(--fk-brand-700, #2563eb)' }} />Портфель</span>
                 <span><i style={{ background: 'var(--fk-text-3)' }} />S&amp;P 500</span>
+                {showLoaded && <span><i style={{ background: 'var(--fk-warn-text, #b5740a)' }} />SPY на загрузке</span>}
               </div>
 
               <div className="pf-ptable-wrap">
                 <table className="pf-ptable" data-testid="pf-period-table">
-                  <thead><tr><th className="l">Период</th><th>Стратегия</th><th>SPY</th><th>Превышение</th><th>Загрузка</th></tr></thead>
+                  <thead><tr><th className="l">Период</th><th>Стратегия</th><th>SPY</th>{showLoaded && <th>SPY (загр)</th>}<th>Превышение</th><th>Загрузка</th></tr></thead>
                   <tbody>
                     {periods.slice(-120).reverse().map((p, i) => {
                       const realIdx = periods.length - 1 - i;
@@ -610,6 +647,7 @@ export default function PortfoliosPage() {
                           <td className="l">{p.label}{gran === 'week' && <span className="pf-drill"> ↳</span>}</td>
                           <td className={signCls(p.ret)}>{signPct(p.ret)}</td>
                           <td>{signPct(p.spyRet)}</td>
+                          {showLoaded && <td>{signPct(p.spyLoadedRet)}</td>}
                           <td className={signCls(p.ret - p.spyRet)}>{signPct(p.ret - p.spyRet)}</td>
                           <td>{pct(p.loading, 0)}</td>
                         </tr>
@@ -666,6 +704,8 @@ export default function PortfoliosPage() {
                 <>
                   <div className="pf-week-meta" data-testid="pf-reb-sel">
                     <b>{selRebEvent.date}</b> · {selRebEvent.kind === 'rebalance' ? 'ребаланс' : 'вход (транш)'} · доля решения {pct(selRebEvent.scope, 0)} · имён {selRebEvent.positions.length}
+                    {' '}· доходность <span className={signCls(selRebEvent.ret)}>{signPct(selRebEvent.ret)}</span> · SPY {signPct(selRebEvent.spyRet)} · превышение{' '}
+                    <span className={signCls(selRebEvent.ret - selRebEvent.spyRet)}>{signPct(selRebEvent.ret - selRebEvent.spyRet)}</span>
                   </div>
                   <StackedBar positions={selRebEvent.positions} />
                   <div className="pf-ptable-wrap" style={{ marginTop: 10, maxHeight: 220 }}>
@@ -683,7 +723,7 @@ export default function PortfoliosPage() {
               )}
               <div className="pf-ptable-wrap" style={{ marginTop: 12 }}>
                 <table className="pf-ptable" data-testid="pf-reb-table">
-                  <thead><tr><th className="l">Дата</th><th className="l">Тип</th><th>Доля</th><th>Имён</th><th className="l">Состав (доли)</th></tr></thead>
+                  <thead><tr><th className="l">Дата</th><th className="l">Тип</th><th>Доля</th><th>Имён</th><th>Доходность</th><th>vs SPY</th><th className="l">Состав (доли)</th></tr></thead>
                   <tbody>
                     {rebList.slice(0, 300).map(({ r, idx }) => (
                       <tr key={idx} data-testid="pf-reb-row" className={`click${idx === selReb ? ' sel' : ''}`} onClick={() => setSelReb(idx)}>
@@ -691,7 +731,9 @@ export default function PortfoliosPage() {
                         <td className="l">{r.kind === 'rebalance' ? 'ребаланс' : 'вход'}</td>
                         <td>{pct(r.scope, 0)}</td>
                         <td>{r.positions.length}</td>
-                        <td className="l" style={{ minWidth: 220 }}><StackedBar positions={r.positions.slice(0, 12)} /></td>
+                        <td className={signCls(r.ret)}>{signPct(r.ret)}</td>
+                        <td className={signCls(r.ret - r.spyRet)}>{signPct(r.ret - r.spyRet)}</td>
+                        <td className="l" style={{ minWidth: 200 }}><StackedBar positions={r.positions.slice(0, 12)} /></td>
                       </tr>
                     ))}
                   </tbody>
