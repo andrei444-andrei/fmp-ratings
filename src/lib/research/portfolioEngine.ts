@@ -92,13 +92,14 @@ export type RebalanceEvent = {
 
 // Посуточный снимок: ПОЛНАЯ экспозиция дня + сделки (что куплено/продано в этот день).
 export type DayTrade = { symbol: string; weight: number };
+export type DayPos = { symbol: string; weight: number }; // лёгкая позиция дня (сетапы — в symSetups результата)
 export type DaySnapshot = {
   date: string;
   deployment: number; // доля капитала в активах (не BIL)
   parking: number; // доля в паркинге/BIL
   ret: number; // доходность портфеля за день
   spyRet: number; // SPY за этот день
-  positions: RebalancePos[]; // полная экспозиция дня (все активные транши/холдинги)
+  positions: DayPos[]; // полная экспозиция дня (все активные транши/холдинги)
   bought: DayTrade[]; // изменения состава: вошло сегодня
   sold: DayTrade[]; // изменения состава: вышло сегодня
 };
@@ -114,6 +115,7 @@ export type PortfolioResult = {
   weeks: WeekSnapshot[]; // понедельные снимки состава (для drill-down: что держится + % + причины)
   rebalances: RebalanceEvent[]; // состав по каждому ребалансу/входу (тикеры + доли + доходность)
   days: DaySnapshot[]; // посуточная экспозиция + сделки (полная реальная экспозиция каждого дня)
+  symSetups: Record<string, string[]>; // тикер → сетапы (один раз на результат; для «причин» без дублирования по дням)
 };
 
 const TRADING_DAYS = 252;
@@ -208,7 +210,7 @@ export function buildPortfolio(
   bil: Bar[] | null,
   panel: PricePanel,
 ): PortfolioResult {
-  const empty: PortfolioResult = { metrics: emptyMetrics(setups.length), equity: [], benchEquity: [], benchLoadedEquity: [], deployment: [], loadingByDay: [], inMarket: [], weeks: [], rebalances: [], days: [] };
+  const empty: PortfolioResult = { metrics: emptyMetrics(setups.length), equity: [], benchEquity: [], benchLoadedEquity: [], deployment: [], loadingByDay: [], inMarket: [], weeks: [], rebalances: [], days: [], symSetups: {} };
 
   const cal = dedupSortBars(spy);
   if (cal.length < 2 || !setups.length) return empty;
@@ -643,13 +645,14 @@ export function buildPortfolio(
   // Экспозиция дня k = веса активных траншей/холдингов (dayWeights). Изменения vs вчера:
   //  лестница — вошёл под-портфель (трейлинг-отбор дня k-1, стал живым сегодня), вышел под-портфель дня k-1-N; каждый (1/N)/m.
   //  ребаланс — на день ребаланса продаём вчерашний состав, покупаем новый; иначе изменений нет.
-  const DAYS_CAP = 1000;
+  // весь период (не режем годы); payload лёгкий — сетапы в symSetups, а не в каждом дне
+  const DAYS_CAP = 10000;
   const rebDaySet = new Set<number>();
   if (cfg.execution !== 'ladder') for (const ev of rebalances) rebDaySet.add(firstIndexGE(ev.date));
   const days: DaySnapshot[] = [];
   const fromDay = Math.max(1, equity.length - DAYS_CAP);
-  const posOf = (wm: Map<string, number>): RebalancePos[] =>
-    [...wm.entries()].filter(([, w]) => w > 1e-6).sort((x, y) => y[1] - x[1]).map(([symbol, weight]) => ({ symbol, weight, setups: setupsOf(symbol) }));
+  const posOf = (wm: Map<string, number>): DayPos[] =>
+    [...wm.entries()].filter(([, w]) => w > 1e-6).sort((x, y) => y[1] - x[1]).map(([symbol, weight]) => ({ symbol, weight }));
   for (let i = fromDay; i < equity.length; i++) {
     const k = start + i;
     let bought: DayTrade[] = [];
@@ -678,5 +681,7 @@ export function buildPortfolio(
   }
 
   const equityPts: DayPoint[] = equity.map((vv, i) => ({ d: calDates[start + i], v: vv }));
-  return { metrics, equity: equityPts, benchEquity, benchLoadedEquity, deployment, loadingByDay, inMarket, weeks, rebalances: rebalances.slice(-1500), days };
+  const symSetups: Record<string, string[]> = {};
+  for (const [sym, set] of symbolToSetups) symSetups[sym] = [...set];
+  return { metrics, equity: equityPts, benchEquity, benchLoadedEquity, deployment, loadingByDay, inMarket, weeks, rebalances: rebalances.slice(-1500), days, symSetups };
 }
