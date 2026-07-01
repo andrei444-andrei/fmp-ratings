@@ -31,7 +31,11 @@ export async function POST(req: Request) {
       const ln = Number(b?.ladderN);
       const mw = Number(b?.maxWeight);
       const maxWeight = Number.isFinite(mw) && mw > 0 && mw < 1 ? Math.round(mw * 1000) / 1000 : 0;
-      cfg = { setupIds, selection: 'all', execution, ladderN: Number.isFinite(ln) && ln > 0 ? Math.min(60, Math.round(ln)) : 5, parking, maxWeight };
+      const lv = Number(b?.maxLeverage);
+      const maxLeverage = Number.isFinite(lv) && lv > 1 ? Math.min(3, Math.round(lv * 100) / 100) : 1;
+      const sy = Number(b?.startYear);
+      const startYear = Number.isFinite(sy) && sy >= 1990 && sy <= 2100 ? Math.round(sy) : 0;
+      cfg = { setupIds, selection: 'all', execution, ladderN: Number.isFinite(ln) && ln > 0 ? Math.min(60, Math.round(ln)) : 5, parking, maxWeight, maxLeverage, startYear };
     }
     if (!cfg.setupIds.length) return Response.json({ error: 'нужен непустой список сетапов' }, { status: 400 });
 
@@ -39,16 +43,18 @@ export async function POST(req: Request) {
     const setupRows = (await Promise.all(cfg.setupIds.slice(0, 40).map((id) => getSetup(id)))).filter(Boolean) as NonNullable<
       Awaited<ReturnType<typeof getSetup>>
     >[];
+    // год начала бэктеста: отбрасываем сигналы раньше startYear-01-01
+    const minDate = cfg.startYear && cfg.startYear >= 1990 ? `${cfg.startYear}-01-01` : '';
     const engineSetups: EngineSetup[] = setupRows.map((s) => {
       const signals: Signal[] = (s.stream || [])
         .map((d) => ({ date: String(d[0]), symbol: String(d[1]).toUpperCase() }))
-        .filter((x) => x.date && x.symbol);
+        .filter((x) => x.date && x.symbol && (!minDate || x.date >= minDate));
       return { id: s.id, name: s.name, signals };
     });
 
     const names = engineSetups.map((s) => s.name);
     const allDates = engineSetups.flatMap((s) => s.signals.map((x) => x.date)).filter(Boolean).sort();
-    if (!allDates.length) return Response.json({ error: 'у выбранных сетапов нет сигналов (поток пуст)' }, { status: 400 });
+    if (!allDates.length) return Response.json({ error: minDate ? `нет сигналов с ${cfg.startYear} года` : 'у выбранных сетапов нет сигналов (поток пуст)' }, { status: 400 });
     const from = allDates[0];
     const to = new Date().toISOString().slice(0, 10);
 
@@ -86,6 +92,7 @@ export async function POST(req: Request) {
       result,
       meta: {
         setups: names, execution: cfg.execution, ladderN: cfg.ladderN, parking: cfg.parking, maxWeight: cfg.maxWeight,
+        maxLeverage: cfg.maxLeverage, startYear: cfg.startYear,
         synthetic, syntheticSymbols: synthSyms.length, truncatedSymbols: truncated ? symbols.length - MAX_SYMBOLS : 0,
       },
     });

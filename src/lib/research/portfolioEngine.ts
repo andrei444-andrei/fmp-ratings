@@ -21,7 +21,10 @@ export type Parking = 'BIL' | 'SPY' | 'CASH';
 export type ExecMode = 'ladder' | 'weekly' | 'monthly';
 // maxWeight — потолок веса на 1 тикер (доля 0..1); 0 = без лимита. Если равный вес превысил бы потолок
 // (имён мало), каждое имя капается на maxWeight, а неразмещённый остаток уходит в паркинг.
-export type EngineConfig = { execution: ExecMode; ladderN: number; parking: Parking; selection: 'all'; maxWeight: number };
+// maxLeverage — макс. плечо (1 = без плеча). Доля на имя = min(L/m, потолок), итог = min(L, m·потолок):
+// >100% набирается только когда имён достаточно; лишнее финансируется маржой по ставке паркинга.
+// При SPY-паркинге плечо не используется (капитал и так в рынке) → L форсируется в 1.
+export type EngineConfig = { execution: ExecMode; ladderN: number; parking: Parking; selection: 'all'; maxWeight: number; maxLeverage: number };
 
 export type Signal = { date: string; symbol: string }; // дата входа + тикер (из потока сделок сетапа)
 export type EngineSetup = { id: string; name: string; signals: Signal[] };
@@ -197,10 +200,10 @@ function emptyMetrics(nSetups: number): PortfolioMetrics {
 
 const clampN = (n: number) => Math.max(1, Math.min(60, Math.round(n || 5)));
 
-// Вес на 1 имя (доля решения) при равном весе с потолком maxW (0 = без лимита).
-// m имён: при равном весе 1/m > maxW имена капаются на maxW; размещённая доля = per·m ≤ 1,
-// остаток (1 − per·m) → паркинг. Без лимита per = 1/m (размещаем всё).
-const cappedPerWeight = (m: number, maxW: number): number => (m <= 0 ? 0 : maxW > 0 ? Math.min(1 / m, maxW) : 1 / m);
+// Вес на 1 имя (доля капитала) при равном весе с потолком maxW и плечом L.
+// per = min(L/m, C), где C = maxW (или 1 без лимита). Размещённая доля = per·m = min(L, m·C):
+// >1 (плечо) только когда имён достаточно; <1 → остаток в паркинг. L=1, maxW=0 → per = 1/m (как раньше).
+const cappedPerWeight = (m: number, maxW: number, L = 1): number => (m <= 0 ? 0 : Math.min(L / m, maxW > 0 ? maxW : 1));
 
 /** Объединяет сигналы сетапов и моделирует портфель по дневным ценам. Чистая функция. */
 export function buildPortfolio(
@@ -299,6 +302,8 @@ export function buildPortfolio(
 
   const N_LAD = clampN(cfg.ladderN);
   const maxW = cfg.maxWeight > 0 && cfg.maxWeight < 1 ? cfg.maxWeight : 0; // потолок веса на тикер (0 = off)
+  // плечо: при SPY-паркинге не используется (капитал уже в рынке); иначе клампим в [1, 3]
+  const L = cfg.parking === 'SPY' ? 1 : Math.max(1, Math.min(3, cfg.maxLeverage || 1));
 
   // Лестница: корзина под-портфеля, ребалансированного на день входа e = «текущий отбор» —
   // имена с сигналом за трейлинг-окно N дней (e−N+1..e). Та же логика, что у периодического
@@ -347,14 +352,15 @@ export function buildPortfolio(
         const valid = basket.size ? basketValid(basket, k) : [];
         const m = valid.length;
         if (m) {
-          const per = cappedPerWeight(m, maxW); // доля слота на 1 имя (с потолком)
-          const deployed = per * m; // размещённая доля слота в имена (≤1); остаток → паркинг
+          const per = cappedPerWeight(m, maxW, L); // доля слота на 1 имя (потолок + плечо)
+          const deployed = per * m; // размещённая доля слота (может быть >1 при плече; <1 → в паркинг)
           let sr = 0;
           for (const s of valid) {
             const p = calPrices.get(s)!;
             sr += p[k] / p[k - 1] - 1;
           }
-          // доходность слота = per·Σ(доходность имён) + остаток·паркинг = deployed·ср.имён + (1−deployed)·park
+          // доходность слота = per·Σ(доходность имён) + (1−deployed)·паркинг. При deployed>1 остаток < 0 —
+          // это маржа: платим ставку паркинга (BIL/кэш) на заёмную часть.
           sum += per * sr + (1 - deployed) * parkRate(k);
           depSum += deployed;
           park += (1 - deployed) / N_LAD;
@@ -371,7 +377,7 @@ export function buildPortfolio(
       inMarket.push(depSum > 0);
       deployment.push(depSum / N_LAD);
       dayWeights.push(wmap);
-      dayParking.push(park);
+      dayParking.push(Math.max(0, park)); // при плече остаток отрицателен (маржа) → для отображения 0
     }
     // входы лестницы: каждый торговый день один под-портфель (1/N капитала) ребалансируется в
     // ТЕКУЩИЙ отбор (трейлинг-окно N дней) и держит N дней; равные доли среди имён отбора.
@@ -379,7 +385,7 @@ export function buildPortfolio(
       const basket = trancheBasket(e);
       if (!basket.size) continue;
       const names = [...basket];
-      const per = cappedPerWeight(names.length, maxW); // доля на имя с потолком (сумма = размещённая доля ≤ 1)
+      const per = cappedPerWeight(names.length, maxW, L); // доля на имя (потолок + плечо)
       rebalances.push({
         date: calDates[e],
         kind: 'tranche',
@@ -413,10 +419,10 @@ export function buildPortfolio(
       const valid = [...basket].filter((s) => Number.isFinite(calPrices.get(s)?.[k] as number) && (calPrices.get(s)![k] as number) > 0);
       holdings = new Map();
       const m = valid.length;
-      const w = cappedPerWeight(m, maxW); // доля капитала на 1 имя (с потолком)
+      const w = cappedPerWeight(m, maxW, L); // доля капитала на 1 имя (потолок + плечо)
       if (m) {
         for (const s of valid) holdings.set(s, (eq * w) / (calPrices.get(s)![k] as number));
-        cash = eq * (1 - w * m); // остаток сверх лимита → паркинг (0, если лимит не кусается)
+        cash = eq * (1 - w * m); // <1 → остаток в паркинг; при плече (>1) cash < 0 = маржа (заём под ставку паркинга)
       } else {
         cash = eq;
       }
@@ -450,7 +456,7 @@ export function buildPortfolio(
         if (Number.isFinite(p as number) && v > 0) wmap.set(sym, (u * (p as number)) / v);
       }
       dayWeights.push(wmap);
-      dayParking.push(v > 0 ? cash / v : 0);
+      dayParking.push(v > 0 ? Math.max(0, cash / v) : 0); // при плече cash < 0 (маржа) → для отображения 0
     }
   }
 
@@ -659,10 +665,10 @@ export function buildPortfolio(
     let sold: DayTrade[] = [];
     if (cfg.execution === 'ladder') {
       const bd = k - 1 >= start ? trancheBasket(k - 1) : null; // под-портфель, вошедший сегодня
-      if (bd && bd.size) { const w = cappedPerWeight(bd.size, maxW) / N_LAD; bought = [...bd].map((s) => ({ symbol: s, weight: w })); }
+      if (bd && bd.size) { const w = cappedPerWeight(bd.size, maxW, L) / N_LAD; bought = [...bd].map((s) => ({ symbol: s, weight: w })); }
       const se = k - 1 - N_LAD;
       const sd = se >= start ? trancheBasket(se) : null; // под-портфель, истёкший сегодня
-      if (sd && sd.size) { const w = cappedPerWeight(sd.size, maxW) / N_LAD; sold = [...sd].map((s) => ({ symbol: s, weight: w })); }
+      if (sd && sd.size) { const w = cappedPerWeight(sd.size, maxW, L) / N_LAD; sold = [...sd].map((s) => ({ symbol: s, weight: w })); }
     } else if (rebDaySet.has(k)) {
       const prev = dayWeights[i - 1] || new Map();
       sold = [...prev.entries()].filter(([, w]) => w > 1e-6).map(([symbol, weight]) => ({ symbol, weight }));

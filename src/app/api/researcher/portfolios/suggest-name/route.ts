@@ -20,9 +20,13 @@ export async function POST(req: Request) {
     const existing = (await listPortfolios().catch(() => [])).map((p) => p.name);
 
     const mw = Number(b?.maxWeight);
+    const lv = Number(b?.maxLeverage);
+    const sy = Number(b?.startYear);
     const title = await suggestPortfolioName({
       setups, execution, ladderN: Number(b?.ladderN) || 5, parking,
       maxWeight: Number.isFinite(mw) && mw > 0 && mw < 1 ? mw : 0,
+      maxLeverage: Number.isFinite(lv) && lv > 1 ? lv : 1,
+      startYear: Number.isFinite(sy) && sy >= 1990 ? Math.round(sy) : 0,
       metrics: b?.metrics && typeof b.metrics === 'object' ? b.metrics : undefined,
       existing,
     });
