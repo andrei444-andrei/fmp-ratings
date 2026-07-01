@@ -191,6 +191,22 @@
 .rsx-detail .dt-b { padding: 14px 18px; overflow-y: auto; }
 .rsx-detail .dt-ctrl { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
 
+/* просадка → доходность по децилям (dd_pctile) */
+.rsx-detail .ddx { margin-top: 16px; border-top: 1px solid var(--fk-line); padding-top: 12px; }
+.rsx-detail .ddx-h { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 10px; }
+.rsx-detail .ddx-t { font-size: 13px; font-weight: 700; }
+.rsx-detail .ddx-rows { display: flex; flex-direction: column; gap: 3px; }
+.rsx-detail .ddx-row { display: grid; grid-template-columns: 96px 1fr 66px 48px; align-items: center; gap: 8px; padding: 2px 5px; border-radius: 6px; }
+.rsx-detail .ddx-row.cur { background: var(--fk-brand-50, #eff4ff); outline: 1px solid var(--fk-brand-100, #c7d7fe); }
+.rsx-detail .ddx-lb { font-size: 11px; color: var(--fk-text-2, var(--fk-text)); font-variant-numeric: tabular-nums; }
+.rsx-detail .ddx-bar { position: relative; height: 14px; background: var(--fk-surface-2); border-radius: 4px; }
+.rsx-detail .ddx-zero { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--fk-line-strong); }
+.rsx-detail .ddx-fill { position: absolute; top: 2px; bottom: 2px; border-radius: 3px; }
+.rsx-detail .ddx-v { font-size: 11.5px; font-weight: 650; text-align: right; font-variant-numeric: tabular-nums; }
+.rsx-detail .ddx-v.up { color: var(--fk-up-text, #0a8a60); }
+.rsx-detail .ddx-v.down { color: var(--fk-down-text, #c81e3c); }
+.rsx-detail .ddx-n { font-size: 10.5px; color: var(--fk-text-3); text-align: right; font-variant-numeric: tabular-nums; }
+
 /* модалка «Создать корзину» */
 .rsx-modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(560px, 94vw); max-height: 88vh; background: var(--fk-surface-elev); border: 1px solid var(--fk-line); border-radius: 14px; box-shadow: var(--fk-shadow, 0 12px 40px rgba(15,23,41,.18)); z-index: 51; display: flex; flex-direction: column; overflow: hidden; }
 .rsx-modal .dr-h { display: flex; align-items: center; justify-content: space-between; padding: 13px 16px; border-bottom: 1px solid var(--fk-line); }

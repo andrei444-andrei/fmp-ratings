@@ -1080,8 +1080,72 @@ function AssetDetail({ sym, series, deals, horizon, minYear, onClose }: { sym: s
               ? <div className="sub" style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '6px 0' }}>В выбранном периоде нет сделок — выделите участок с точками входа.</div>
               : stats.map(([k, v, t]) => <div className="stat" key={k}><div className="k">{k}</div><div className={`v ${t}`}>{v}</div></div>)}
           </div>
+          {deals.length > 0 && <DrawdownDeciles sym={sym} deals={deals} horizon={horizon} />}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Просадка → форвардная доходность: делим сделки актива на децили по dd_pctile (перцентилю просадки НА ВХОДЕ)
+// и показываем среднюю доходность за горизонт в каждом дециле. Дециль 0–10% = самые редкие ГЛУБОКИЕ просадки,
+// 90–100% = у максимума. Всё из уже загруженных сделок (dd_pctile на входе + ret вперёд) — point-in-time, без
+// look-ahead. Отвечает на «насколько редка просадка сейчас и что обычно бывает дальше» для конкретного актива.
+function DrawdownDeciles({ sym, deals, horizon }: { sym: string; deals: Deal[]; horizon: number }) {
+  const [win, setWin] = useState(252);
+  const col = `dd_pctile_${win}`;
+  const { rows, latestDec, total } = useMemo(() => {
+    const b: number[][] = Array.from({ length: 10 }, () => []);
+    let latest: { date: string; dec: number } | null = null;
+    for (const d of deals) {
+      const pct = d.vals[col];
+      if (pct == null || !Number.isFinite(pct)) continue;
+      const dec = Math.min(9, Math.max(0, Math.floor(pct / 10)));
+      if (!latest || d.date > latest.date) latest = { date: d.date, dec };
+      if (d.ret == null || !Number.isFinite(d.ret)) continue;
+      b[dec].push(d.ret);
+    }
+    const rows = b.map((arr, i) => ({ dec: i, n: arr.length, avg: arr.length ? arr.reduce((s, x) => s + x, 0) / arr.length : null }));
+    return { rows, latestDec: latest ? latest.dec : -1, total: rows.reduce((s, r) => s + r.n, 0) };
+  }, [deals, col]);
+  const maxAbs = Math.max(0.01, ...rows.map((r) => (r.avg == null ? 0 : Math.abs(r.avg))));
+  const up = 'var(--fk-up,#12b981)', down = 'var(--fk-down,#f43f5e)';
+  return (
+    <div className="ddx" data-testid="dd-deciles">
+      <div className="ddx-h">
+        <div>
+          <div className="ddx-t">Просадка → доходность за {horizon}д · {sym}</div>
+          <div className="sub">Сделки по децилям перцентиля просадки на входе (dd_pctile[{win}]). Дециль 0–10% — самые редкие глубокие просадки; 90–100% — у максимума.{horizon !== 5 ? ' Для доходности за 5 дней поставьте горизонт 5.' : ''}</div>
+        </div>
+        <div className="seg" style={{ width: 'auto' }}>
+          {[63, 126, 252].map((w) => <button key={w} className={win === w ? 'on' : ''} onClick={() => setWin(w)} style={{ padding: '4px 9px' }}>{w}д</button>)}
+        </div>
+      </div>
+      {total < 20 ? (
+        <div className="sub" style={{ padding: '10px 0' }}>Недостаточно истории для перцентиля просадки за {win}д — выберите окно поменьше или расширьте годы.</div>
+      ) : (
+        <div className="ddx-rows" data-testid="dd-deciles-rows">
+          {rows.map((r) => {
+            const pos = (r.avg ?? 0) >= 0;
+            const w = r.avg == null ? 0 : (Math.abs(r.avg) / maxAbs) * 50;
+            return (
+              <div className={`ddx-row${r.dec === latestDec ? ' cur' : ''}`} key={r.dec}>
+                <div className="ddx-lb">{r.dec * 10}–{r.dec * 10 + 10}%{r.dec === 0 ? ' ↓глубже' : r.dec === 9 ? ' у макс.' : ''}</div>
+                <div className="ddx-bar">
+                  <span className="ddx-zero" />
+                  {r.avg != null && <span className="ddx-fill" style={{ left: pos ? '50%' : `${50 - w}%`, width: `${w}%`, background: pos ? up : down }} />}
+                </div>
+                <div className={`ddx-v ${r.avg == null ? '' : pos ? 'up' : 'down'}`}>{r.avg == null ? '—' : (r.avg >= 0 ? '+' : '') + r.avg.toFixed(2) + '%'}</div>
+                <div className="ddx-n">n={r.n}</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {latestDec >= 0 && total >= 20 && (
+        <div className="sub" style={{ marginTop: 6 }}>Последний вход {sym}: просадка ≈ {latestDec * 10}–{latestDec * 10 + 10}-й перцентиль (дециль подсвечен).{latestDec === 0 ? ' Сейчас — редкая глубокая просадка.' : latestDec >= 8 ? ' Сейчас — у максимума, просадки почти нет.' : ''}</div>
+      )}
+      <div className="sub" style={{ marginTop: 4, opacity: 0.8 }}>Описательно, не прогноз: выборка на актив мала, эпизоды просадок склеены во времени. Смотрите также MAE/MDD в метриках выше.</div>
     </div>
   );
 }
