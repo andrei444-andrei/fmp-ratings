@@ -1,6 +1,6 @@
 import { libsqlClient } from '@/db/client';
 import { getFundamentals } from '@/lib/research/fundamentals';
-import { fmpGrades, fmpGradesHistorical, fmpPriceTargetConsensus, fmpStockNews, fmpIncomeStatement, fmpRatios, fmpKeyMetrics, fmpProfile, fmpAnalystEstimates, fmpPriceTargetSummary } from '@/lib/fmp';
+import { fmpGrades, fmpGradesHistorical, fmpPriceTargetConsensus, fmpStockNews, fmpIncomeStatement, fmpRatios, fmpKeyMetrics, fmpProfile, fmpAnalystEstimates, fmpPriceTargetSummary, fmpRatiosTtm, fmpPeers } from '@/lib/fmp';
 import { translateMany } from './translate';
 
 // Контентный слой «картина акции» для /ticker: грейды sell-side (лента действий + консенсус во времени),
@@ -347,6 +347,44 @@ export async function getEstimates(symbol: string, force = false): Promise<Estim
   return cached ?? { years: [], revision: null };
 }
 
+/* ----------------------------- сравнение с пирами ----------------------------- */
+export type PeerRow = { symbol: string; name: string | null; mktCap: number | null; pe: number | null; ps: number | null; grossMargin: number | null; netMargin: number | null; roe: number | null; self: boolean };
+
+export async function getPeers(symbol: string, force = false): Promise<PeerRow[]> {
+  await ensureTables();
+  const sym = symbol.toUpperCase();
+  if (hasKey() && (force || !(await isFresh(sym, 'peers', 24 * 3600e3)))) {
+    try {
+      const praw: any = await fmpPeers(sym).catch(() => null);
+      let peers: string[] = [];
+      if (Array.isArray(praw)) peers = praw.map((r: any) => (typeof r === 'string' ? r : (r?.symbol ?? '')));
+      else if (praw && Array.isArray(praw.peersList)) peers = praw.peersList;
+      peers = peers.map((x) => String(x || '').toUpperCase().trim()).filter(Boolean);
+      const uniq = [sym, ...peers.filter((p) => p !== sym)].slice(0, 7); // тикер + до 6 пиров
+      const rows = await Promise.all(uniq.map(async (s) => {
+        const [prof, rat]: any[] = await Promise.all([fmpProfile(s).catch(() => null), fmpRatiosTtm(s).catch(() => null)]);
+        const p = Array.isArray(prof) ? prof[0] : prof;
+        const r = Array.isArray(rat) ? rat[0] : rat;
+        const row: PeerRow = {
+          symbol: s, name: str(p?.companyName), mktCap: num(p?.marketCap ?? p?.mktCap),
+          pe: num(r?.priceToEarningsRatioTTM ?? r?.peRatioTTM),
+          ps: num(r?.priceToSalesRatioTTM ?? r?.priceToSalesTTM),
+          grossMargin: num(r?.grossProfitMarginTTM),
+          netMargin: num(r?.netProfitMarginTTM),
+          roe: num(r?.returnOnEquityTTM),
+          self: s === sym,
+        };
+        return row;
+      }));
+      // текущий тикер первым, дальше по капитализации ↓
+      rows.sort((a, b) => (a.self ? -1 : b.self ? 1 : (b.mktCap ?? 0) - (a.mktCap ?? 0)));
+      await putBlob(sym, 'peers', rows);
+      await markFetched(sym, 'peers');
+    } catch { /* graceful */ }
+  }
+  return (await getBlob<PeerRow[]>(sym, 'peers')) ?? [];
+}
+
 /* ----------------------------- профиль-досье ----------------------------- */
 export type Profile = {
   symbol: string; company: string | null; sector: string | null; industry: string | null;
@@ -388,12 +426,13 @@ export type TickerInsight = {
   target: Target | null;
   funda: FundaData;
   estimates: Estimates;
+  peers: PeerRow[];
   news: NewsRow[];
 };
 export async function getTickerInsight(symbol: string, force = false): Promise<TickerInsight> {
   const sym = symbol.toUpperCase().trim();
-  const [profile, grades, consensus, target, funda, estimates, news] = await Promise.all([
-    getProfile(sym), getGrades(sym, force), getConsensus(sym, force), getPriceTarget(sym, force), getFunda(sym, force), getEstimates(sym, force), getNews(sym, force),
+  const [profile, grades, consensus, target, funda, estimates, peers, news] = await Promise.all([
+    getProfile(sym), getGrades(sym, force), getConsensus(sym, force), getPriceTarget(sym, force), getFunda(sym, force), getEstimates(sym, force), getPeers(sym, force), getNews(sym, force),
   ]);
   // Перевод на русский: описание компании + заголовки/сниппеты новостей (кэш, graceful).
   try {
@@ -409,5 +448,5 @@ export async function getTickerInsight(symbol: string, force = false): Promise<T
       }
     }
   } catch { /* перевод не обязателен */ }
-  return { symbol: sym, profile, grades, consensus, target, funda, estimates, news };
+  return { symbol: sym, profile, grades, consensus, target, funda, estimates, peers, news };
 }

@@ -87,6 +87,19 @@ export async function fmpRatios(symbol: string, period: 'quarter' | 'annual' = '
   return fmpGet(`${BASE_STABLE}/ratios?symbol=${encodeURIComponent(symbol)}&period=${period}&limit=${encodeURIComponent(limit)}&apikey=${encodeURIComponent(key)}`);
 }
 
+// TTM-снимок коэффициентов (для сравнения «сейчас» между компаниями): priceToEarningsRatioTTM,
+// priceToSalesRatioTTM, grossProfitMarginTTM, netProfitMarginTTM, returnOnEquityTTM, dividendYieldTTM и т.д.
+export async function fmpRatiosTtm(symbol: string) {
+  const key = getFmpKey();
+  return fmpGet(`${BASE_STABLE}/ratios-ttm?symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(key)}`);
+}
+
+// Компании-аналоги (тот же сектор/близкая капитализация). Возвращает список тикеров-пиров.
+export async function fmpPeers(symbol: string) {
+  const key = getFmpKey();
+  return fmpGet(`${BASE_STABLE}/peers?symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(key)}`);
+}
+
 // Ключевые метрики (в stable-API живут ОТДЕЛЬНО от ratios): returnOnEquity/Assets/InvestedCapital,
 // enterpriseValue и EV-мультипликаторы (evToEBITDA/evToSales/evToFreeCashFlow), freeCashFlowYield,
 // netDebtToEBITDA, revenuePerShare, bookValuePerShare и т.д. — во времени.
