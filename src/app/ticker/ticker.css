@@ -186,6 +186,11 @@
 .tk .tgt-flag.price::before{content:'';width:1px;height:6px;margin-bottom:2px;background:var(--tk-blue);opacity:.55}
 .tk .tgt-end{position:absolute;top:6px;font-size:10.5px;color:var(--tk-soft);font-weight:600}
 .tk .tgt-end.lo{left:0} .tk .tgt-end.hi{right:0}
+/* форвардные оценки */
+.tk table.est td,.tk table.est th{padding:5px 8px}
+.tk tr.est-fut td{background:var(--app-acc-bg);font-style:italic}
+.tk tr.est-fut td.l{font-weight:700;font-style:normal}
+.tk .est-rev{margin-top:10px;color:var(--tk-mut)}
 /* консенсус аналитиков */
 .tk .distbar{display:flex;height:22px;border-radius:6px;overflow:hidden;border:1px solid var(--tk-line)}
 .tk .distbar .ds{display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700;min-width:2px}

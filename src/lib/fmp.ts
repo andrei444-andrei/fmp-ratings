@@ -54,6 +54,20 @@ export async function fmpPriceTargetConsensus(symbol: string) {
   return fmpGet(`${BASE_STABLE}/price-target-consensus?symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(key)}`);
 }
 
+// Форвардные прогнозы аналитиков (по годам/кварталам): revenue/ebitda/netIncome/eps в вариантах
+// Avg/High/Low + число аналитиков (numAnalystsRevenue/numAnalystsEps). date — год отчётности.
+export async function fmpAnalystEstimates(symbol: string, period: 'annual' | 'quarter' = 'annual', limit = 12, page = 0) {
+  const key = getFmpKey();
+  return fmpGet(`${BASE_STABLE}/analyst-estimates?symbol=${encodeURIComponent(symbol)}&period=${period}&page=${page}&limit=${encodeURIComponent(limit)}&apikey=${encodeURIComponent(key)}`);
+}
+
+// Сводка пересмотров таргета: средний целевой уровень и число публикаций за посл. месяц/квартал/год/всё время
+// (lastMonthAvgPriceTarget, lastMonthCount, lastQuarter…, lastYear…, allTime…) — прокси моментума пересмотров.
+export async function fmpPriceTargetSummary(symbol: string) {
+  const key = getFmpKey();
+  return fmpGet(`${BASE_STABLE}/price-target-summary?symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(key)}`);
+}
+
 // Лента новостей по тикеру: symbol, publishedDate, title, publisher/site, text, url, image.
 export async function fmpStockNews(symbol: string, limit = 30) {
   const key = getFmpKey();
