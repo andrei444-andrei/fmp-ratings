@@ -8,6 +8,7 @@ export type NamingCtx = {
   execution: ExecMode;
   ladderN: number;
   parking: Parking;
+  maxWeight?: number; // потолок веса на тикер (доля 0..1); 0/undefined = без лимита
   metrics?: { cagr?: number | null; loading?: number | null; excessTotal?: number | null; sharpe?: number | null };
   existing?: string[];
 };
@@ -21,14 +22,16 @@ export async function suggestPortfolioName(ctx: NamingCtx): Promise<string | nul
   const sys =
     'Ты придумываешь КОРОТКОЕ осмысленное название для теста инвест-стратегии — портфеля из «сетапов» ' +
     '(сохранённых находок скринера). По-русски, до ~50 символов, без кавычек и markdown. Имя отражает СОСТАВ ' +
-    'и механику (исполнение/паркинг), а не общие слова. Примеры: «Просадки металлов+страны, лестница 20д», ' +
-    '«Импульс ETF, мес. ребаланс, BIL». Если даны существующие названия — сделай имя ОТЛИЧИМЫМ. ' +
-    'Верни СТРОГО один JSON-объект: {"title":"..."}.';
+    'и тестируемые ПАРАМЕТРЫ (исполнение и его N, паркинг, потолок веса на тикер), а не общие слова — так, ' +
+    'чтобы по имени можно было отличить прогоны с разными параметрами. Примеры: «Просадки металлов+страны, ' +
+    'лестница 20д, потолок 20%», «Импульс ETF, мес. ребаланс, BIL». Если даны существующие названия — сделай ' +
+    'имя ОТЛИЧИМЫМ (подчеркни, чем этот прогон отличается по параметрам). Верни СТРОГО один JSON-объект: {"title":"..."}.';
 
   const pct = (x: number | null | undefined) => (x == null || !Number.isFinite(x) ? '—' : `${(x * 100).toFixed(1)}%`);
   const parts: string[] = [];
   parts.push('Сетапы в портфеле:\n- ' + ctx.setups.slice(0, 20).join('\n- '));
-  parts.push(`Исполнение: ${EXEC[ctx.execution]}${ctx.execution === 'ladder' ? ` N=${ctx.ladderN}` : ''}; паркинг простоя: ${ctx.parking}.`);
+  const cap = ctx.maxWeight && ctx.maxWeight > 0 ? `; потолок на тикер ${Math.round(ctx.maxWeight * 100)}% (остаток в паркинг)` : '';
+  parts.push(`Параметры: исполнение ${EXEC[ctx.execution]}${ctx.execution === 'ladder' ? ` N=${ctx.ladderN}` : ''}; паркинг простоя ${ctx.parking}${cap}.`);
   if (ctx.metrics) {
     const m = ctx.metrics;
     parts.push(`Метрики: загрузка ${pct(m.loading)}, CAGR ${pct(m.cagr)}, превышение vs SPY ${pct(m.excessTotal)}, Sharpe ${m.sharpe == null ? '—' : m.sharpe.toFixed(2)}.`);

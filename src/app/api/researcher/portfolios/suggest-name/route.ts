@@ -19,8 +19,10 @@ export async function POST(req: Request) {
     const parking: Parking = b?.parking === 'SPY' ? 'SPY' : b?.parking === 'CASH' ? 'CASH' : 'BIL';
     const existing = (await listPortfolios().catch(() => [])).map((p) => p.name);
 
+    const mw = Number(b?.maxWeight);
     const title = await suggestPortfolioName({
       setups, execution, ladderN: Number(b?.ladderN) || 5, parking,
+      maxWeight: Number.isFinite(mw) && mw > 0 && mw < 1 ? mw : 0,
       metrics: b?.metrics && typeof b.metrics === 'object' ? b.metrics : undefined,
       existing,
     });
