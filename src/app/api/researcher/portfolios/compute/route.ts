@@ -29,7 +29,9 @@ export async function POST(req: Request) {
       const parking = b?.parking === 'SPY' ? 'SPY' : b?.parking === 'CASH' ? 'CASH' : 'BIL';
       const execution = b?.execution === 'weekly' ? 'weekly' : b?.execution === 'monthly' ? 'monthly' : 'ladder';
       const ln = Number(b?.ladderN);
-      cfg = { setupIds, selection: 'all', execution, ladderN: Number.isFinite(ln) && ln > 0 ? Math.min(60, Math.round(ln)) : 5, parking };
+      const mw = Number(b?.maxWeight);
+      const maxWeight = Number.isFinite(mw) && mw > 0 && mw < 1 ? Math.round(mw * 1000) / 1000 : 0;
+      cfg = { setupIds, selection: 'all', execution, ladderN: Number.isFinite(ln) && ln > 0 ? Math.min(60, Math.round(ln)) : 5, parking, maxWeight };
     }
     if (!cfg.setupIds.length) return Response.json({ error: 'нужен непустой список сетапов' }, { status: 400 });
 
@@ -83,7 +85,7 @@ export async function POST(req: Request) {
     return Response.json({
       result,
       meta: {
-        setups: names, execution: cfg.execution, ladderN: cfg.ladderN, parking: cfg.parking,
+        setups: names, execution: cfg.execution, ladderN: cfg.ladderN, parking: cfg.parking, maxWeight: cfg.maxWeight,
         synthetic, syntheticSymbols: synthSyms.length, truncatedSymbols: truncated ? symbols.length - MAX_SYMBOLS : 0,
       },
     });

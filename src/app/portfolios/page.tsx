@@ -10,8 +10,8 @@ import type { PortfolioResult, DayPoint } from '@/lib/research/portfolioEngine';
 type Parking = 'BIL' | 'SPY' | 'CASH';
 type ExecMode = 'ladder' | 'weekly' | 'monthly';
 type SetupItem = { id: string; name: string; snapshot?: Record<string, number | string> };
-type SavedPortfolio = { id: string; name: string; description: string; config: { setupIds: string[]; execution: ExecMode; ladderN: number; parking: Parking } };
-type ComputeMeta = { setups: string[]; execution: ExecMode; ladderN: number; parking: Parking; synthetic: boolean; syntheticSymbols?: number; truncatedSymbols?: number };
+type SavedPortfolio = { id: string; name: string; description: string; config: { setupIds: string[]; execution: ExecMode; ladderN: number; parking: Parking; maxWeight?: number } };
+type ComputeMeta = { setups: string[]; execution: ExecMode; ladderN: number; parking: Parking; maxWeight?: number; synthetic: boolean; syntheticSymbols?: number; truncatedSymbols?: number };
 
 const EXEC_LABEL: Record<ExecMode, string> = { ladder: 'лестница', weekly: 'ребаланс/нед', monthly: 'ребаланс/мес' };
 const EXEC_FULL: Record<ExecMode, string> = { ladder: 'Лестница', weekly: 'Недельный ребаланс', monthly: 'Месячный ребаланс' };
@@ -25,10 +25,11 @@ const signPct = (x: number | null | undefined, dp = 1) => (x == null || !Number.
 const numFmt = (x: number | null | undefined, dp = 2) => (x == null || !Number.isFinite(x) ? '—' : x.toFixed(dp));
 const signCls = (x: number | null | undefined) => (x == null || !Number.isFinite(x) ? '' : x > 0 ? 'up' : x < 0 ? 'down' : '');
 
-function fallbackName(setupNames: string[], exec: ExecMode, n: number, parking: Parking): string {
+function fallbackName(setupNames: string[], exec: ExecMode, n: number, parking: Parking, maxWeight: number): string {
   const head = setupNames.slice(0, 2).join(' + ') + (setupNames.length > 2 ? ` +${setupNames.length - 2}` : '');
   const ex = exec === 'ladder' ? `лестница ${n}` : exec === 'weekly' ? 'нед. ребаланс' : 'мес. ребаланс';
-  return `${head} · ${ex} · ${parking}`.slice(0, 63);
+  const cap = maxWeight > 0 ? ` · потолок ${Math.round(maxWeight * 100)}%` : '';
+  return `${head} · ${ex} · ${parking}${cap}`.slice(0, 63);
 }
 
 // SVG-кривая капитала: портфель, SPY (buy&hold) и опц. SPY «на загрузке»; годовые метки по оси X.
@@ -191,6 +192,7 @@ export default function PortfoliosPage() {
   const [exec, setExec] = useState<ExecMode>('ladder');
   const [ladderN, setLadderN] = useState<number>(5);
   const [parking, setParking] = useState<Parking>('BIL');
+  const [maxWeightPct, setMaxWeightPct] = useState<number>(0); // потолок веса на тикер, % (0 = без лимита)
 
   const [result, setResult] = useState<PortfolioResult | null>(null);
   const [meta, setMeta] = useState<ComputeMeta | null>(null);
@@ -241,6 +243,7 @@ export default function PortfoliosPage() {
     setExec('ladder');
     setLadderN(5);
     setParking('BIL');
+    setMaxWeightPct(0);
     setResult(null);
     setMeta(null);
     setRan(false);
@@ -251,11 +254,11 @@ export default function PortfoliosPage() {
 
   // расчёт без автосохранения (используется и мастером, и при открытии сохранённого теста)
   const computeOnly = useCallback(
-    async (ids: string[], cfg: { execution: ExecMode; ladderN: number; parking: Parking }): Promise<PortfolioResult | null> => {
+    async (ids: string[], cfg: { execution: ExecMode; ladderN: number; parking: Parking; maxWeight: number }): Promise<PortfolioResult | null> => {
       const r = await fetch('/api/researcher/portfolios/compute', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ setupIds: ids, execution: cfg.execution, ladderN: cfg.ladderN, parking: cfg.parking }),
+        body: JSON.stringify({ setupIds: ids, execution: cfg.execution, ladderN: cfg.ladderN, parking: cfg.parking, maxWeight: cfg.maxWeight }),
       }).then((x) => x.json());
       if (r?.error) {
         setErr(String(r.error));
@@ -280,8 +283,9 @@ export default function PortfoliosPage() {
     }
     setBusy(true);
     setErr('');
+    const maxWeight = maxWeightPct > 0 ? Math.min(1, maxWeightPct / 100) : 0;
     try {
-      const res = await computeOnly(ids, { execution: exec, ladderN, parking });
+      const res = await computeOnly(ids, { execution: exec, ladderN, parking, maxWeight });
       if (!res) return;
       setRan(true);
       setStep(0);
@@ -293,13 +297,13 @@ export default function PortfoliosPage() {
         const rn = await fetch('/api/researcher/portfolios/suggest-name', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ setups: setupNames, execution: exec, ladderN, parking, metrics: { cagr: m.cagr, loading: m.loading, excessTotal: m.excessTotal, sharpe: m.sharpe } }),
+          body: JSON.stringify({ setups: setupNames, execution: exec, ladderN, parking, maxWeight, metrics: { cagr: m.cagr, loading: m.loading, excessTotal: m.excessTotal, sharpe: m.sharpe } }),
         }).then((x) => x.json());
         if (rn?.title) title = String(rn.title);
       } catch {
         /* graceful — запасное имя ниже */
       }
-      if (!title) title = fallbackName(setupNames, exec, ladderN, parking);
+      if (!title) title = fallbackName(setupNames, exec, ladderN, parking, maxWeight);
       const id = newId();
       setName(title);
       setCurId(id);
@@ -307,7 +311,7 @@ export default function PortfoliosPage() {
         await fetch('/api/researcher/portfolios', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ id, name: title, config: { setupIds: ids, selection: 'all', execution: exec, ladderN, parking } }),
+          body: JSON.stringify({ id, name: title, config: { setupIds: ids, selection: 'all', execution: exec, ladderN, parking, maxWeight } }),
         });
         await loadSaved();
       } catch {
@@ -318,7 +322,7 @@ export default function PortfoliosPage() {
     } finally {
       setBusy(false);
     }
-  }, [selected, exec, ladderN, parking, setups, computeOnly, loadSaved]);
+  }, [selected, exec, ladderN, parking, maxWeightPct, setups, computeOnly, loadSaved]);
 
   // переименование текущего теста (сохранённого)
   const rename = useCallback(
@@ -326,33 +330,36 @@ export default function PortfoliosPage() {
       setName(nm);
       if (!curId || !nm.trim()) return;
       try {
+        const maxWeight = maxWeightPct > 0 ? Math.min(1, maxWeightPct / 100) : 0;
         await fetch('/api/researcher/portfolios', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ id: curId, name: nm.trim(), config: { setupIds: [...selected], selection: 'all', execution: exec, ladderN, parking } }),
+          body: JSON.stringify({ id: curId, name: nm.trim(), config: { setupIds: [...selected], selection: 'all', execution: exec, ladderN, parking, maxWeight } }),
         });
         await loadSaved();
       } catch {
         /* graceful */
       }
     },
-    [curId, selected, exec, ladderN, parking, loadSaved],
+    [curId, selected, exec, ladderN, parking, maxWeightPct, loadSaved],
   );
 
   const openSaved = useCallback(
     async (p: SavedPortfolio) => {
       const ids = p.config.setupIds || [];
+      const mw = p.config.maxWeight ?? 0;
       setSelected(new Set(ids));
       setExec(p.config.execution);
       setLadderN(p.config.ladderN ?? 5);
       setParking(p.config.parking);
+      setMaxWeightPct(mw > 0 ? Math.round(mw * 100) : 0);
       setCurId(p.id);
       setName(p.name);
       setStep(0);
       setErr('');
       setBusy(true);
       try {
-        await computeOnly(ids, { execution: p.config.execution, ladderN: p.config.ladderN ?? 5, parking: p.config.parking });
+        await computeOnly(ids, { execution: p.config.execution, ladderN: p.config.ladderN ?? 5, parking: p.config.parking, maxWeight: mw });
         setRan(true);
       } finally {
         setBusy(false);
@@ -509,7 +516,7 @@ export default function PortfoliosPage() {
 
                 {step === 3 && (
                   <>
-                    <div className="card-t" style={{ marginBottom: 8 }}>Параметры — паркинг, вес, отбор</div>
+                    <div className="card-t" style={{ marginBottom: 8 }}>Параметры — паркинг, потолок на тикер, вес, отбор</div>
                     <div className="pf-controls" style={{ marginTop: 0 }}>
                       <div className="ctl">
                         <span className="lbl">Паркинг простоя</span>
@@ -519,12 +526,19 @@ export default function PortfoliosPage() {
                           <option value="CASH">Кэш (0%)</option>
                         </select>
                       </div>
+                      <div className="ctl">
+                        <span className="lbl">Потолок на тикер</span>
+                        <input className="kin" type="number" min={0} max={100} step={5} value={maxWeightPct} data-testid="pf-maxweight"
+                          onChange={(e) => setMaxWeightPct(Math.max(0, Math.min(100, Math.round(Number(e.target.value) || 0))))} />
+                        <span className="lbl" style={{ textTransform: 'none', fontWeight: 500, letterSpacing: 0 }}>% (0 = без лимита)</span>
+                      </div>
                       <div className="ctl"><span className="lbl">Вес · отбор</span><span className="badge">равный · все имена</span></div>
                       <div className="ctl"><span className="lbl">Бенчмарк</span><span className="badge">S&amp;P 500 (SPY)</span></div>
                     </div>
                     <div className="pf-note" style={{ marginTop: 10 }}>
-                      Отбор сейчас — «все имена». Топ-K экстремумов (по фактору на входе) и низкокоррелированный отбор — на подходе. Альфа — простое
-                      превышение над SPY (без беты). Оценка in-sample на всей истории.
+                      Потолок на тикер ограничивает максимальную долю одного имени в ребалансе; если имён мало и равный вес превысил бы потолок,
+                      каждое имя капается, а неразмещённый остаток уходит в паркинг. Отбор сейчас — «все имена» (топ-K экстремумов и
+                      низкокоррелированный — на подходе). Альфа — простое превышение над SPY (без беты). Оценка in-sample на всей истории.
                     </div>
                   </>
                 )}
@@ -535,6 +549,7 @@ export default function PortfoliosPage() {
                     <div className="pf-summary">
                       <div className="row"><span className="k">Сетапы ({selectedNames.length})</span><span>{selectedNames.join(', ') || '—'}</span></div>
                       <div className="row"><span className="k">Исполнение</span><span>{EXEC_FULL[exec]}{exec === 'ladder' ? ` · N=${ladderN}` : ''}</span></div>
+                      <div className="row"><span className="k">Потолок на тикер</span><span>{maxWeightPct > 0 ? `${maxWeightPct}% (остаток → паркинг)` : 'без лимита'}</span></div>
                       <div className="row"><span className="k">Паркинг · вес · отбор</span><span>{PARK_LABEL[parking]} · равный · все имена</span></div>
                     </div>
                     <div className="pf-note" style={{ marginTop: 10 }}>После запуска тест автоматически сохранится с названием от AI (его можно изменить).</div>
@@ -577,6 +592,7 @@ export default function PortfoliosPage() {
               <div className="pf-note" data-testid="portfolio-meta">
                 Период {m.start ?? '—'}…{m.end ?? '—'} · {m.nSignals} сигналов · {m.nSymbols} имён · {m.nSetups} сетапов ·{' '}
                 {EXEC_LABEL[meta?.execution ?? exec]}{(meta?.execution ?? exec) === 'ladder' ? ` N=${meta?.ladderN ?? ladderN}` : ''} · паркинг {meta?.parking ?? parking}
+                {(meta?.maxWeight ?? 0) > 0 ? ` · потолок ${Math.round((meta!.maxWeight as number) * 100)}%` : ''}
                 {meta?.synthetic && <span className="badge warn" style={{ marginLeft: 8 }}>данные синтетические (без ключей)</span>}
                 {!meta?.synthetic && !!meta?.syntheticSymbols && <span className="badge warn" style={{ marginLeft: 8 }}>имён без реальных цен: {meta.syntheticSymbols} (синтетика)</span>}
                 {!!meta?.truncatedSymbols && <span className="badge warn" style={{ marginLeft: 8 }}>усечено имён: {meta.truncatedSymbols}</span>}

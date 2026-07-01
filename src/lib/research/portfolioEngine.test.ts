@@ -13,7 +13,7 @@ function series(n: number, startISO = '2015-01-01', startPrice = 100, dailyRet =
   }
   return out;
 }
-const cfg = (execution: EngineConfig['execution'], ladderN: number, parking: EngineConfig['parking']): EngineConfig => ({ execution, ladderN, parking, selection: 'all' });
+const cfg = (execution: EngineConfig['execution'], ladderN: number, parking: EngineConfig['parking'], maxWeight = 0): EngineConfig => ({ execution, ladderN, parking, selection: 'all', maxWeight });
 // сигналы по тикеру на индексах календаря [from..to]
 const signalsOn = (dates: string[], from: number, to: number, symbol: string): Signal[] => {
   const out: Signal[] = [];
@@ -164,6 +164,29 @@ describe('buildPortfolio (price-panel simulation)', () => {
     // loadingByDay согласован с метрикой и в режиме SPY ≈ 1 каждый день
     expect(spyp.loadingByDay.slice(1).every((x) => x > 0.98)).toBe(true);
     expect(cash.loadingByDay.length).toBe(cash.deployment.length);
+  });
+
+  it('потолок на тикер: 2 имени, лимит 20% → каждое капается на 20%, остаток (60%) в паркинг', () => {
+    const spy = series(60, '2015-01-01', 100, 0.0003);
+    const dates = spy.map((b) => b.date);
+    const aaa = series(60, '2015-01-01', 50, 0.002);
+    const bbb = series(60, '2015-01-01', 70, 0.001);
+    const panel: PricePanel = new Map([['AAA', aaa], ['BBB', bbb]]);
+    const setups: EngineSetup[] = [{ id: 's', name: 'S', signals: [...signalsOn(dates, 5, 50, 'AAA'), ...signalsOn(dates, 5, 50, 'BBB')] }];
+    const capped = buildPortfolio(setups, cfg('weekly', 5, 'CASH', 0.2), spy, null, panel);
+    const full = buildPortfolio(setups, cfg('weekly', 5, 'CASH', 0), spy, null, panel);
+    // на ребалансе каждое имя ≤ 20%, размещено 40%, остаток (60%) — в паркинг
+    const rb = capped.rebalances.find((r) => r.positions.length === 2)!;
+    expect(rb).toBeTruthy();
+    for (const p of rb.positions) expect(p.weight).toBeCloseTo(0.2, 6);
+    expect(rb.positions.reduce((s, p) => s + p.weight, 0)).toBeCloseTo(0.4, 6);
+    // без лимита те же 2 имени → равный вес 50/50, размещено 100%
+    const rbFull = full.rebalances.find((r) => r.positions.length === 2)!;
+    for (const p of rbFull.positions) expect(p.weight).toBeCloseTo(0.5, 6);
+    // загрузка с лимитом заметно ниже, чем без него (капитал в именах ограничен)
+    expect(capped.metrics.loading!).toBeLessThan(0.5);
+    expect(full.metrics.loading!).toBeGreaterThan(0.9);
+    expect(capped.metrics.loading!).toBeLessThan(full.metrics.loading!);
   });
 
   it('пустые входы не валятся', () => {

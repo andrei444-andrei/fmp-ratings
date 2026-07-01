@@ -13,6 +13,7 @@ export type PortfolioConfig = {
   execution: ExecMode; // лестница / недельный / месячный ребаланс
   ladderN: number; // длина лестницы (дней удержания транша), актуально для execution='ladder'
   parking: Parking; // паркинг простоя
+  maxWeight: number; // потолок веса на 1 тикер (доля 0..1); 0 = без лимита. Остаток сверх лимита → паркинг
 };
 export type PortfolioRow = { id: string; name: string; description: string; config: PortfolioConfig };
 
@@ -46,7 +47,9 @@ function normConfig(raw: any): PortfolioConfig {
   const execution: ExecMode = raw?.execution === 'weekly' ? 'weekly' : raw?.execution === 'monthly' ? 'monthly' : 'ladder';
   const ln = Number(raw?.ladderN);
   const ladderN = Number.isFinite(ln) && ln > 0 ? Math.min(60, Math.round(ln)) : 5;
-  return { setupIds, selection: 'all', execution, ladderN, parking };
+  const mw = Number(raw?.maxWeight);
+  const maxWeight = Number.isFinite(mw) && mw > 0 && mw < 1 ? Math.round(mw * 1000) / 1000 : 0; // 0 = без лимита; ≥1 бессмысленно
+  return { setupIds, selection: 'all', execution, ladderN, parking, maxWeight };
 }
 
 export async function listPortfolios(): Promise<PortfolioRow[]> {
