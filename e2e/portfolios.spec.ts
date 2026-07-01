@@ -79,15 +79,15 @@ test.describe('Портфели /portfolios', () => {
     await expect(page.getByTestId('pf-week-meta')).toBeVisible();
     await expect(page.getByTestId('pf-week-positions')).toBeVisible();
 
-    // сделки по ребалансам/входам: список + долевая полоса при выборе сделки
+    // экспозиция и сделки по дням: список + полная экспозиция дня при выборе
     await expect(page.getByTestId('pf-reb-table')).toBeVisible();
     const rrow = page.getByTestId('pf-reb-row').first();
     await expect(rrow).toBeVisible();
     await rrow.click();
     await expect(page.getByTestId('pf-reb-positions')).toBeVisible();
     await expect(page.getByTestId('pf-stack').first()).toBeVisible();
-    // доходность выбранной сделки vs SPY
-    await expect(page.getByTestId('pf-reb-sel')).toContainText('доходность');
+    // выбранный день: полная экспозиция дня
+    await expect(page.getByTestId('pf-reb-sel')).toContainText('экспозиция');
 
     await request.delete(`/api/researcher/setups?id=${encodeURIComponent(setupId)}`);
   });
