@@ -23,6 +23,9 @@ describe('research_portfolios (libSQL)', () => {
     expect(a.config.ladderN).toBe(5);
     expect(a.config.parking).toBe('BIL');
     expect(a.config.maxWeight).toBe(0); // потолок по умолчанию — без лимита
+    expect(a.config.selection).toBe('all'); // отбор по умолчанию — все имена
+    expect(a.config.maxPositions).toBe(0);
+    expect(a.config.setupPriority).toEqual({});
     expect(a.favorite).toBe(false);
     // execution weekly; ladderN → дефолт 5
     expect(b.config.execution).toBe('weekly');

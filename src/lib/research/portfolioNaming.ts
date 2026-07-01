@@ -11,6 +11,8 @@ export type NamingCtx = {
   maxWeight?: number; // потолок веса на тикер (доля 0..1); 0/undefined = без лимита
   maxLeverage?: number; // макс. плечо (1/undefined = без плеча)
   startYear?: number; // год начала бэктеста (0/undefined = с первого сигнала)
+  selection?: 'all' | 'limit'; // отбор
+  maxPositions?: number; // лимит имён (при selection='limit')
   metrics?: { cagr?: number | null; loading?: number | null; excessTotal?: number | null; sharpe?: number | null };
   existing?: string[];
 };
@@ -35,7 +37,8 @@ export async function suggestPortfolioName(ctx: NamingCtx): Promise<string | nul
   const cap = ctx.maxWeight && ctx.maxWeight > 0 ? `; потолок на тикер ${Math.round(ctx.maxWeight * 100)}%` : '';
   const lev = ctx.maxLeverage && ctx.maxLeverage > 1 ? `; плечо ${ctx.maxLeverage}×` : '';
   const yr = ctx.startYear && ctx.startYear > 1990 ? `; с ${ctx.startYear} года` : '';
-  parts.push(`Параметры: исполнение ${EXEC[ctx.execution]}${ctx.execution === 'ladder' ? ` N=${ctx.ladderN}` : ''}; паркинг простоя ${ctx.parking}${cap}${lev}${yr}.`);
+  const lim = ctx.selection === 'limit' && ctx.maxPositions ? `; лимит топ-${ctx.maxPositions} имён` : '';
+  parts.push(`Параметры: исполнение ${EXEC[ctx.execution]}${ctx.execution === 'ladder' ? ` N=${ctx.ladderN}` : ''}; паркинг простоя ${ctx.parking}${cap}${lev}${yr}${lim}.`);
   if (ctx.metrics) {
     const m = ctx.metrics;
     parts.push(`Метрики: загрузка ${pct(m.loading)}, CAGR ${pct(m.cagr)}, превышение vs SPY ${pct(m.excessTotal)}, Sharpe ${m.sharpe == null ? '—' : m.sharpe.toFixed(2)}.`);

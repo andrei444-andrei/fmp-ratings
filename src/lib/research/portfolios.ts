@@ -9,7 +9,9 @@ export type Parking = 'BIL' | 'SPY' | 'CASH';
 export type ExecMode = 'ladder' | 'weekly' | 'monthly';
 export type PortfolioConfig = {
   setupIds: string[];
-  selection: 'all'; // отбор: пока «все имена»; топ-K экстремумов / низкая корреляция — позже
+  selection: 'all' | 'limit'; // отбор: «все имена» или «лимит K» (квоты сетапов + ранг внутри сетапа)
+  maxPositions: number; // K — максимум имён при selection='limit' (0 = без лимита)
+  setupPriority: Record<string, number>; // setupId → приоритетная доля (нормируется); дефолт 1 у каждого
   execution: ExecMode; // лестница / недельный / месячный ребаланс
   ladderN: number; // длина лестницы (дней удержания транша), актуально для execution='ladder'
   parking: Parking; // паркинг простоя
@@ -68,7 +70,17 @@ function normConfig(raw: any): PortfolioConfig {
   const maxLeverage = Number.isFinite(lv) && lv > 1 ? Math.min(3, Math.round(lv * 100) / 100) : 1; // 1 = без плеча; клампим до 3
   const sy = Number(raw?.startYear);
   const startYear = Number.isFinite(sy) && sy >= 1990 && sy <= 2100 ? Math.round(sy) : 0; // 0 = с первого сигнала
-  return { setupIds, selection: 'all', execution, ladderN, parking, maxWeight, maxLeverage, startYear };
+  const selection: 'all' | 'limit' = raw?.selection === 'limit' ? 'limit' : 'all';
+  const mp = Number(raw?.maxPositions);
+  const maxPositions = Number.isFinite(mp) && mp > 0 ? Math.min(500, Math.round(mp)) : 0;
+  const setupPriority: Record<string, number> = {};
+  if (raw?.setupPriority && typeof raw.setupPriority === 'object') {
+    for (const [k, v] of Object.entries(raw.setupPriority)) {
+      const n = Number(v);
+      if (k && Number.isFinite(n) && n >= 0) setupPriority[String(k)] = Math.round(n * 100) / 100;
+    }
+  }
+  return { setupIds, selection, maxPositions, setupPriority, execution, ladderN, parking, maxWeight, maxLeverage, startYear };
 }
 
 const rowToPortfolio = (x: any): PortfolioRow => ({
