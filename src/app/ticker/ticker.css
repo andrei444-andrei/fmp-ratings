@@ -170,10 +170,21 @@
 .tk .tgtbar .tg.cons{top:1px;width:3px;height:14px;background:var(--app-acc-2);border-radius:1px}
 .tk .tgtbar .tg.price{top:-3px;width:10px;height:10px;border-radius:50%;background:var(--tk-blue);border:2px solid var(--tk-card)}
 .tk .tgtlegend{display:flex;justify-content:space-between;font-size:10.5px;color:var(--tk-soft)}
-/* фундаментал */
-.tk .fbars{display:flex;gap:2px;align-items:flex-end;height:64px;margin-top:6px}
-.tk .fbar{flex:1;display:flex;align-items:flex-end;justify-content:center}
-.tk .fbar .fb{width:80%;border-radius:2px 2px 0 0;min-height:2px}
+/* консенсус аналитиков */
+.tk .distbar{display:flex;height:22px;border-radius:6px;overflow:hidden;border:1px solid var(--tk-line)}
+.tk .distbar .ds{display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700;min-width:2px}
+.tk .distlegend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--tk-mut);margin-top:6px}
+.tk .distlegend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:middle}
+/* фундаментал: сетка метрик + карточки */
+.tk .mgroup{margin-top:12px}
+.tk .mgroup-h{font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;color:var(--tk-soft);font-weight:700;margin-bottom:6px}
+.tk .metricgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.tk .mcard{text-align:left;background:var(--tk-chip);border:1px solid var(--tk-line);border-radius:10px;padding:8px 10px;cursor:pointer;color:var(--tk-ink)}
+.tk .mcard:hover{border-color:var(--app-acc-bd)}
+.tk .mcard.on{background:var(--app-acc-bg);border-color:var(--app-acc-bd)}
+.tk .mc-label{font-size:11px;color:var(--tk-mut);font-weight:600}
+.tk .mc-val{font-size:16px;font-weight:700;margin-top:2px}
+.tk .mc-sub{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-top:3px;font-size:11px;font-weight:700}
 /* новости */
 .tk .news{display:flex;flex-direction:column;gap:2px}
 .tk .newsitem{display:block;padding:8px 0;border-bottom:1px solid var(--tk-line);text-decoration:none;color:inherit}
