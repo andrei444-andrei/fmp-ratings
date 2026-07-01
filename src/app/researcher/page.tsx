@@ -121,6 +121,7 @@ export default function Researcher() {
   const loadedRef = useRef(false);          // настройки восстановлены (можно начинать персист)
   const [cfgNonce, setCfgNonce] = useState(0); // ремоунт uncontrolled-инпутов после восстановления/сброса
   const [basketModal, setBasketModal] = useState(false); // модалка «Создать корзину» (ручной ввод + AI)
+  const [formulaHelp, setFormulaHelp] = useState(false); // модалка-справка «как составлять формулы»
   const [presets, setPresets] = useState<PresetDef[]>([]); // пресеты настроек скринера (БД, навсегда)
   const [presetSave, setPresetSave] = useState<{ name: string; description: string } | null>(null); // форма сохранения пресета
   const [setups, setSetups] = useState<SetupDef[]>([]); // сохранённые сетапы-находки (БД, навсегда)
@@ -565,9 +566,12 @@ export default function Researcher() {
       {/* 3. Формулы */}
       <div className="card">
         <div className="card-b">
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 8 }}>
             <span className="card-t">3 · Формулы (вычисляемые метрики)</span>
-            <span className="sub">выражения над факторами: + − × ÷, скобки, avg / min / max / sum / abs</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span className="sub">выражения над факторами: + − × ÷, скобки, avg / min / max / sum / abs</span>
+              <button type="button" className="btn sm ghost" data-testid="formula-help-open" onClick={() => setFormulaHelp(true)}>? Справка</button>
+            </div>
           </div>
           <div className="fmls">
             {formulas.map((f) => {
@@ -731,6 +735,8 @@ export default function Researcher() {
       {detailSym && <AssetDetail key={detailSym} sym={detailSym} series={priceSeries[detailSym] || []} deals={allDeals.filter((d) => d.symbol === detailSym)} horizon={(panel?.horizon) || horizon} minYear={minYear} onClose={() => setDetailSym(null)} />}
 
       {basketModal && <BasketModal existing={baskets} onSave={saveBasket} onClose={() => setBasketModal(false)} />}
+
+      {formulaHelp && <FormulaHelp onInsert={(name, expr) => setFormulas((p) => [...p, { id: newId(), name, expr, savedName: '', savedExpr: '' }])} onClose={() => setFormulaHelp(false)} />}
 
       <FormulaChat
         factors={MID.map((id) => ({ id, label: METRICS[id].label, periods: METRICS[id].periods }))}
@@ -1155,6 +1161,99 @@ function FormulaSuggestion({ f, onInsert }: { f: { name: string; expr: string };
       {err ? <div className="ferr">{err}</div>
         : added ? <div className="fok">✓ добавлено в «Формулы» — проверьте и нажмите «Сохранить»</div>
         : <button type="button" className="btn sm" onClick={() => { onInsert(f.name, f.expr); setAdded(true); }}>Вставить в формулы</button>}
+    </div>
+  );
+}
+
+// Справка по разделу «Формулы»: что это, как пользоваться, синтаксис, таблица факторов/функций, семантика null
+// и готовые сложные примеры с кнопкой «Вставить» (кладёт черновик в список формул — остаётся проверить и «Сохранить»).
+function FormulaHelp({ onInsert, onClose }: { onInsert: (name: string, expr: string) => void; onClose: () => void }) {
+  const examples: { name: string; expr: string; note: string }[] = [
+    { name: 'mom3', expr: 'avg(momentum[21], momentum[63], momentum[126])', note: 'Композитный моментум: среднее по 3 горизонтам — сглаживает шум отдельного окна.' },
+    { name: 'mom_risk', expr: 'momentum[63] / vol[63]', note: 'Sharpe-подобное: доходность на единицу риска. Выше — качественнее рост.' },
+    { name: 'z_dip', expr: 'momentum[21] / vol[21] * sqrt(252)', note: 'Моментум 21д к ДНЕВНОЙ волатильности: vol годовая, поэтому ×√252 «разгодовляет» её до дневной.' },
+    { name: 'xvadj3', expr: 'avg(xvadj[21], xvadj[63], xvadj[126])', note: 'Превышение бенчмарка с поправкой на волатильность, усреднённое по горизонтам.' },
+    { name: 'mom_dd', expr: 'momentum[126] + dist_ath[0] * 0.5', note: 'Моментум со штрафом за просадку: dist_ath[0] ≤ 0, поэтому глубокий провал от максимума снижает счёт.' },
+    { name: 'dip', expr: 'rsi[14] + sma_dist[50]', note: 'Скор перепроданности: ниже — глубже провал у своей средней (кандидат на отскок).' },
+    { name: 'xb_risk', expr: 'xbench[63] / vol[63]', note: 'Риск-скорректированное превышение бенчмарка: превышение на единицу волатильности.' },
+    { name: 'mom_w', expr: '(momentum[21] * 3 + momentum[63] * 2 + momentum[126]) / 6', note: 'Взвешенный моментум: недавние окна важнее (веса 3-2-1).' },
+    { name: 'mom_all', expr: 'min(momentum[21], momentum[63], momentum[126])', note: 'Худший из горизонтов: условие «≥ 0» тогда требует роста НА ВСЕХ окнах сразу.' },
+  ];
+  return (
+    <div className="rsx">
+      <div className="rsx-scrim" onClick={onClose} />
+      <div className="rsx-modal wide fhelp" data-testid="formula-help">
+        <div className="dr-h">
+          <div style={{ fontSize: 15, fontWeight: 700 }}>Справка · как составлять формулы</div>
+          <span className="x" onClick={onClose}>✕</span>
+        </div>
+        <div className="md-b">
+          <section className="fh-s">
+            <h4>Что это</h4>
+            <p>Формула — своя вычисляемая метрика поверх факторов панели. Задаёте <b>имя</b> и <b>выражение</b> → после «Сохранить» она доступна и как <b>столбец</b> таблицы, и как <b>условие</b> отбора наравне с базовыми факторами.</p>
+          </section>
+          <section className="fh-s">
+            <h4>Как пользоваться</h4>
+            <ol>
+              <li>Нажмите «+ формула» и придумайте короткое <b>имя</b> латиницей (не совпадающее с фактором).</li>
+              <li>Впишите <b>выражение</b> из факторов и операторов (примеры ниже).</li>
+              <li>Нажмите <b>«Сохранить»</b> — формула проверится и сохранится в БД навсегда.</li>
+              <li>Добавьте её столбцом (карточка 4) или условием (карточка 2), напр. <code>mom3 ≥ 10</code>.</li>
+            </ol>
+          </section>
+          <section className="fh-s">
+            <h4>Синтаксис</h4>
+            <ul>
+              <li>Ссылка на фактор: <code>momentum[63]</code> или <code>momentum_63</code> — фактор и период в днях.</li>
+              <li>Операторы: <code>+ − × ÷</code> (можно <code>*</code> и <code>/</code>), скобки <code>( )</code>, унарный минус.</li>
+              <li>Функции: <code>avg, min, max, sum</code> (≥1 арг.), <code>abs, sqrt, log, sign</code> (1 арг.), <code>pow(x, y)</code>.</li>
+              <li>Числа-константы можно: <code>momentum[126] * 0.5</code>, <code>sqrt(252)</code>.</li>
+            </ul>
+          </section>
+          <section className="fh-s">
+            <h4>Доступные факторы</h4>
+            <table className="fh-tab">
+              <thead><tr><th>Фактор</th><th>Ключ</th><th>Периоды (дн.)</th><th>Ед.</th></tr></thead>
+              <tbody>
+                {Object.entries(METRICS).map(([id, m]) => (
+                  <tr key={id}><td>{m.label}</td><td><code>{id}</code></td><td>{m.periods.map((p) => (id === 'dist_ath' && p === 0 ? 'ATH' : p)).join(', ')}</td><td>{m.unit || '—'}</td></tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="sub" style={{ marginTop: 6 }}>Напоминание: <code>vol</code> — <b>годовая</b> волатильность (×√252); <code>xbench</code>/<code>xvadj</code> — в пп относительно бенчмарка; <code>dist_ath[0]</code> ≤ 0 (расстояние до исторического максимума).</p>
+          </section>
+          <section className="fh-s">
+            <h4>Пустые значения (null)</h4>
+            <p>Если хотя бы один фактор в выражении не определён (нет данных) — вся метрика становится <b>null</b>, и такая сделка <b>не проходит</b> условие. Деление на 0 и домен-ошибки (<code>sqrt</code> из отрицательного, <code>log</code> ≤ 0) тоже дают null.</p>
+          </section>
+          <section className="fh-s">
+            <h4>Готовые сложные формулы</h4>
+            <p className="sub" style={{ marginBottom: 8 }}>«Вставить» кладёт формулу черновиком в карточку 3 — останется проверить и «Сохранить».</p>
+            <div className="fh-ex">
+              {examples.map((ex) => <HelpExample key={ex.name} ex={ex} onInsert={onInsert} />)}
+            </div>
+          </section>
+        </div>
+        <div className="md-f">
+          <button type="button" className="btn ghost sm" onClick={onClose}>Закрыть</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Одна готовая формула в справке: имя = выражение, пояснение и кнопка «Вставить» (одноразовая).
+function HelpExample({ ex, onInsert }: { ex: { name: string; expr: string; note: string }; onInsert: (n: string, e: string) => void }) {
+  const [added, setAdded] = useState(false);
+  return (
+    <div className="fh-card">
+      <div className="fh-top">
+        <code className="fh-expr"><b>{ex.name}</b> = {ex.expr}</code>
+        {added
+          ? <span className="fok">✓ вставлено</span>
+          : <button type="button" className="btn sm" data-testid="formula-help-insert" onClick={() => { onInsert(ex.name, ex.expr); setAdded(true); }}>Вставить</button>}
+      </div>
+      <div className="fh-note">{ex.note}</div>
     </div>
   );
 }
