@@ -1,10 +1,11 @@
 import { libsqlClient } from '@/db/client';
 import { getFundamentals } from '@/lib/research/fundamentals';
-import { fmpGrades, fmpPriceTargetConsensus, fmpStockNews, fmpIncomeStatement, fmpProfile } from '@/lib/fmp';
+import { fmpGrades, fmpGradesHistorical, fmpPriceTargetConsensus, fmpStockNews, fmpIncomeStatement, fmpRatios, fmpProfile } from '@/lib/fmp';
+import { translateMany } from './translate';
 
-// Контентный слой «картина акции» для /ticker: грейды sell-side (история действий), консенсус-таргет,
-// фундаментал в динамике (квартальные revenue/маржа/EPS), лента новостей. Все коннекторы — кэш-первым
-// в libSQL (CREATE TABLE IF NOT EXISTS, created_at), с TTL-меткой; без ключа FMP — graceful (что в кэше).
+// Контентный слой «картина акции» для /ticker: грейды sell-side (лента действий + консенсус во времени),
+// консенсус-таргет, фундаментал в динамике (много метрик, длинный формат для графика по любой), лента
+// новостей. Описание/новости переводятся на русский (кэш). Кэш-первым в libSQL; без ключа — graceful.
 
 let ensured = false;
 async function ensureTables(): Promise<void> {
@@ -24,11 +25,15 @@ async function ensureTables(): Promise<void> {
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (symbol, date, title)
   )`);
-  await libsqlClient.execute(`CREATE TABLE IF NOT EXISTS ticker_income (
-    symbol TEXT NOT NULL, date TEXT NOT NULL, period TEXT, revenue REAL, gross_profit REAL,
-    operating_income REAL, net_income REAL, eps REAL,
+  await libsqlClient.execute(`CREATE TABLE IF NOT EXISTS ticker_consensus (
+    symbol TEXT NOT NULL, date TEXT NOT NULL, sb INTEGER, b INTEGER, h INTEGER, s INTEGER, ss INTEGER,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (symbol, date)
+  )`);
+  await libsqlClient.execute(`CREATE TABLE IF NOT EXISTS ticker_metrics (
+    symbol TEXT NOT NULL, date TEXT NOT NULL, key TEXT NOT NULL, value REAL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (symbol, date, key)
   )`);
   await libsqlClient.execute(`CREATE TABLE IF NOT EXISTS ticker_insight_meta (
     symbol TEXT NOT NULL, kind TEXT NOT NULL, fetched_at TEXT NOT NULL,
@@ -36,7 +41,6 @@ async function ensureTables(): Promise<void> {
   )`);
   ensured = true;
 }
-
 async function isFresh(sym: string, kind: string, ttlMs: number): Promise<boolean> {
   const r = await libsqlClient.execute({ sql: `SELECT fetched_at FROM ticker_insight_meta WHERE symbol=? AND kind=?`, args: [sym, kind] });
   const at = (r.rows[0] as any)?.fetched_at;
@@ -83,7 +87,7 @@ export async function getGrades(symbol: string): Promise<GradeRow[]> {
       const stmts = arr.map((g) => {
         const date = String(g.date ?? g.publishedDate ?? '').slice(0, 10);
         const firm = str(g.gradingCompany ?? g.analystCompany ?? g.company) ?? '—';
-        const from = str(g.previousGrade ?? g.priceWhenPosted ?? g.previousGradeText);
+        const from = str(g.previousGrade ?? g.previousGradeText);
         const to = str(g.newGrade ?? g.newGradeText ?? g.grade);
         const action = deriveAction(str(g.action), from, to);
         return date ? {
@@ -98,6 +102,34 @@ export async function getGrades(symbol: string): Promise<GradeRow[]> {
   }
   const res = await libsqlClient.execute({ sql: `SELECT date,firm,action,from_grade,to_grade FROM ticker_grades WHERE symbol=? ORDER BY date DESC LIMIT 60`, args: [sym] });
   return res.rows.map((r: any) => ({ date: String(r.date), firm: String(r.firm), action: String(r.action) as GradeRow['action'], from: r.from_grade != null ? String(r.from_grade) : null, to: r.to_grade != null ? String(r.to_grade) : null }));
+}
+
+/* ----------------------------- консенсус аналитиков во времени ----------------------------- */
+export type ConsensusRow = { date: string; sb: number; b: number; h: number; s: number; ss: number };
+export async function getConsensus(symbol: string): Promise<ConsensusRow[]> {
+  await ensureTables();
+  const sym = symbol.toUpperCase();
+  if (hasKey() && !(await isFresh(sym, 'consensus', 12 * 3600e3))) {
+    try {
+      const data: any = await fmpGradesHistorical(sym);
+      const arr: any[] = Array.isArray(data) ? data : [];
+      const now = new Date().toISOString();
+      const stmts = arr.map((c) => {
+        const date = String(c.date ?? '').slice(0, 10);
+        if (!date) return null;
+        const g = (a: any, b: any) => num(a) ?? num(b) ?? 0;
+        return {
+          sql: `INSERT INTO ticker_consensus (symbol,date,sb,b,h,s,ss,created_at) VALUES (?,?,?,?,?,?,?,?)
+                ON CONFLICT(symbol,date) DO UPDATE SET sb=excluded.sb, b=excluded.b, h=excluded.h, s=excluded.s, ss=excluded.ss`,
+          args: [sym, date, g(c.analystRatingsStrongBuy, c.strongBuy), g(c.analystRatingsBuy, c.buy), g(c.analystRatingsHold, c.hold), g(c.analystRatingsSell, c.sell), g(c.analystRatingsStrongSell, c.strongSell), now],
+        };
+      }).filter(Boolean) as { sql: string; args: any[] }[];
+      if (stmts.length) await libsqlClient.batch(stmts);
+      await markFetched(sym, 'consensus');
+    } catch { /* graceful */ }
+  }
+  const res = await libsqlClient.execute({ sql: `SELECT date,sb,b,h,s,ss FROM ticker_consensus WHERE symbol=? ORDER BY date ASC LIMIT 60`, args: [sym] });
+  return res.rows.map((r: any) => ({ date: String(r.date), sb: Number(r.sb || 0), b: Number(r.b || 0), h: Number(r.h || 0), s: Number(r.s || 0), ss: Number(r.ss || 0) }));
 }
 
 /* ----------------------------- консенсус-таргет ----------------------------- */
@@ -152,35 +184,77 @@ export async function getNews(symbol: string): Promise<NewsRow[]> {
   return res.rows.map((r: any) => ({ date: String(r.date), title: String(r.title), site: r.site != null ? String(r.site) : null, url: r.url != null ? String(r.url) : null, snippet: r.snippet != null ? String(r.snippet) : null }));
 }
 
-/* ----------------------------- фундаментал в динамике ----------------------------- */
-export type IncomeRow = { date: string; period: string | null; revenue: number | null; grossMargin: number | null; opMargin: number | null; netMargin: number | null; eps: number | null };
-export async function getIncome(symbol: string): Promise<IncomeRow[]> {
+/* ----------------------------- фундаментал: много метрик, график по любой ----------------------------- */
+export type MetricUnit = 'usd' | 'pct' | 'x';
+export type MetricSeries = { key: string; label: string; group: string; unit: MetricUnit; values: (number | null)[] };
+export type FundaData = { dates: string[]; metrics: MetricSeries[] };
+const METRIC_DEFS: { key: string; label: string; group: string; unit: MetricUnit }[] = [
+  { key: 'revenue', label: 'Выручка', group: 'Доходы', unit: 'usd' },
+  { key: 'grossProfit', label: 'Валовая прибыль', group: 'Доходы', unit: 'usd' },
+  { key: 'operatingIncome', label: 'Опер. прибыль', group: 'Доходы', unit: 'usd' },
+  { key: 'netIncome', label: 'Чистая прибыль', group: 'Доходы', unit: 'usd' },
+  { key: 'ebitda', label: 'EBITDA', group: 'Доходы', unit: 'usd' },
+  { key: 'eps', label: 'EPS', group: 'Доходы', unit: 'usd' },
+  { key: 'rd', label: 'R&D (НИОКР)', group: 'Расходы', unit: 'usd' },
+  { key: 'sga', label: 'SG&A', group: 'Расходы', unit: 'usd' },
+  { key: 'grossMargin', label: 'Валовая маржа', group: 'Маржа', unit: 'pct' },
+  { key: 'opMargin', label: 'Опер. маржа', group: 'Маржа', unit: 'pct' },
+  { key: 'netMargin', label: 'Чистая маржа', group: 'Маржа', unit: 'pct' },
+  { key: 'roe', label: 'ROE', group: 'Возврат', unit: 'pct' },
+  { key: 'roa', label: 'ROA', group: 'Возврат', unit: 'pct' },
+  { key: 'roic', label: 'ROIC', group: 'Возврат', unit: 'pct' },
+  { key: 'pe', label: 'P/E', group: 'Оценка', unit: 'x' },
+  { key: 'ps', label: 'P/S', group: 'Оценка', unit: 'x' },
+  { key: 'pb', label: 'P/B', group: 'Оценка', unit: 'x' },
+  { key: 'debtEquity', label: 'Долг/капитал', group: 'Долг', unit: 'x' },
+  { key: 'currentRatio', label: 'Тек. ликвидность', group: 'Долг', unit: 'x' },
+  { key: 'fcfPerShare', label: 'FCF на акцию', group: 'Кэш', unit: 'usd' },
+  { key: 'dividendYield', label: 'Див. доходность', group: 'Кэш', unit: 'pct' },
+];
+export async function getFunda(symbol: string): Promise<FundaData> {
   await ensureTables();
   const sym = symbol.toUpperCase();
-  if (hasKey() && !(await isFresh(sym, 'income', 24 * 3600e3))) {
+  if (hasKey() && !(await isFresh(sym, 'metrics', 24 * 3600e3))) {
     try {
-      const data: any = await fmpIncomeStatement(sym, 'quarter', 24);
-      const arr: any[] = Array.isArray(data) ? data : [];
+      const [inc, rat]: any[] = await Promise.all([
+        fmpIncomeStatement(sym, 'quarter', 24).catch(() => []),
+        fmpRatios(sym, 'quarter', 24).catch(() => []),
+      ]);
       const now = new Date().toISOString();
-      const stmts = arr.map((s) => {
-        const date = String(s.date ?? '').slice(0, 10);
-        if (!date) return null;
-        return {
-          sql: `INSERT INTO ticker_income (symbol,date,period,revenue,gross_profit,operating_income,net_income,eps,created_at) VALUES (?,?,?,?,?,?,?,?,?)
-                ON CONFLICT(symbol,date) DO UPDATE SET period=excluded.period, revenue=excluded.revenue, gross_profit=excluded.gross_profit, operating_income=excluded.operating_income, net_income=excluded.net_income, eps=excluded.eps`,
-          args: [sym, date, str(s.period), num(s.revenue), num(s.grossProfit), num(s.operatingIncome), num(s.netIncome), num(s.eps ?? s.epsdiluted ?? s.epsDiluted), now],
-        };
-      }).filter(Boolean) as { sql: string; args: any[] }[];
-      if (stmts.length) await libsqlClient.batch(stmts);
-      await markFetched(sym, 'income');
+      const stmts: { sql: string; args: any[] }[] = [];
+      const put = (date: string, key: string, v: number | null) => {
+        if (!date || v == null) return;
+        stmts.push({ sql: `INSERT INTO ticker_metrics (symbol,date,key,value,created_at) VALUES (?,?,?,?,?) ON CONFLICT(symbol,date,key) DO UPDATE SET value=excluded.value`, args: [sym, date, key, v, now] });
+      };
+      for (const s of Array.isArray(inc) ? inc : []) {
+        const d = String(s.date ?? '').slice(0, 10);
+        put(d, 'revenue', num(s.revenue)); put(d, 'grossProfit', num(s.grossProfit)); put(d, 'operatingIncome', num(s.operatingIncome));
+        put(d, 'netIncome', num(s.netIncome)); put(d, 'ebitda', num(s.ebitda)); put(d, 'eps', num(s.eps ?? s.epsdiluted ?? s.epsDiluted));
+        put(d, 'rd', num(s.researchAndDevelopmentExpenses)); put(d, 'sga', num(s.sellingGeneralAndAdministrativeExpenses));
+      }
+      for (const s of Array.isArray(rat) ? rat : []) {
+        const d = String(s.date ?? '').slice(0, 10);
+        put(d, 'grossMargin', num(s.grossProfitMargin)); put(d, 'opMargin', num(s.operatingProfitMargin ?? s.operatingIncomeRatio)); put(d, 'netMargin', num(s.netProfitMargin ?? s.netIncomeRatio));
+        put(d, 'roe', num(s.returnOnEquity)); put(d, 'roa', num(s.returnOnAssets)); put(d, 'roic', num(s.returnOnCapitalEmployed ?? s.returnOnInvestedCapital));
+        put(d, 'pe', num(s.priceEarningsRatio ?? s.priceToEarningsRatio)); put(d, 'ps', num(s.priceToSalesRatio ?? s.priceSalesRatio)); put(d, 'pb', num(s.priceToBookRatio ?? s.priceBookValueRatio));
+        put(d, 'debtEquity', num(s.debtEquityRatio ?? s.debtToEquityRatio ?? s.debtToEquity)); put(d, 'currentRatio', num(s.currentRatio));
+        put(d, 'fcfPerShare', num(s.freeCashFlowPerShare)); put(d, 'dividendYield', num(s.dividendYield));
+      }
+      for (let i = 0; i < stmts.length; i += 200) await libsqlClient.batch(stmts.slice(i, i + 200));
+      await markFetched(sym, 'metrics');
     } catch { /* graceful */ }
   }
-  const res = await libsqlClient.execute({ sql: `SELECT date,period,revenue,gross_profit,operating_income,net_income,eps FROM ticker_income WHERE symbol=? ORDER BY date ASC LIMIT 24`, args: [sym] });
-  return res.rows.map((r: any) => {
-    const rev = num(r.revenue);
-    const m = (x: any) => (rev && num(x) != null ? (num(x) as number) / rev : null);
-    return { date: String(r.date), period: r.period != null ? String(r.period) : null, revenue: rev, grossMargin: m(r.gross_profit), opMargin: m(r.operating_income), netMargin: m(r.net_income), eps: num(r.eps) };
-  });
+  const res = await libsqlClient.execute({ sql: `SELECT date,key,value FROM ticker_metrics WHERE symbol=? ORDER BY date ASC`, args: [sym] });
+  const byDate = new Map<string, Record<string, number>>();
+  for (const r of res.rows as any[]) {
+    const d = String(r.date); if (!byDate.has(d)) byDate.set(d, {});
+    (byDate.get(d) as Record<string, number>)[String(r.key)] = Number(r.value);
+  }
+  const dates = [...byDate.keys()].sort().slice(-24);
+  const metrics: MetricSeries[] = METRIC_DEFS
+    .map((def) => ({ ...def, values: dates.map((d) => { const v = byDate.get(d)?.[def.key]; return v == null || !Number.isFinite(v) ? null : v; }) }))
+    .filter((m) => m.values.some((v) => v != null));
+  return { dates, metrics };
 }
 
 /* ----------------------------- профиль-досье ----------------------------- */
@@ -215,19 +289,34 @@ async function getProfile(symbol: string): Promise<Profile | null> {
   } : null;
 }
 
-/* ----------------------------- аггрегатор ----------------------------- */
+/* ----------------------------- аггрегатор (+ перевод описания/новостей) ----------------------------- */
 export type TickerInsight = {
   symbol: string;
   profile: Profile | null;
   grades: GradeRow[];
+  consensus: ConsensusRow[];
   target: Target | null;
-  income: IncomeRow[];
+  funda: FundaData;
   news: NewsRow[];
 };
 export async function getTickerInsight(symbol: string): Promise<TickerInsight> {
   const sym = symbol.toUpperCase().trim();
-  const [profile, grades, target, income, news] = await Promise.all([
-    getProfile(sym), getGrades(sym), getPriceTarget(sym), getIncome(sym), getNews(sym),
+  const [profile, grades, consensus, target, funda, news] = await Promise.all([
+    getProfile(sym), getGrades(sym), getConsensus(sym), getPriceTarget(sym), getFunda(sym), getNews(sym),
   ]);
-  return { symbol: sym, profile, grades, target, income, news };
+  // Перевод на русский: описание компании + заголовки/сниппеты новостей (кэш, graceful).
+  try {
+    const texts: string[] = [];
+    if (profile?.description) texts.push(profile.description);
+    for (const n of news) { if (n.title) texts.push(n.title); if (n.snippet) texts.push(n.snippet); }
+    if (texts.length) {
+      const ru = await translateMany(texts);
+      if (profile?.description) profile.description = ru.get(profile.description) || profile.description;
+      for (const n of news) {
+        if (n.title) n.title = ru.get(n.title) || n.title;
+        if (n.snippet) n.snippet = ru.get(n.snippet) || n.snippet;
+      }
+    }
+  } catch { /* перевод не обязателен */ }
+  return { symbol: sym, profile, grades, consensus, target, funda, news };
 }

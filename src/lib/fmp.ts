@@ -66,6 +66,13 @@ export async function fmpIncomeStatement(symbol: string, period: 'quarter' | 'an
   return fmpGet(`${BASE_STABLE}/income-statement?symbol=${encodeURIComponent(symbol)}&period=${period}&limit=${encodeURIComponent(limit)}&apikey=${encodeURIComponent(key)}`);
 }
 
+// Финансовые коэффициенты (маржа/возврат/оценка/долг во времени): grossProfitMargin, netProfitMargin,
+// returnOnEquity, priceEarningsRatio, priceToSalesRatio, debtEquityRatio, freeCashFlowPerShare и т.д.
+export async function fmpRatios(symbol: string, period: 'quarter' | 'annual' = 'quarter', limit = 24) {
+  const key = getFmpKey();
+  return fmpGet(`${BASE_STABLE}/ratios?symbol=${encodeURIComponent(symbol)}&period=${period}&limit=${encodeURIComponent(limit)}&apikey=${encodeURIComponent(key)}`);
+}
+
 // Историческая дневная цена закрытия (light: symbol, date, price, volume).
 // Возвращает массив, обычно отсортирован по убыванию даты.
 export async function fmpHistoricalPriceEod(symbol: string, from?: string, to?: string) {

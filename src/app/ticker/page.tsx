@@ -16,7 +16,7 @@ import {
   type BinCfg, type BinResult, type Bin, type BinUnit,
 } from '@/lib/ticker/engine';
 import type { TickerPanel } from '@/lib/ticker/panel';
-import type { TickerInsight, GradeRow, IncomeRow } from '@/lib/ticker/insight';
+import type { TickerInsight, GradeRow, MetricSeries, ConsensusRow } from '@/lib/ticker/insight';
 
 const pct = (x: number, d = 1) => (x >= 0 ? '+' : '') + (x * 100).toFixed(d) + '%';
 const pctRaw = (x: number, d = 1) => (x * 100).toFixed(d) + '%';
@@ -510,6 +510,7 @@ function AnalystTab({ insight, panel }: { insight: TickerInsight | null; panel: 
   return (
     <>
       {bar}
+      <ConsensusPanel rows={insight.consensus} />
       <div className="card">
         <h2><span className="ht">Рейтинговые действия аналитиков</span> <span className="badge">за 90д: <span className="pos">+{up90}</span> / <span className="neg">−{dn90}</span></span></h2>
         <p className="desc">История апгрейдов/даунгрейдов инвестбанков по тикеру (самые свежие сверху).</p>
@@ -535,58 +536,157 @@ function GradeItem({ g }: { g: GradeRow }) {
   );
 }
 
+function fmtMetric(v: number | null, unit: MetricSeries['unit']): string {
+  if (v == null) return '—';
+  if (unit === 'pct') return pctRaw(v, 1);
+  if (unit === 'x') return v.toFixed(2) + '×';
+  return Math.abs(v) >= 1000 ? fmtBig(v) : v.toFixed(2);
+}
+function curVal(m: MetricSeries): { v: number; i: number } | null {
+  for (let i = m.values.length - 1; i >= 0; i--) if (m.values[i] != null) return { v: m.values[i] as number, i };
+  return null;
+}
+function yoyOf(m: MetricSeries): number | null {
+  const c = curVal(m); if (!c || c.i < 4) return null;
+  const p = m.values[c.i - 4]; return p != null && p !== 0 ? c.v / (p as number) - 1 : null;
+}
 function FundaTab({ insight }: { insight: TickerInsight | null }) {
+  const [sel, setSel] = useState('revenue');
   if (!insight) return <EmptyTab msg="Загрузка фундаментала…" />;
-  const rows = insight.income;
-  if (!rows.length) return <EmptyTab msg="Нет фундаментальных данных (нужен ключ FMP или нет покрытия по тикеру)." />;
-  const rev = rows.map((r) => r.revenue ?? 0);
-  const maxRev = Math.max(1, ...rev.map((x) => Math.abs(x)));
-  const yoy = (i: number, key: keyof IncomeRow) => {
-    const cur = rows[i][key] as number | null, prev = i >= 4 ? (rows[i - 4][key] as number | null) : null;
-    return cur != null && prev != null && prev !== 0 ? cur / prev - 1 : null;
-  };
-  const lastN = rows.slice(-8).reverse();
-  const li = rows.length - 1;
+  const f = insight.funda;
+  if (!f || !f.dates.length || !f.metrics.length) return <EmptyTab msg="Нет фундаментальных данных (нужен ключ FMP или нет покрытия по тикеру)." />;
+  const chosen = f.metrics.find((m) => m.key === sel) || f.metrics[0];
+  const groups = [...new Set(f.metrics.map((m) => m.group))];
   return (
     <div className="card">
-      <h2><span className="ht">Фундаментал в динамике</span> <span className="badge">{rows.length} кварталов</span></h2>
-      <p className="desc">Выручка по кварталам и тренд маржи/EPS. YoY — к тому же кварталу год назад.</p>
-      <div className="fbars">
-        {rows.map((r, i) => (
-          <div key={i} className="fbar" title={`${r.date}: выручка ${fmtBig(r.revenue)}${yoy(i, 'revenue') != null ? ' · YoY ' + pct(yoy(i, 'revenue') as number) : ''}`}>
-            <span className="fb" style={{ height: clamp(Math.abs(r.revenue ?? 0) / maxRev * 60, 2, 60), background: 'var(--tk-blue)' }} />
+      <h2><span className="ht">Фундаментал в динамике</span> <span className="badge">{f.metrics.length} метрик · {f.dates.length} кв.</span></h2>
+      <p className="desc">Клик по метрике ниже — большой график по кварталам. YoY — к тому же кварталу год назад.</p>
+      <MetricChart m={chosen} dates={f.dates} />
+      {groups.map((g) => (
+        <div key={g} className="mgroup">
+          <div className="mgroup-h">{g}</div>
+          <div className="metricgrid">
+            {f.metrics.filter((m) => m.group === g).map((m) => {
+              const c = curVal(m), y = yoyOf(m);
+              return (
+                <button key={m.key} className={'mcard' + (m.key === chosen.key ? ' on' : '')} onClick={() => setSel(m.key)}>
+                  <div className="mc-label">{m.label}</div>
+                  <div className="mc-val">{c ? fmtMetric(c.v, m.unit) : '—'}</div>
+                  <div className="mc-sub">
+                    <MiniSpark values={m.values} unit={m.unit} />
+                    {y != null ? <span className={y >= 0 ? 'pos' : 'neg'}>{pct(y, 0)}</span> : null}
+                  </div>
+                </button>
+              );
+            })}
           </div>
-        ))}
-      </div>
-      <div className="row" style={{ gap: 18, marginTop: 8, flexWrap: 'wrap' }}>
-        <KPI k="Выручка (посл.кв)" v={fmtBig(rows[li].revenue)} sub={yoy(li, 'revenue') != null ? 'YoY ' + pct(yoy(li, 'revenue') as number) : ''} subPos={(yoy(li, 'revenue') ?? 0) >= 0} />
-        <KPI k="EPS (посл.кв)" v={rows[li].eps != null ? (rows[li].eps as number).toFixed(2) : '—'} sub={yoy(li, 'eps') != null ? 'YoY ' + pct(yoy(li, 'eps') as number) : ''} subPos={(yoy(li, 'eps') ?? 0) >= 0} />
-        <KPI k="Чистая маржа" v={rows[li].netMargin != null ? pctRaw(rows[li].netMargin as number, 1) : '—'} sub="" subPos />
-        <KPI k="Опер. маржа" v={rows[li].opMargin != null ? pctRaw(rows[li].opMargin as number, 1) : '—'} sub="" subPos />
-      </div>
-      <table style={{ marginTop: 12 }}>
-        <tbody>
-          <tr><th className="l">Квартал</th><th>выручка</th><th>YoY</th><th>EPS</th><th>чист. маржа</th></tr>
-          {lastN.map((r, k) => {
-            const i = rows.indexOf(r);
-            const y = yoy(i, 'revenue');
-            return (
-              <tr key={k}>
-                <td className="l">{r.date}{r.period ? ' · ' + r.period : ''}</td>
-                <td>{fmtBig(r.revenue)}</td>
-                <td className={y == null ? 'mut' : (y >= 0 ? 'pos' : 'neg')}>{y == null ? '—' : pct(y)}</td>
-                <td>{r.eps != null ? r.eps.toFixed(2) : '—'}</td>
-                <td className="mut">{r.netMargin != null ? pctRaw(r.netMargin, 1) : '—'}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+        </div>
+      ))}
     </div>
   );
 }
-function KPI({ k, v, sub, subPos }: { k: string; v: string; sub: string; subPos: boolean }) {
-  return <div className="stat" style={{ minWidth: 120 }}><div className="k">{k}</div><div className="v">{v}</div>{sub ? <div className={'p ' + (subPos ? 'pos' : 'neg')}>{sub}</div> : null}</div>;
+function MiniSpark({ values, unit }: { values: (number | null)[]; unit: MetricSeries['unit'] }) {
+  const pts = values.map((v, i) => ({ v, i })).filter((p) => p.v != null) as { v: number; i: number }[];
+  if (pts.length < 2) return <span className="mut" style={{ fontSize: 10 }}>—</span>;
+  const w = 60, h = 16, lo = Math.min(...pts.map((p) => p.v)), hi = Math.max(...pts.map((p) => p.v));
+  const n = values.length;
+  const x = (i: number) => (n <= 1 ? 0 : (i / (n - 1)) * w);
+  const y = (v: number) => hi === lo ? h / 2 : h - ((v - lo) / (hi - lo)) * h;
+  const up = pts[pts.length - 1].v >= pts[0].v;
+  const d = pts.map((p, k) => (k ? 'L' : 'M') + x(p.i).toFixed(1) + ' ' + y(p.v).toFixed(1)).join(' ');
+  return <svg width={w} height={h} style={{ display: 'inline-block', verticalAlign: 'middle' }}><path d={d} fill="none" stroke={up ? 'var(--tk-up)' : 'var(--tk-down)'} strokeWidth="1.2" /></svg>;
+}
+function MetricChart({ m, dates }: { m: MetricSeries; dates: string[] }) {
+  const W = 760, H = 210, pad = { l: 52, r: 8, t: 12, b: 22 };
+  const c = curVal(m), y = yoyOf(m);
+  const nums = m.values.filter((v): v is number => v != null);
+  if (!nums.length) return null;
+  let lo = Math.min(...nums, m.unit === 'usd' ? 0 : nums[0]), hi = Math.max(...nums, m.unit === 'usd' ? 0 : nums[0]);
+  if (lo === hi) { hi = lo + Math.abs(lo || 1) * 0.1 + 1; }
+  const n = dates.length;
+  const X = (i: number) => pad.l + (n <= 1 ? 0 : (i / (n - 1)) * (W - pad.l - pad.r));
+  const Y = (v: number) => pad.t + (1 - (v - lo) / (hi - lo)) * (H - pad.t - pad.b);
+  const isBar = m.unit === 'usd';
+  const bw = Math.max(2, (W - pad.l - pad.r) / Math.max(1, n) * 0.66);
+  const yticks = [0, 0.5, 1].map((t) => { const v = lo + t * (hi - lo); return { v, y: Y(v) }; });
+  let lastYear = '';
+  const xticks = dates.map((d, i) => ({ d, i })).filter(({ d, i }) => { const yr = d.slice(0, 4); if (yr !== lastYear) { lastYear = yr; return true; } return false; });
+  const linePath = m.values.map((v, i) => v == null ? null : { x: X(i), y: Y(v) }).filter(Boolean) as { x: number; y: number }[];
+  return (
+    <div>
+      <div className="row" style={{ gap: 10, alignItems: 'baseline', marginBottom: 2 }}>
+        <b style={{ fontSize: 14 }}>{m.label}</b>
+        <span style={{ fontSize: 16, fontWeight: 700 }}>{c ? fmtMetric(c.v, m.unit) : '—'}</span>
+        {y != null ? <span className={'small ' + (y >= 0 ? 'pos' : 'neg')}>YoY {pct(y)}</span> : null}
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%' }}>
+        {yticks.map((t, k) => <g key={k}><line x1={pad.l} y1={t.y} x2={W - pad.r} y2={t.y} stroke="var(--tk-line)" /><text x="2" y={t.y + 3} fontSize="9" fill="var(--tk-soft)">{fmtMetric(t.v, m.unit)}</text></g>)}
+        {xticks.map((t, k) => <text key={k} x={X(t.i)} y={H - 6} fontSize="9" fill="var(--tk-soft)">{t.d.slice(0, 4)}</text>)}
+        {isBar
+          ? m.values.map((v, i) => v == null ? null : <rect key={i} x={X(i) - bw / 2} y={Math.min(Y(v), Y(0))} width={bw} height={Math.abs(Y(v) - Y(0))} rx="1" fill={v >= 0 ? 'var(--tk-blue)' : 'var(--tk-down)'} opacity="0.9"><title>{dates[i]}: {fmtMetric(v, m.unit)}</title></rect>)
+          : <path d={linePath.map((p, k) => (k ? 'L' : 'M') + p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join(' ')} fill="none" stroke="var(--app-acc-2)" strokeWidth="1.6" />}
+        {!isBar && linePath.map((p, k) => <circle key={k} cx={p.x} cy={p.y} r="1.6" fill="var(--app-acc-2)" />)}
+      </svg>
+    </div>
+  );
+}
+function ConsensusPanel({ rows }: { rows: ConsensusRow[] }) {
+  if (!rows.length) return null;
+  const last = rows[rows.length - 1];
+  const tot = last.sb + last.b + last.h + last.s + last.ss;
+  if (!tot) return null;
+  const score = (last.sb * 5 + last.b * 4 + last.h * 3 + last.s * 2 + last.ss * 1) / tot;
+  const buyPct = (last.sb + last.b) / tot, sellPct = (last.s + last.ss) / tot;
+  const label = score >= 4.2 ? 'Strong Buy' : score >= 3.5 ? 'Buy' : score >= 2.5 ? 'Hold' : score >= 1.8 ? 'Sell' : 'Strong Sell';
+  // Δ балла ~ год назад
+  const cutoff = (Number(last.date.slice(0, 4)) - 1) + last.date.slice(4);
+  const yrAgo = rows.filter((r) => r.date <= cutoff).slice(-1)[0];
+  const yrScore = yrAgo && (yrAgo.sb + yrAgo.b + yrAgo.h + yrAgo.s + yrAgo.ss) ? (yrAgo.sb * 5 + yrAgo.b * 4 + yrAgo.h * 3 + yrAgo.s * 2 + yrAgo.ss * 1) / (yrAgo.sb + yrAgo.b + yrAgo.h + yrAgo.s + yrAgo.ss) : null;
+  const dScore = yrScore != null ? score - yrScore : null;
+  const seg = [
+    { n: last.sb, c: '#16a34a', l: 'Strong Buy' }, { n: last.b, c: '#4ade80', l: 'Buy' },
+    { n: last.h, c: '#94a3b8', l: 'Hold' }, { n: last.s, c: '#f59e0b', l: 'Sell' }, { n: last.ss, c: '#dc2626', l: 'Strong Sell' },
+  ];
+  // тренд: доли buy/hold/sell по времени (stacked area 0..100%)
+  const W = 760, H = 90, pad = { l: 4, r: 4, t: 6, b: 14 };
+  const n = rows.length;
+  const X = (i: number) => pad.l + (n <= 1 ? 0 : (i / (n - 1)) * (W - pad.l - pad.r));
+  const Yb = (share: number) => pad.t + (1 - share) * (H - pad.t - pad.b);
+  const shares = rows.map((r) => { const t = r.sb + r.b + r.h + r.s + r.ss || 1; return { buy: (r.sb + r.b) / t, hold: r.h / t, sell: (r.s + r.ss) / t }; });
+  const band = (top: (s: { buy: number; hold: number; sell: number }) => number, bot: (s: { buy: number; hold: number; sell: number }) => number) => {
+    const up = shares.map((s, i) => `${X(i).toFixed(1)} ${Yb(top(s)).toFixed(1)}`);
+    const dn = shares.map((s, i) => `${X(i).toFixed(1)} ${Yb(bot(s)).toFixed(1)}`).reverse();
+    return 'M' + up.join(' L') + ' L' + dn.join(' L') + ' Z';
+  };
+  let lastYear = '';
+  const xticks = rows.map((r, i) => ({ r, i })).filter(({ r }) => { const yr = r.date.slice(0, 4); if (yr !== lastYear) { lastYear = yr; return true; } return false; });
+  return (
+    <div className="card">
+      <h2><span className="ht">Мнение аналитиков — совокупно</span> <span className="badge">{tot} аналитиков</span></h2>
+      <p className="desc">Распределение рекомендаций сейчас и как оно менялось. Средний балл 1 (Sell) … 5 (Buy).</p>
+      <div className="row" style={{ gap: 24, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
+        <div><div className="k" style={{ fontSize: 10, color: 'var(--tk-soft)', fontWeight: 700 }}>СРЕДНИЙ БАЛЛ</div>
+          <div style={{ fontSize: 22, fontWeight: 800 }}>{score.toFixed(2)} <span style={{ fontSize: 13, color: score >= 3.5 ? 'var(--tk-up)' : score >= 2.5 ? 'var(--tk-mut)' : 'var(--tk-down)' }}>{label}</span></div>
+          {dScore != null ? <div className="small">за год <span className={dScore >= 0 ? 'pos' : 'neg'}>{dScore >= 0 ? '+' : ''}{dScore.toFixed(2)}</span></div> : null}</div>
+        <div className="small">Покупать <b className="pos">{Math.round(buyPct * 100)}%</b> · Держать <b>{Math.round((last.h / tot) * 100)}%</b> · Продавать <b className="neg">{Math.round(sellPct * 100)}%</b></div>
+      </div>
+      <div className="distbar">
+        {seg.map((s, i) => s.n > 0 ? <span key={i} className="ds" title={`${s.l}: ${s.n}`} style={{ width: (s.n / tot * 100) + '%', background: s.c }}>{s.n / tot > 0.06 ? s.n : ''}</span> : null)}
+      </div>
+      <div className="distlegend">{seg.map((s, i) => <span key={i}><i style={{ background: s.c }} />{s.l} {s.n}</span>)}</div>
+      {rows.length >= 3 ? (
+        <>
+          <div className="small" style={{ margin: '10px 0 2px', color: 'var(--tk-soft)' }}>Динамика долей (зелёный — покупать, серый — держать, красный — продавать):</div>
+          <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%' }}>
+            <path d={band(() => 1, (s) => s.hold + s.sell)} fill="var(--tk-up)" opacity="0.55" />
+            <path d={band((s) => s.hold + s.sell, (s) => s.sell)} fill="var(--tk-soft)" opacity="0.5" />
+            <path d={band((s) => s.sell, () => 0)} fill="var(--tk-down)" opacity="0.55" />
+            {xticks.map((t, k) => <text key={k} x={X(t.i)} y={H - 3} fontSize="9" fill="var(--tk-soft)">{t.r.date.slice(0, 4)}</text>)}
+          </svg>
+        </>
+      ) : null}
+    </div>
+  );
 }
 
 function NewsTab({ insight }: { insight: TickerInsight | null }) {
