@@ -76,10 +76,10 @@ function deriveAction(actionRaw: string | null, from: string | null, to: string 
   if (rf != null && rt != null) { if (rt > rf) return 'up'; if (rt < rf) return 'down'; }
   return 'maintain';
 }
-export async function getGrades(symbol: string): Promise<GradeRow[]> {
+export async function getGrades(symbol: string, force = false): Promise<GradeRow[]> {
   await ensureTables();
   const sym = symbol.toUpperCase();
-  if (hasKey() && !(await isFresh(sym, 'grades', 12 * 3600e3))) {
+  if (hasKey() && (force || !(await isFresh(sym, 'grades', 12 * 3600e3)))) {
     try {
       const data: any = await fmpGrades(sym);
       const arr: any[] = Array.isArray(data) ? data : [];
@@ -106,10 +106,10 @@ export async function getGrades(symbol: string): Promise<GradeRow[]> {
 
 /* ----------------------------- консенсус аналитиков во времени ----------------------------- */
 export type ConsensusRow = { date: string; sb: number; b: number; h: number; s: number; ss: number };
-export async function getConsensus(symbol: string): Promise<ConsensusRow[]> {
+export async function getConsensus(symbol: string, force = false): Promise<ConsensusRow[]> {
   await ensureTables();
   const sym = symbol.toUpperCase();
-  if (hasKey() && !(await isFresh(sym, 'consensus', 12 * 3600e3))) {
+  if (hasKey() && (force || !(await isFresh(sym, 'consensus', 12 * 3600e3)))) {
     try {
       const data: any = await fmpGradesHistorical(sym);
       const arr: any[] = Array.isArray(data) ? data : [];
@@ -134,10 +134,10 @@ export async function getConsensus(symbol: string): Promise<ConsensusRow[]> {
 
 /* ----------------------------- консенсус-таргет ----------------------------- */
 export type Target = { high: number | null; low: number | null; consensus: number | null; median: number | null };
-export async function getPriceTarget(symbol: string): Promise<Target | null> {
+export async function getPriceTarget(symbol: string, force = false): Promise<Target | null> {
   await ensureTables();
   const sym = symbol.toUpperCase();
-  if (hasKey() && !(await isFresh(sym, 'target', 12 * 3600e3))) {
+  if (hasKey() && (force || !(await isFresh(sym, 'target', 12 * 3600e3)))) {
     try {
       const data: any = await fmpPriceTargetConsensus(sym);
       const o = Array.isArray(data) ? data[0] : data;
@@ -158,10 +158,10 @@ export async function getPriceTarget(symbol: string): Promise<Target | null> {
 
 /* ----------------------------- новости ----------------------------- */
 export type NewsRow = { date: string; title: string; site: string | null; url: string | null; snippet: string | null };
-export async function getNews(symbol: string): Promise<NewsRow[]> {
+export async function getNews(symbol: string, force = false): Promise<NewsRow[]> {
   await ensureTables();
   const sym = symbol.toUpperCase();
-  if (hasKey() && !(await isFresh(sym, 'news', 45 * 60e3))) {
+  if (hasKey() && (force || !(await isFresh(sym, 'news', 45 * 60e3)))) {
     try {
       const data: any = await fmpStockNews(sym, 40);
       const arr: any[] = Array.isArray(data) ? data : data?.content ?? [];
@@ -229,10 +229,10 @@ const METRIC_DEFS: { key: string; label: string; group: string; unit: MetricUnit
   { key: 'dividendYield', label: 'Dividend Yield (дивид. доходность)', group: 'Кэш', unit: 'pct' },
   { key: 'payoutRatio', label: 'Payout Ratio (коэф. выплат)', group: 'Кэш', unit: 'pct' },
 ];
-export async function getFunda(symbol: string): Promise<FundaData> {
+export async function getFunda(symbol: string, force = false): Promise<FundaData> {
   await ensureTables();
   const sym = symbol.toUpperCase();
-  if (hasKey() && !(await isFresh(sym, 'metrics', 24 * 3600e3))) {
+  if (hasKey() && (force || !(await isFresh(sym, 'metrics', 24 * 3600e3)))) {
     try {
       const [inc, rat, km]: any[] = await Promise.all([
         fmpIncomeStatement(sym, 'quarter', 24).catch(() => []),
@@ -330,10 +330,10 @@ export type TickerInsight = {
   funda: FundaData;
   news: NewsRow[];
 };
-export async function getTickerInsight(symbol: string): Promise<TickerInsight> {
+export async function getTickerInsight(symbol: string, force = false): Promise<TickerInsight> {
   const sym = symbol.toUpperCase().trim();
   const [profile, grades, consensus, target, funda, news] = await Promise.all([
-    getProfile(sym), getGrades(sym), getConsensus(sym), getPriceTarget(sym), getFunda(sym), getNews(sym),
+    getProfile(sym), getGrades(sym, force), getConsensus(sym, force), getPriceTarget(sym, force), getFunda(sym, force), getNews(sym, force),
   ]);
   // Перевод на русский: описание компании + заголовки/сниппеты новостей (кэш, graceful).
   try {
