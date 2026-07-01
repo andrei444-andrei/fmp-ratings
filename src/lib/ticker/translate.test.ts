@@ -4,8 +4,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 // (1) при обрезке крупного батча (finish='length') он делится вплоть до одного текста и каждый переводится;
 // (2) при фатальной ошибке аккаунта (нет средств) прогон прекращается и отдаются оригиналы.
 
-const execute = vi.fn(async () => ({ rows: [] as any[] }));
-const batch = vi.fn(async () => {});
+const execute = vi.fn(async (..._a: any[]) => ({ rows: [] as any[] }));
+const batch = vi.fn(async (..._a: any[]) => {});
 vi.mock('@/db/client', () => ({ libsqlClient: { execute: (...a: any[]) => execute(...a), batch: (...a: any[]) => batch(...a) } }));
 
 const aimlChatMeta = vi.fn();
