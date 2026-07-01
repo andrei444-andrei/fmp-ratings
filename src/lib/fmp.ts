@@ -66,11 +66,19 @@ export async function fmpIncomeStatement(symbol: string, period: 'quarter' | 'an
   return fmpGet(`${BASE_STABLE}/income-statement?symbol=${encodeURIComponent(symbol)}&period=${period}&limit=${encodeURIComponent(limit)}&apikey=${encodeURIComponent(key)}`);
 }
 
-// Финансовые коэффициенты (маржа/возврат/оценка/долг во времени): grossProfitMargin, netProfitMargin,
-// returnOnEquity, priceEarningsRatio, priceToSalesRatio, debtEquityRatio, freeCashFlowPerShare и т.д.
+// Финансовые коэффициенты (маржа/оценка/ликвидность во времени): grossProfitMargin, netProfitMargin,
+// priceToEarningsRatio, priceToSalesRatio, currentRatio, quickRatio, dividendYield, payoutRatio и т.д.
 export async function fmpRatios(symbol: string, period: 'quarter' | 'annual' = 'quarter', limit = 24) {
   const key = getFmpKey();
   return fmpGet(`${BASE_STABLE}/ratios?symbol=${encodeURIComponent(symbol)}&period=${period}&limit=${encodeURIComponent(limit)}&apikey=${encodeURIComponent(key)}`);
+}
+
+// Ключевые метрики (в stable-API живут ОТДЕЛЬНО от ratios): returnOnEquity/Assets/InvestedCapital,
+// enterpriseValue и EV-мультипликаторы (evToEBITDA/evToSales/evToFreeCashFlow), freeCashFlowYield,
+// netDebtToEBITDA, revenuePerShare, bookValuePerShare и т.д. — во времени.
+export async function fmpKeyMetrics(symbol: string, period: 'quarter' | 'annual' = 'quarter', limit = 24) {
+  const key = getFmpKey();
+  return fmpGet(`${BASE_STABLE}/key-metrics?symbol=${encodeURIComponent(symbol)}&period=${period}&limit=${encodeURIComponent(limit)}&apikey=${encodeURIComponent(key)}`);
 }
 
 // Историческая дневная цена закрытия (light: symbol, date, price, volume).
