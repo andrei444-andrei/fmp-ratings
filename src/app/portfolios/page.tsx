@@ -898,7 +898,7 @@ export default function PortfoliosPage() {
                     <table className="pf-ptable" data-testid="pf-reb-positions">
                       <thead><tr><th className="l">Тикер</th><th>Экспозиция</th><th className="l">Сетапы</th></tr></thead>
                       <tbody>
-                        {selDayEvent.positions.map((p) => (<tr key={p.symbol}><td className="l sy">{p.symbol}</td><td>{pct(p.weight, 1)}</td><td className="l">{p.setups.join(', ')}</td></tr>))}
+                        {selDayEvent.positions.map((p) => (<tr key={p.symbol}><td className="l sy">{p.symbol}</td><td>{pct(p.weight, 1)}</td><td className="l">{(result.symSetups[p.symbol] || []).join(', ')}</td></tr>))}
                         {!selDayEvent.positions.length && <tr><td className="l" colSpan={3}>в паркинге — позиций нет</td></tr>}
                       </tbody>
                     </table>
