@@ -1,6 +1,6 @@
 import { libsqlClient } from '@/db/client';
 import { getFundamentals } from '@/lib/research/fundamentals';
-import { fmpGrades, fmpGradesHistorical, fmpPriceTargetConsensus, fmpStockNews, fmpIncomeStatement, fmpRatios, fmpKeyMetrics, fmpProfile } from '@/lib/fmp';
+import { fmpGrades, fmpGradesHistorical, fmpPriceTargetConsensus, fmpStockNews, fmpIncomeStatement, fmpRatios, fmpKeyMetrics, fmpProfile, fmpAnalystEstimates, fmpPriceTargetSummary } from '@/lib/fmp';
 import { translateMany } from './translate';
 
 // Контентный слой «картина акции» для /ticker: грейды sell-side (лента действий + консенсус во времени),
@@ -39,7 +39,26 @@ async function ensureTables(): Promise<void> {
     symbol TEXT NOT NULL, kind TEXT NOT NULL, fetched_at TEXT NOT NULL,
     PRIMARY KEY (symbol, kind)
   )`);
+  // Универсальный blob-кэш для компактных JSON-структур (оценки, сводка таргета, пиры и т.п.).
+  await libsqlClient.execute(`CREATE TABLE IF NOT EXISTS ticker_blob (
+    symbol TEXT NOT NULL, kind TEXT NOT NULL, json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (symbol, kind)
+  )`);
   ensured = true;
+}
+async function putBlob(sym: string, kind: string, value: unknown): Promise<void> {
+  await libsqlClient.execute({
+    sql: `INSERT INTO ticker_blob (symbol,kind,json,created_at) VALUES (?,?,?,?)
+          ON CONFLICT(symbol,kind) DO UPDATE SET json=excluded.json, created_at=excluded.created_at`,
+    args: [sym, kind, JSON.stringify(value), new Date().toISOString()],
+  });
+}
+async function getBlob<T>(sym: string, kind: string): Promise<T | null> {
+  const r = await libsqlClient.execute({ sql: `SELECT json FROM ticker_blob WHERE symbol=? AND kind=?`, args: [sym, kind] });
+  const j = (r.rows[0] as any)?.json;
+  if (!j) return null;
+  try { return JSON.parse(String(j)) as T; } catch { return null; }
 }
 async function isFresh(sym: string, kind: string, ttlMs: number): Promise<boolean> {
   const r = await libsqlClient.execute({ sql: `SELECT fetched_at FROM ticker_insight_meta WHERE symbol=? AND kind=?`, args: [sym, kind] });
@@ -288,6 +307,46 @@ export async function getFunda(symbol: string, force = false): Promise<FundaData
   return { dates, metrics };
 }
 
+/* -------------------- форвардные оценки + моментум пересмотров -------------------- */
+export type EstYear = { year: number; revenue: number | null; revLow: number | null; revHigh: number | null; eps: number | null; epsLow: number | null; epsHigh: number | null; nAnalysts: number | null; future: boolean };
+export type RevisionSummary = { month: number | null; quarter: number | null; year: number | null; allTime: number | null; monthCount: number | null; quarterCount: number | null };
+export type Estimates = { years: EstYear[]; revision: RevisionSummary | null };
+
+export async function getEstimates(symbol: string, force = false): Promise<Estimates> {
+  await ensureTables();
+  const sym = symbol.toUpperCase();
+  const thisYear = new Date().getFullYear();
+  if (hasKey() && (force || !(await isFresh(sym, 'estimates', 12 * 3600e3)))) {
+    try {
+      const [est, sum]: any[] = await Promise.all([
+        fmpAnalystEstimates(sym, 'annual', 14).catch(() => []),
+        fmpPriceTargetSummary(sym).catch(() => null),
+      ]);
+      const rows = Array.isArray(est) ? est : [];
+      const years: EstYear[] = rows.map((r: any) => {
+        const y = Number(String(r.date ?? '').slice(0, 4));
+        return {
+          year: y,
+          revenue: num(r.revenueAvg), revLow: num(r.revenueLow), revHigh: num(r.revenueHigh),
+          eps: num(r.epsAvg), epsLow: num(r.epsLow), epsHigh: num(r.epsHigh),
+          nAnalysts: num(r.numAnalystsEps ?? r.numberAnalystsEstimatedEps ?? r.numAnalystsRevenue),
+          future: Number.isFinite(y) && y >= thisYear,
+        };
+      }).filter((e) => Number.isFinite(e.year)).sort((a, b) => a.year - b.year);
+      const s = Array.isArray(sum) ? sum[0] : sum;
+      const revision: RevisionSummary | null = s ? {
+        month: num(s.lastMonthAvgPriceTarget), quarter: num(s.lastQuarterAvgPriceTarget),
+        year: num(s.lastYearAvgPriceTarget), allTime: num(s.allTimeAvgPriceTarget),
+        monthCount: num(s.lastMonthCount), quarterCount: num(s.lastQuarterCount),
+      } : null;
+      await putBlob(sym, 'estimates', { years, revision });
+      await markFetched(sym, 'estimates');
+    } catch { /* graceful */ }
+  }
+  const cached = await getBlob<Estimates>(sym, 'estimates');
+  return cached ?? { years: [], revision: null };
+}
+
 /* ----------------------------- профиль-досье ----------------------------- */
 export type Profile = {
   symbol: string; company: string | null; sector: string | null; industry: string | null;
@@ -328,12 +387,13 @@ export type TickerInsight = {
   consensus: ConsensusRow[];
   target: Target | null;
   funda: FundaData;
+  estimates: Estimates;
   news: NewsRow[];
 };
 export async function getTickerInsight(symbol: string, force = false): Promise<TickerInsight> {
   const sym = symbol.toUpperCase().trim();
-  const [profile, grades, consensus, target, funda, news] = await Promise.all([
-    getProfile(sym), getGrades(sym, force), getConsensus(sym, force), getPriceTarget(sym, force), getFunda(sym, force), getNews(sym, force),
+  const [profile, grades, consensus, target, funda, estimates, news] = await Promise.all([
+    getProfile(sym), getGrades(sym, force), getConsensus(sym, force), getPriceTarget(sym, force), getFunda(sym, force), getEstimates(sym, force), getNews(sym, force),
   ]);
   // Перевод на русский: описание компании + заголовки/сниппеты новостей (кэш, graceful).
   try {
@@ -349,5 +409,5 @@ export async function getTickerInsight(symbol: string, force = false): Promise<T
       }
     }
   } catch { /* перевод не обязателен */ }
-  return { symbol: sym, profile, grades, consensus, target, funda, news };
+  return { symbol: sym, profile, grades, consensus, target, funda, estimates, news };
 }

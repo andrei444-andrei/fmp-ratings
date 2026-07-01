@@ -565,6 +565,7 @@ function AnalystTab({ insight, panel }: { insight: TickerInsight | null; panel: 
   return (
     <>
       {bar}
+      <EstimatesPanel est={insight.estimates} />
       <ConsensusPanel rows={insight.consensus} />
       <div className="card">
         <h2><span className="ht">Рейтинговые действия аналитиков</span> <span className="badge">за 90д: <span className="pos">+{up90}</span> / <span className="neg">−{dn90}</span></span></h2>
@@ -682,6 +683,53 @@ function MetricChart({ m, dates }: { m: MetricSeries; dates: string[] }) {
           : <path d={linePath.map((p, k) => (k ? 'L' : 'M') + p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join(' ')} fill="none" stroke="var(--app-acc-2)" strokeWidth="1.6" />}
         {!isBar && linePath.map((p, k) => <circle key={k} cx={p.x} cy={p.y} r="1.6" fill="var(--app-acc-2)" />)}
       </svg>
+    </div>
+  );
+}
+function EstimatesPanel({ est }: { est: TickerInsight['estimates'] }) {
+  const years = est?.years || [];
+  const rv = est?.revision || null;
+  const hasRev = !!rv && (rv.month != null || rv.quarter != null || rv.year != null);
+  if (!years.length && !hasRev) return null;
+  const g = (cur: number | null, prev: number | null) => (cur != null && prev != null && prev !== 0 ? cur / Math.abs(prev) - 1 : null);
+  const futN = years.filter((y) => y.future).length;
+  // показываем последние 2 факт. года + все прогнозные
+  const shown = [...years.filter((y) => !y.future).slice(-2), ...years.filter((y) => y.future)];
+  return (
+    <div className="card">
+      <h2><span className="ht">Форвардные оценки аналитиков</span>{futN ? <span className="badge">прогноз на {futN} г.</span> : null}</h2>
+      <p className="desc">Консенсус sell-side: выручка и EPS вперёд (курсив — будущие годы), диапазон low–high в подсказке, рост г/г. Один из самых сильных драйверов цены — куда сдвигаются ожидания.</p>
+      {shown.length ? (
+        <table className="est">
+          <thead><tr><th className="l">Год</th><th>Выручка</th><th>г/г</th><th>EPS</th><th>г/г</th><th>Аналит.</th></tr></thead>
+          <tbody>
+            {shown.map((y) => {
+              const idx = years.findIndex((x) => x.year === y.year);
+              const prev = idx > 0 ? years[idx - 1] : null;
+              const rg = g(y.revenue, prev?.revenue ?? null), eg = g(y.eps, prev?.eps ?? null);
+              return (
+                <tr key={y.year} className={y.future ? 'est-fut' : ''}>
+                  <td className="l">{y.year}{y.future ? '*' : ''}</td>
+                  <td title={y.revLow != null && y.revHigh != null ? `диапазон ${fmtMetric(y.revLow, 'usd')}…${fmtMetric(y.revHigh, 'usd')}` : undefined}>{y.revenue != null ? fmtMetric(y.revenue, 'usd') : '—'}</td>
+                  <td className={rg == null ? 'mut' : rg >= 0 ? 'pos' : 'neg'}>{rg != null ? pct(rg, 0) : '—'}</td>
+                  <td title={y.epsLow != null && y.epsHigh != null ? `диапазон ${y.epsLow.toFixed(2)}…${y.epsHigh.toFixed(2)}` : undefined}>{y.eps != null ? y.eps.toFixed(2) : '—'}</td>
+                  <td className={eg == null ? 'mut' : eg >= 0 ? 'pos' : 'neg'}>{eg != null ? pct(eg, 0) : '—'}</td>
+                  <td className="mut">{y.nAnalysts != null ? y.nAnalysts : '—'}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      ) : null}
+      {hasRev ? (() => {
+        const m = rv!.month, q = rv!.quarter, yy = rv!.year;
+        let dir = '≈ стабильно', cls = 'mut';
+        if (m != null && yy != null) { if (m > yy * 1.01) { dir = '↑ повышают'; cls = 'pos'; } else if (m < yy * 0.99) { dir = '↓ понижают'; cls = 'neg'; } }
+        const f = (v: number | null) => (v != null ? v.toFixed(0) : '—');
+        return (
+          <p className="small est-rev">Пересмотр таргета (ср. за период): месяц <b>{f(m)}</b> · квартал <b>{f(q)}</b> · год <b>{f(yy)}</b> · <b className={cls}>{dir}</b>{rv!.monthCount != null ? <span className="mut"> ({rv!.monthCount} публ. за месяц)</span> : null}</p>
+        );
+      })() : null}
     </div>
   );
 }
