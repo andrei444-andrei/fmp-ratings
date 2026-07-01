@@ -46,6 +46,8 @@ const RANGES: { label: string; days: number }[] = [
   { label: '1Г', days: 252 }, { label: '3Г', days: 756 }, { label: '5Л', days: 1260 },
   { label: '10Л', days: 2520 }, { label: 'Всё', days: 0 },
 ];
+// Ключ localStorage для сохранения всех настроек-переключалок между визитами.
+const LS_KEY = 'ticker:settings:v1';
 
 export default function TickerPage() {
   const [ticker, setTicker] = useState('AAPL');
@@ -81,6 +83,46 @@ export default function TickerPage() {
 
   const tipRef = useRef<HTMLDivElement | null>(null);
   const hlRef = useRef<SVGLineElement | null>(null);
+
+  /* ---------- сохранение настроек в localStorage ---------- */
+  // hydrated — состояние (не ref): переводится в true через setState в load-эффекте, поэтому save-эффект
+  // впервые срабатывает уже ПОСЛЕ применения сохранённых значений (иначе перетёр бы кэш дефолтами).
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw) {
+        const s = JSON.parse(raw);
+        if (typeof s.ticker === 'string' && s.ticker) setTicker(s.ticker);
+        if (typeof s.H === 'number' && HZ.includes(s.H)) setH(s.H);
+        if (s.mode === 'edge' || s.mode === 'raw') setMode(s.mode);
+        if (s.outcome === 'ret' || s.outcome === 'exc') setOutcome(s.outcome);
+        if (s.binCfg && typeof s.binCfg === 'object') setBinCfg((prev) => ({ ...prev, ...s.binCfg }));
+        if (Array.isArray(s.corrAssets)) setCorrAssets(s.corrAssets.map((x: unknown) => String(x)).filter(Boolean));
+        if (Array.isArray(s.recent)) setRecent(s.recent.map((x: unknown) => String(x)).filter(Boolean));
+        if (typeof s.sma50On === 'boolean') setSma50On(s.sma50On);
+        if (typeof s.sma200On === 'boolean') setSma200On(s.sma200On);
+        if (typeof s.ddOn === 'boolean') setDdOn(s.ddOn);
+        if (typeof s.logOn === 'boolean') setLogOn(s.logOn);
+        if (typeof s.chartRange === 'number') setChartRange(s.chartRange);
+        if (s.chartEngine === 'svg' || s.chartEngine === 'lwc') setChartEngine(s.chartEngine);
+        if (['stats', 'analyst', 'funda', 'news'].includes(s.tab)) setTab(s.tab);
+        if (Array.isArray(s.hidden)) setHidden(new Set(s.hidden.map((x: unknown) => String(x))));
+      }
+    } catch { /* повреждённый кэш — игнорируем */ }
+    setHydrated(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (!hydrated) return; // не сохраняем, пока не применили сохранённое
+    try {
+      localStorage.setItem(LS_KEY, JSON.stringify({
+        ticker, H, mode, outcome, binCfg, corrAssets, recent,
+        sma50On, sma200On, ddOn, logOn, chartRange, chartEngine, tab,
+        hidden: [...hidden],
+      }));
+    } catch { /* квота/приватный режим — молча */ }
+  }, [hydrated, ticker, H, mode, outcome, binCfg, corrAssets, recent, sma50On, sma200On, ddOn, logOn, chartRange, chartEngine, tab, hidden]);
 
   /* ---------- data fetch ---------- */
   useEffect(() => {
