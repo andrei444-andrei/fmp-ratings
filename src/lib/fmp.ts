@@ -94,10 +94,11 @@ export async function fmpRatiosTtm(symbol: string) {
   return fmpGet(`${BASE_STABLE}/ratios-ttm?symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(key)}`);
 }
 
-// Компании-аналоги (тот же сектор/близкая капитализация). Возвращает список тикеров-пиров.
+// Компании-аналоги (тот же сектор/близкая капитализация). /stable/stock-peers возвращает массив
+// { symbol, companyName, price, mktCap } — имя и капитализацию отдаёт сразу.
 export async function fmpPeers(symbol: string) {
   const key = getFmpKey();
-  return fmpGet(`${BASE_STABLE}/peers?symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(key)}`);
+  return fmpGet(`${BASE_STABLE}/stock-peers?symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(key)}`);
 }
 
 // Ключевые метрики (в stable-API живут ОТДЕЛЬНО от ratios): returnOnEquity/Assets/InvestedCapital,

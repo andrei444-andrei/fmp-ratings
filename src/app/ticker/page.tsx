@@ -656,7 +656,7 @@ function PeersPanel({ peers }: { peers: TickerInsight['peers'] }) {
       <p className="desc">Текущий тикер (подсвечен) против компаний-аналогов сектора по оценке и прибыльности (TTM). Кап. — рыночная капитализация.</p>
       <div className="peerwrap">
         <table className="peers">
-          <thead><tr><th className="l">Тикер</th><th className="l">Компания</th><th>Кап.</th><th>P/E</th><th>P/S</th><th>Вал.маржа</th><th>Чист.маржа</th><th>ROE</th></tr></thead>
+          <thead><tr><th className="l">Тикер</th><th className="l">Компания</th><th>Кап.</th><th>P/E</th><th>P/S</th><th>EV/EBITDA</th><th>Вал.маржа</th><th>Чист.маржа</th></tr></thead>
           <tbody>
             {peers.map((r) => (
               <tr key={r.symbol} className={r.self ? 'peer-self' : ''}>
@@ -665,9 +665,9 @@ function PeersPanel({ peers }: { peers: TickerInsight['peers'] }) {
                 <td>{cap(r.mktCap)}</td>
                 <td>{x(r.pe)}</td>
                 <td>{x(r.ps)}</td>
+                <td>{x(r.evEbitda)}</td>
                 <td>{p(r.grossMargin)}</td>
                 <td>{p(r.netMargin)}</td>
-                <td>{p(r.roe)}</td>
               </tr>
             ))}
           </tbody>

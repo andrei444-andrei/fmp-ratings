@@ -348,31 +348,35 @@ export async function getEstimates(symbol: string, force = false): Promise<Estim
 }
 
 /* ----------------------------- сравнение с пирами ----------------------------- */
-export type PeerRow = { symbol: string; name: string | null; mktCap: number | null; pe: number | null; ps: number | null; grossMargin: number | null; netMargin: number | null; roe: number | null; self: boolean };
+export type PeerRow = { symbol: string; name: string | null; mktCap: number | null; pe: number | null; ps: number | null; evEbitda: number | null; grossMargin: number | null; netMargin: number | null; self: boolean };
 
 export async function getPeers(symbol: string, force = false): Promise<PeerRow[]> {
   await ensureTables();
   const sym = symbol.toUpperCase();
   if (hasKey() && (force || !(await isFresh(sym, 'peers', 24 * 3600e3)))) {
     try {
-      const praw: any = await fmpPeers(sym).catch(() => null);
-      let peers: string[] = [];
-      if (Array.isArray(praw)) peers = praw.map((r: any) => (typeof r === 'string' ? r : (r?.symbol ?? '')));
-      else if (praw && Array.isArray(praw.peersList)) peers = praw.peersList;
-      peers = peers.map((x) => String(x || '').toUpperCase().trim()).filter(Boolean);
-      const uniq = [sym, ...peers.filter((p) => p !== sym)].slice(0, 7); // тикер + до 6 пиров
-      const rows = await Promise.all(uniq.map(async (s) => {
-        const [prof, rat]: any[] = await Promise.all([fmpProfile(s).catch(() => null), fmpRatiosTtm(s).catch(() => null)]);
-        const p = Array.isArray(prof) ? prof[0] : prof;
+      // /stable/stock-peers → [{symbol, companyName, price, mktCap}] (сам тикер в список не входит).
+      const [praw, selfProf]: any[] = await Promise.all([fmpPeers(sym).catch(() => null), fmpProfile(sym).catch(() => null)]);
+      const sp = Array.isArray(selfProf) ? selfProf[0] : selfProf;
+      const peerArr: any[] = Array.isArray(praw) ? praw : [];
+      // базовые строки: сам тикер (имя/кап из профиля) + до 6 пиров (имя/кап из stock-peers)
+      const bases: { symbol: string; name: string | null; mktCap: number | null; self: boolean }[] = [
+        { symbol: sym, name: str(sp?.companyName), mktCap: num(sp?.marketCap ?? sp?.mktCap), self: true },
+        ...peerArr
+          .map((p) => ({ symbol: String(p?.symbol || '').toUpperCase().trim(), name: str(p?.companyName), mktCap: num(p?.mktCap ?? p?.marketCap), self: false }))
+          .filter((p) => p.symbol && p.symbol !== sym)
+          .slice(0, 6),
+      ];
+      const rows = await Promise.all(bases.map(async (b) => {
+        const rat: any = await fmpRatiosTtm(b.symbol).catch(() => null);
         const r = Array.isArray(rat) ? rat[0] : rat;
         const row: PeerRow = {
-          symbol: s, name: str(p?.companyName), mktCap: num(p?.marketCap ?? p?.mktCap),
+          ...b,
           pe: num(r?.priceToEarningsRatioTTM ?? r?.peRatioTTM),
           ps: num(r?.priceToSalesRatioTTM ?? r?.priceToSalesTTM),
+          evEbitda: num(r?.enterpriseValueMultipleTTM ?? r?.evToEBITDATTM),
           grossMargin: num(r?.grossProfitMarginTTM),
           netMargin: num(r?.netProfitMarginTTM),
-          roe: num(r?.returnOnEquityTTM),
-          self: s === sym,
         };
         return row;
       }));
