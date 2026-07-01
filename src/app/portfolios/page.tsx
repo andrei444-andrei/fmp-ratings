@@ -94,7 +94,7 @@ function periodKey(d: string, g: Gran): { key: string; label: string } {
 }
 
 // Агрегирует дневные ряды (кривая, бенчмарк, SPY-на-загрузке, загрузка) в периоды выбранной грануляции.
-function aggregatePeriods(equity: DayPoint[], bench: DayPoint[], loaded: DayPoint[], deployment: number[], g: Gran): Period[] {
+function aggregatePeriods(equity: DayPoint[], bench: DayPoint[], loaded: DayPoint[], loadingByDay: number[], g: Gran): Period[] {
   if (equity.length < 2) return [];
   const out: Period[] = [];
   let a = 0;
@@ -105,10 +105,10 @@ function aggregatePeriods(equity: DayPoint[], bench: DayPoint[], loaded: DayPoin
     const ret = equity[base].v > 0 ? equity[b].v / equity[base].v - 1 : 0;
     const spyRet = bench[base] && bench[base].v > 0 ? bench[b].v / bench[base].v - 1 : 0;
     const spyLoadedRet = loaded[base] && loaded[base].v > 0 ? loaded[b].v / loaded[base].v - 1 : 0;
-    let inm = 0;
+    let load = 0; // средняя капитальная загрузка периода (0..1), совпадает с headline-метрикой
     let cnt = 0;
-    for (let i = Math.max(a, 1); i <= b; i++) { cnt++; if (deployment[i] > 0) inm++; }
-    out.push({ key, label, ret, spyRet, spyLoadedRet, loading: cnt ? inm / cnt : 0, days: b - a + 1, start: equity[a].d, end: equity[b].d });
+    for (let i = Math.max(a, 1); i <= b; i++) { cnt++; load += loadingByDay[i] ?? 0; }
+    out.push({ key, label, ret, spyRet, spyLoadedRet, loading: cnt ? load / cnt : 0, days: b - a + 1, start: equity[a].d, end: equity[b].d });
   };
   for (let i = 1; i < equity.length; i++) {
     const k = periodKey(equity[i].d, g).key;
@@ -381,7 +381,7 @@ export default function PortfoliosPage() {
   const stats = useMemo(() => {
     if (!m) return [];
     return [
-      { k: 'Загрузка (капитал)', v: pct(m.loading, 1), sub: `в рынке ${pct(m.timeInMarket, 0)} дней (${m.inMarketDays}/${Math.max(0, m.days - 1)})`, cls: '' },
+      { k: 'Загрузка (капитал)', v: pct(m.loading, 1), sub: `${parking === 'SPY' ? 'SPY-паркинг = в рынке · ' : ''}в позициях ${pct(m.timeInMarket, 0)} дней (${m.inMarketDays}/${Math.max(0, m.days - 1)})`, cls: '' },
       { k: 'Годовая (CAGR)', v: signPct(m.cagr), sub: `всего ${signPct(m.total)}`, cls: signCls(m.cagr) },
       { k: 'Макс. просадка', v: pct(m.maxDD), sub: `SPY ${pct(m.spyMaxDD)}`, cls: 'down' },
       { k: 'Sharpe (всего)', v: numFmt(m.sharpe), sub: `SPY ${numFmt(m.spySharpe)}`, cls: signCls(m.sharpe) },
@@ -391,10 +391,10 @@ export default function PortfoliosPage() {
       { k: 'Доходность / загрузка', v: signPct(m.returnOnLoading), sub: 'CAGR ÷ загрузка', cls: signCls(m.returnOnLoading) },
       { k: 'Win-rate vs SPY', v: m.winRateVsSpy == null ? '—' : pct(m.winRateVsSpy, 0), sub: `${m.winTrades}/${m.totalTrades} сделок обогнали SPY`, cls: signCls((m.winRateVsSpy ?? 0.5) - 0.5) },
     ];
-  }, [m]);
+  }, [m, parking]);
 
   const periods = useMemo(
-    () => (result && result.equity.length > 1 ? aggregatePeriods(result.equity, result.benchEquity, result.benchLoadedEquity, result.deployment, gran) : []),
+    () => (result && result.equity.length > 1 ? aggregatePeriods(result.equity, result.benchEquity, result.benchLoadedEquity, result.loadingByDay, gran) : []),
     [result, gran],
   );
   const hp = hoverP >= 0 && hoverP < periods.length ? periods[hoverP] : null;
@@ -582,9 +582,11 @@ export default function PortfoliosPage() {
                 {!!meta?.truncatedSymbols && <span className="badge warn" style={{ marginLeft: 8 }}>усечено имён: {meta.truncatedSymbols}</span>}
               </div>
               <div className="pf-note">
-                Метрики «(нагр.)» считаются ТОЛЬКО за дни, когда стратегия в рынке, и сравниваются с SPY ровно за те же дни (активный рукав):
-                это корректное «на нагрузку». Альфа на нагрузку = превышение рукава над SPY за дни нагрузки. Загрузка — доля дней в рынке
-                (BIL не считается). «Доходность/загрузка» = CAGR ÷ загрузка — интенсивность, не достижимая доходность. Оценка in-sample.
+                Метрики «(нагр.)» считаются ТОЛЬКО за дни, когда стратегия держит реальные позиции сетапов, и сравниваются с SPY ровно за
+                те же дни (активный рукав): это корректное «на нагрузку». Альфа на нагрузку = превышение рукава над SPY за дни нагрузки.
+                Загрузка (капитал) — средняя доля капитала под рыночным риском: <b>BIL/кэш</b> в паркинге не считаются загрузкой, а <b>SPY</b> в
+                паркинге считается (капитал в рынке → загрузка ≈ 100%). «Доходность/загрузка» = CAGR ÷ загрузка — интенсивность, не достижимая
+                доходность. Оценка in-sample.
               </div>
 
               {result && result.equity.length > 1 && (
