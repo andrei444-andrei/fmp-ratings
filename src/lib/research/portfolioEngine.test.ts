@@ -213,6 +213,24 @@ describe('buildPortfolio (price-panel simulation)', () => {
     expect(spyLev.metrics.loading!).toBeGreaterThan(1.3);
   });
 
+  it('плечо умножает загрузку даже при малом числе имён (2 имени × 30% × плечо 3 → 180%)', () => {
+    const spy = series(80, '2015-01-01', 100, 0.0003);
+    const dates = spy.map((b) => b.date);
+    const aaa = series(80, '2015-01-01', 50, 0.001);
+    const bbb = series(80, '2015-01-01', 60, 0.0008);
+    const panel: PricePanel = new Map([['AAA', aaa], ['BBB', bbb]]);
+    const setups: EngineSetup[] = [{ id: 's', name: 'S', signals: [...signalsOn(dates, 5, 60, 'AAA'), ...signalsOn(dates, 5, 60, 'BBB')] }];
+    const lev = buildPortfolio(setups, cfg('weekly', 5, 'CASH', 0.3, 3), spy, null, panel);
+    const flat = buildPortfolio(setups, cfg('weekly', 5, 'CASH', 0.3, 1), spy, null, panel);
+    // 2 имени, потолок 30%: база = 2×30% = 60%; плечо 3× → каждое имя 90%, итог 180%
+    const rb = lev.rebalances.find((r) => r.positions.length === 2)!;
+    expect(rb.positions[0].weight).toBeCloseTo(0.9, 4);
+    const rbFlat = flat.rebalances.find((r) => r.positions.length === 2)!;
+    expect(rbFlat.positions[0].weight).toBeCloseTo(0.3, 4);
+    expect(lev.metrics.loading!).toBeGreaterThan(1.5); // ~180% на активных неделях
+    expect(flat.metrics.loading!).toBeLessThan(0.7); // база ~60%
+  });
+
   it('пустые входы не валятся', () => {
     const spy = series(30);
     expect(buildPortfolio([], cfg('ladder', 5, 'CASH'), spy, null, new Map()).metrics.nSignals).toBe(0);

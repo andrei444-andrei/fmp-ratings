@@ -691,10 +691,10 @@ export default function PortfoliosPage() {
                       <div className="ctl"><span className="lbl">Вес · отбор</span><span className="badge">равный · все имена</span></div>
                     </div>
                     <div className="pf-note" style={{ marginTop: 10 }}>
-                      Потолок на тикер ограничивает долю одного имени; если имён мало и равный вес превысил бы потолок, остаток уходит в паркинг.
-                      Плечо (напр. 1.5×) даёт долю на имя <b>min(плечо/N, потолок)</b> — суммарно &gt;100% набирается только когда имён достаточно
-                      («позиций много»). Простаивающий капитал паркуется как выбрано (SPY/BIL/кэш), а заёмная часть (сверх 100%) финансируется по
-                      безрисковой ставке (BIL). Год начала — с какого года гнать бэктест (пусто = с первого сигнала). Отбор — «все имена». Оценка in-sample.
+                      Потолок на тикер — базовый (без плеча) предел доли одного имени; если имён мало и равный вес превысил бы потолок, остаток
+                      уходит в паркинг. Плечо <b>умножает</b> загрузку: доля на имя = <b>плечо·min(1/N, потолок)</b>, итог до <b>плечо·min(1, N·потолок)</b>
+                      (эффективный потолок на имя = потолок·плечо). Напр. 2 имени по 30% при плече 3× → 180%. Простаивающий капитал паркуется как выбрано
+                      (SPY/BIL/кэш), заёмная часть (сверх 100%) — по безрисковой ставке (BIL). Год начала — с какого года бэктест (пусто = с первого сигнала).
                     </div>
                   </>
                 )}
@@ -706,7 +706,7 @@ export default function PortfoliosPage() {
                       <div className="row"><span className="k">Сетапы ({selectedNames.length})</span><span>{selectedNames.join(', ') || '—'}</span></div>
                       <div className="row"><span className="k">Исполнение</span><span>{EXEC_FULL[exec]}{exec === 'ladder' ? ` · N=${ladderN}` : ''}</span></div>
                       <div className="row"><span className="k">Потолок на тикер</span><span>{maxWeightPct > 0 ? `${maxWeightPct}% (остаток → паркинг)` : 'без лимита'}</span></div>
-                      <div className="row"><span className="k">Макс плечо</span><span>{maxLeverage > 1 ? `${maxLeverage}× (простой → паркинг; заём сверх 100% — по ставке BIL)` : 'без плеча'}</span></div>
+                      <div className="row"><span className="k">Макс плечо</span><span>{maxLeverage > 1 ? `${maxLeverage}× — умножает загрузку (эфф. потолок ${maxWeightPct > 0 ? `${Math.round(maxWeightPct * maxLeverage)}%` : `${maxLeverage}×`} на имя); заём сверх 100% по ставке BIL` : 'без плеча'}</span></div>
                       <div className="row"><span className="k">Год начала</span><span>{startYear > 1990 ? startYear : 'с первого сигнала'}</span></div>
                       <div className="row"><span className="k">Паркинг · вес · отбор</span><span>{PARK_LABEL[parking]} · равный · все имена</span></div>
                     </div>
