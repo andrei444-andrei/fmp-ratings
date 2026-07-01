@@ -40,6 +40,12 @@ async function runWizard(page: import('@playwright/test').Page, setupName: strin
   await chip.click();
   await page.getByTestId('wizard-next').click(); // → Ребалансировка
   await page.getByTestId('wizard-next').click(); // → Параметры
+  // умный отбор: «Отбор → Лимит K» показывает поле K и таблицу приоритетов сетапов
+  await page.getByTestId('pf-selection').selectOption('limit');
+  await expect(page.getByTestId('pf-maxpos')).toBeVisible();
+  await expect(page.getByTestId('pf-prio')).toBeVisible();
+  await expect(page.getByTestId('pf-prio-row').first()).toBeVisible();
+  await page.getByTestId('pf-selection').selectOption('all'); // назад к «все имена» для остальных проверок
   await page.getByTestId('wizard-next').click(); // → Запуск
   await page.getByTestId('wizard-run').click();
 }
