@@ -1,6 +1,6 @@
 import { libsqlClient } from '@/db/client';
 import { getFundamentals } from '@/lib/research/fundamentals';
-import { fmpGrades, fmpGradesHistorical, fmpPriceTargetConsensus, fmpStockNews, fmpIncomeStatement, fmpRatios, fmpProfile } from '@/lib/fmp';
+import { fmpGrades, fmpGradesHistorical, fmpPriceTargetConsensus, fmpStockNews, fmpIncomeStatement, fmpRatios, fmpKeyMetrics, fmpProfile } from '@/lib/fmp';
 import { translateMany } from './translate';
 
 // Контентный слой «картина акции» для /ticker: грейды sell-side (лента действий + консенсус во времени),
@@ -188,37 +188,56 @@ export async function getNews(symbol: string): Promise<NewsRow[]> {
 export type MetricUnit = 'usd' | 'pct' | 'x';
 export type MetricSeries = { key: string; label: string; group: string; unit: MetricUnit; values: (number | null)[] };
 export type FundaData = { dates: string[]; metrics: MetricSeries[] };
+// Подписи в формате «English (русский)». group — секция карточек, unit — формат значения/графика.
 const METRIC_DEFS: { key: string; label: string; group: string; unit: MetricUnit }[] = [
-  { key: 'revenue', label: 'Выручка', group: 'Доходы', unit: 'usd' },
-  { key: 'grossProfit', label: 'Валовая прибыль', group: 'Доходы', unit: 'usd' },
-  { key: 'operatingIncome', label: 'Опер. прибыль', group: 'Доходы', unit: 'usd' },
-  { key: 'netIncome', label: 'Чистая прибыль', group: 'Доходы', unit: 'usd' },
+  // Доходы
+  { key: 'revenue', label: 'Revenue (выручка)', group: 'Доходы', unit: 'usd' },
+  { key: 'grossProfit', label: 'Gross Profit (валовая прибыль)', group: 'Доходы', unit: 'usd' },
+  { key: 'operatingIncome', label: 'Operating Income (операц. прибыль)', group: 'Доходы', unit: 'usd' },
+  { key: 'netIncome', label: 'Net Income (чистая прибыль)', group: 'Доходы', unit: 'usd' },
   { key: 'ebitda', label: 'EBITDA', group: 'Доходы', unit: 'usd' },
-  { key: 'eps', label: 'EPS', group: 'Доходы', unit: 'usd' },
+  { key: 'eps', label: 'EPS (прибыль на акцию)', group: 'Доходы', unit: 'usd' },
+  // Расходы
+  { key: 'costOfRevenue', label: 'Cost of Revenue (себестоимость)', group: 'Расходы', unit: 'usd' },
   { key: 'rd', label: 'R&D (НИОКР)', group: 'Расходы', unit: 'usd' },
-  { key: 'sga', label: 'SG&A', group: 'Расходы', unit: 'usd' },
-  { key: 'grossMargin', label: 'Валовая маржа', group: 'Маржа', unit: 'pct' },
-  { key: 'opMargin', label: 'Опер. маржа', group: 'Маржа', unit: 'pct' },
-  { key: 'netMargin', label: 'Чистая маржа', group: 'Маржа', unit: 'pct' },
-  { key: 'roe', label: 'ROE', group: 'Возврат', unit: 'pct' },
-  { key: 'roa', label: 'ROA', group: 'Возврат', unit: 'pct' },
-  { key: 'roic', label: 'ROIC', group: 'Возврат', unit: 'pct' },
-  { key: 'pe', label: 'P/E', group: 'Оценка', unit: 'x' },
-  { key: 'ps', label: 'P/S', group: 'Оценка', unit: 'x' },
-  { key: 'pb', label: 'P/B', group: 'Оценка', unit: 'x' },
-  { key: 'debtEquity', label: 'Долг/капитал', group: 'Долг', unit: 'x' },
-  { key: 'currentRatio', label: 'Тек. ликвидность', group: 'Долг', unit: 'x' },
-  { key: 'fcfPerShare', label: 'FCF на акцию', group: 'Кэш', unit: 'usd' },
-  { key: 'dividendYield', label: 'Див. доходность', group: 'Кэш', unit: 'pct' },
+  { key: 'sga', label: 'SG&A (коммерч. и адм. расходы)', group: 'Расходы', unit: 'usd' },
+  { key: 'interestExpense', label: 'Interest Expense (процентные расходы)', group: 'Расходы', unit: 'usd' },
+  { key: 'incomeTaxExpense', label: 'Income Tax (налог на прибыль)', group: 'Расходы', unit: 'usd' },
+  // Маржа
+  { key: 'grossMargin', label: 'Gross Margin (валовая маржа)', group: 'Маржа', unit: 'pct' },
+  { key: 'opMargin', label: 'Operating Margin (операц. маржа)', group: 'Маржа', unit: 'pct' },
+  { key: 'netMargin', label: 'Net Margin (чистая маржа)', group: 'Маржа', unit: 'pct' },
+  // Возврат на капитал
+  { key: 'roe', label: 'ROE (рентаб. капитала)', group: 'Возврат', unit: 'pct' },
+  { key: 'roa', label: 'ROA (рентаб. активов)', group: 'Возврат', unit: 'pct' },
+  { key: 'roic', label: 'ROIC (рентаб. инвест. капитала)', group: 'Возврат', unit: 'pct' },
+  // Оценка
+  { key: 'pe', label: 'P/E (цена / прибыль)', group: 'Оценка', unit: 'x' },
+  { key: 'ps', label: 'P/S (цена / выручка)', group: 'Оценка', unit: 'x' },
+  { key: 'pb', label: 'P/B (цена / балансовая стоимость)', group: 'Оценка', unit: 'x' },
+  { key: 'pfcf', label: 'P/FCF (цена / свободный поток)', group: 'Оценка', unit: 'x' },
+  { key: 'evEbitda', label: 'EV/EBITDA', group: 'Оценка', unit: 'x' },
+  { key: 'evSales', label: 'EV/Sales (EV / выручка)', group: 'Оценка', unit: 'x' },
+  // Долг и ликвидность
+  { key: 'debtEquity', label: 'Debt/Equity (долг / капитал)', group: 'Долг', unit: 'x' },
+  { key: 'netDebtEbitda', label: 'Net Debt/EBITDA (чистый долг / EBITDA)', group: 'Долг', unit: 'x' },
+  { key: 'currentRatio', label: 'Current Ratio (текущая ликвидность)', group: 'Долг', unit: 'x' },
+  { key: 'quickRatio', label: 'Quick Ratio (быстрая ликвидность)', group: 'Долг', unit: 'x' },
+  // Денежный поток и дивиденды
+  { key: 'fcfPerShare', label: 'FCF/Share (FCF на акцию)', group: 'Кэш', unit: 'usd' },
+  { key: 'fcfYield', label: 'FCF Yield (доходность FCF)', group: 'Кэш', unit: 'pct' },
+  { key: 'dividendYield', label: 'Dividend Yield (дивид. доходность)', group: 'Кэш', unit: 'pct' },
+  { key: 'payoutRatio', label: 'Payout Ratio (коэф. выплат)', group: 'Кэш', unit: 'pct' },
 ];
 export async function getFunda(symbol: string): Promise<FundaData> {
   await ensureTables();
   const sym = symbol.toUpperCase();
   if (hasKey() && !(await isFresh(sym, 'metrics', 24 * 3600e3))) {
     try {
-      const [inc, rat]: any[] = await Promise.all([
+      const [inc, rat, km]: any[] = await Promise.all([
         fmpIncomeStatement(sym, 'quarter', 24).catch(() => []),
         fmpRatios(sym, 'quarter', 24).catch(() => []),
+        fmpKeyMetrics(sym, 'quarter', 24).catch(() => []),
       ]);
       const now = new Date().toISOString();
       const stmts: { sql: string; args: any[] }[] = [];
@@ -229,16 +248,28 @@ export async function getFunda(symbol: string): Promise<FundaData> {
       for (const s of Array.isArray(inc) ? inc : []) {
         const d = String(s.date ?? '').slice(0, 10);
         put(d, 'revenue', num(s.revenue)); put(d, 'grossProfit', num(s.grossProfit)); put(d, 'operatingIncome', num(s.operatingIncome));
-        put(d, 'netIncome', num(s.netIncome)); put(d, 'ebitda', num(s.ebitda)); put(d, 'eps', num(s.eps ?? s.epsdiluted ?? s.epsDiluted));
-        put(d, 'rd', num(s.researchAndDevelopmentExpenses)); put(d, 'sga', num(s.sellingGeneralAndAdministrativeExpenses));
+        put(d, 'netIncome', num(s.netIncome)); put(d, 'ebitda', num(s.ebitda ?? s.ebitdaratio)); put(d, 'eps', num(s.eps ?? s.epsdiluted ?? s.epsDiluted));
+        put(d, 'costOfRevenue', num(s.costOfRevenue)); put(d, 'rd', num(s.researchAndDevelopmentExpenses));
+        put(d, 'sga', num(s.sellingGeneralAndAdministrativeExpenses));
+        put(d, 'interestExpense', num(s.interestExpense)); put(d, 'incomeTaxExpense', num(s.incomeTaxExpense));
       }
       for (const s of Array.isArray(rat) ? rat : []) {
         const d = String(s.date ?? '').slice(0, 10);
         put(d, 'grossMargin', num(s.grossProfitMargin)); put(d, 'opMargin', num(s.operatingProfitMargin ?? s.operatingIncomeRatio)); put(d, 'netMargin', num(s.netProfitMargin ?? s.netIncomeRatio));
-        put(d, 'roe', num(s.returnOnEquity)); put(d, 'roa', num(s.returnOnAssets)); put(d, 'roic', num(s.returnOnCapitalEmployed ?? s.returnOnInvestedCapital));
-        put(d, 'pe', num(s.priceEarningsRatio ?? s.priceToEarningsRatio)); put(d, 'ps', num(s.priceToSalesRatio ?? s.priceSalesRatio)); put(d, 'pb', num(s.priceToBookRatio ?? s.priceBookValueRatio));
-        put(d, 'debtEquity', num(s.debtEquityRatio ?? s.debtToEquityRatio ?? s.debtToEquity)); put(d, 'currentRatio', num(s.currentRatio));
-        put(d, 'fcfPerShare', num(s.freeCashFlowPerShare)); put(d, 'dividendYield', num(s.dividendYield));
+        put(d, 'pe', num(s.priceToEarningsRatio ?? s.priceEarningsRatio)); put(d, 'ps', num(s.priceToSalesRatio ?? s.priceSalesRatio)); put(d, 'pb', num(s.priceToBookRatio ?? s.priceBookValueRatio));
+        put(d, 'pfcf', num(s.priceToFreeCashFlowsRatio ?? s.priceToFreeCashFlowRatio ?? s.priceFreeCashFlowRatio));
+        put(d, 'debtEquity', num(s.debtToEquityRatio ?? s.debtEquityRatio ?? s.debtToEquity)); put(d, 'currentRatio', num(s.currentRatio)); put(d, 'quickRatio', num(s.quickRatio));
+        put(d, 'fcfPerShare', num(s.freeCashFlowPerShare)); put(d, 'dividendYield', num(s.dividendYield)); put(d, 'payoutRatio', num(s.payoutRatio ?? s.dividendPayoutRatio));
+      }
+      for (const s of Array.isArray(km) ? km : []) {
+        const d = String(s.date ?? '').slice(0, 10);
+        // ROE/ROA/ROIC и EV-мультипликаторы в stable-API лежат в key-metrics, а не в ratios.
+        put(d, 'roe', num(s.returnOnEquity)); put(d, 'roa', num(s.returnOnAssets));
+        put(d, 'roic', num(s.returnOnInvestedCapital ?? s.returnOnCapitalEmployed ?? s.roic));
+        put(d, 'evEbitda', num(s.evToEBITDA ?? s.enterpriseValueOverEBITDA ?? s.evToEbitda)); put(d, 'evSales', num(s.evToSales ?? s.evToRevenue ?? s.enterpriseValueOverRevenue));
+        put(d, 'fcfYield', num(s.freeCashFlowYield)); put(d, 'netDebtEbitda', num(s.netDebtToEBITDA ?? s.netDebtToEbitda));
+        // подстрахуемся мультипликаторами/маржами, если их нет в ratios
+        put(d, 'pe', num(s.priceToEarningsRatio ?? s.peRatio)); put(d, 'fcfPerShare', num(s.freeCashFlowPerShare));
       }
       for (let i = 0; i < stmts.length; i += 200) await libsqlClient.batch(stmts.slice(i, i + 200));
       await markFetched(sym, 'metrics');

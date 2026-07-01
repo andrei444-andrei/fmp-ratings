@@ -492,18 +492,31 @@ function AnalystTab({ insight, panel }: { insight: TickerInsight | null; panel: 
   if (t && t.consensus != null) {
     const lo = Math.min(t.low ?? t.consensus, price), hi = Math.max(t.high ?? t.consensus, price);
     const x = (v: number) => ((v - lo) / Math.max(1e-9, hi - lo)) * 100;
+    const clamp = (p: number, m = 12) => Math.max(m, Math.min(100 - m, p));
     const upside = (t.consensus / price - 1);
+    const up = upside >= 0;
+    const xp = x(price), xc = x(t.consensus);
+    const moveL = Math.min(xp, xc), moveW = Math.abs(xc - xp);
     bar = (
       <div className="card">
-        <h2><span className="ht">Консенсус-таргет sell-side</span></h2>
-        <p className="desc">Куда аналитики ждут цену. Апсайд к консенсусу: <b className={upside >= 0 ? 'pos' : 'neg'}>{pct(upside)}</b> (цена {price.toFixed(2)}, консенсус {t.consensus.toFixed(2)}).</p>
-        <div className="tgtbar">
-          {t.low != null ? <span className="tg lo" style={{ left: x(t.low) + '%' }} title={'low ' + t.low.toFixed(0)} /> : null}
-          {t.high != null ? <span className="tg hi" style={{ left: x(t.high) + '%' }} title={'high ' + t.high.toFixed(0)} /> : null}
-          <span className="tg cons" style={{ left: x(t.consensus) + '%' }} title={'консенсус ' + t.consensus.toFixed(0)} />
-          <span className="tg price" style={{ left: x(price) + '%' }} title={'цена ' + price.toFixed(0)} />
+        <h2><span className="ht">Консенсус-таргет sell-side</span><span className={'tgt-pill ' + (up ? 'pos' : 'neg')}>{up ? '↑ ' : '↓ '}{pct(upside)}</span></h2>
+        <p className="desc">Куда аналитики ждут цену — диапазон таргетов инвестбанков и текущая цена относительно консенсуса.</p>
+        <div className="tgt">
+          <div className="tgt-top">
+            <span className="tgt-flag cons" style={{ left: clamp(xc, 16) + '%' }}><span className="c">консенсус</span><b>{t.consensus.toFixed(2)}</b></span>
+          </div>
+          <div className="tgt-track">
+            {t.low != null && t.high != null ? <span className="tgt-range" style={{ left: x(t.low) + '%', width: Math.max(0, x(t.high) - x(t.low)) + '%' }} /> : null}
+            <span className={'tgt-move ' + (up ? 'up' : 'down')} style={{ left: moveL + '%', width: moveW + '%' }} />
+            <span className="tgt-cons" style={{ left: xc + '%' }} title={'консенсус ' + t.consensus.toFixed(0)} />
+            <span className="tgt-price" style={{ left: xp + '%' }} title={'цена ' + price.toFixed(0)} />
+          </div>
+          <div className="tgt-bottom">
+            <span className="tgt-end lo">low {t.low != null ? t.low.toFixed(0) : '—'}</span>
+            <span className="tgt-flag price" style={{ left: clamp(xp, 12) + '%' }}><span className="c">цена</span><b>{price.toFixed(2)}</b></span>
+            <span className="tgt-end hi">high {t.high != null ? t.high.toFixed(0) : '—'}</span>
+          </div>
         </div>
-        <div className="tgtlegend"><span>low {t.low != null ? t.low.toFixed(0) : '—'}</span><span>● цена</span><span>▮ консенсус</span><span>high {t.high != null ? t.high.toFixed(0) : '—'}</span></div>
       </div>
     );
   }

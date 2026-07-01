@@ -163,13 +163,29 @@
 .tk .gr-act.gr-up{color:var(--tk-up)} .tk .gr-act.gr-down{color:var(--tk-down)} .tk .gr-act.gr-mut{color:var(--tk-soft)}
 .tk .gr-firm{font-weight:600}
 .tk .gr-grade{color:var(--tk-mut);text-align:right;font-size:12px}
-/* таргет-шкала */
-.tk .tgtbar{position:relative;height:16px;margin:10px 0 4px;background:linear-gradient(90deg,var(--tk-chip),var(--tk-chip));border:1px solid var(--tk-line);border-radius:8px}
-.tk .tgtbar .tg{position:absolute;top:-2px;transform:translateX(-50%)}
-.tk .tgtbar .tg.lo,.tk .tgtbar .tg.hi{top:3px;width:2px;height:10px;background:var(--tk-soft)}
-.tk .tgtbar .tg.cons{top:1px;width:3px;height:14px;background:var(--app-acc-2);border-radius:1px}
-.tk .tgtbar .tg.price{top:-3px;width:10px;height:10px;border-radius:50%;background:var(--tk-blue);border:2px solid var(--tk-card)}
-.tk .tgtlegend{display:flex;justify-content:space-between;font-size:10.5px;color:var(--tk-soft)}
+/* таргет-шкала (консенсус sell-side) */
+.tk .tgt-pill{margin-left:auto;font-size:12px;font-weight:800;padding:2px 10px;border-radius:999px;letter-spacing:-.01em;border:1px solid var(--tk-line);background:var(--tk-chip)}
+.tk .tgt-pill.pos{color:var(--tk-up)} .tk .tgt-pill.neg{color:var(--tk-down)}
+.tk .tgt{position:relative;margin:8px 2px 2px}
+.tk .tgt-top{position:relative;height:32px}
+.tk .tgt-bottom{position:relative;height:30px;margin-top:8px}
+.tk .tgt-track{position:relative;height:8px;border-radius:6px;background:var(--tk-line2)}
+.tk .tgt-range{position:absolute;top:0;bottom:0;background:var(--tk-sma200);opacity:.20;border-radius:6px}
+.tk .tgt-move{position:absolute;top:0;bottom:0;border-radius:6px;opacity:.92;box-shadow:0 0 8px rgba(0,0,0,.10)}
+.tk .tgt-move.up{background:var(--tk-up)} .tk .tgt-move.down{background:var(--tk-down)}
+.tk .tgt-cons{position:absolute;top:-4px;width:3px;height:16px;background:var(--tk-sma200);border-radius:2px;transform:translateX(-50%);box-shadow:0 0 0 2px var(--tk-card)}
+.tk .tgt-price{position:absolute;top:-4px;width:14px;height:14px;border-radius:50%;background:var(--tk-blue);border:2px solid var(--tk-card);transform:translateX(-50%);box-shadow:0 1px 3px rgba(0,0,0,.30)}
+.tk .tgt-flag{position:absolute;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;line-height:1.15;white-space:nowrap;pointer-events:none}
+.tk .tgt-flag .c{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--tk-soft);font-weight:700}
+.tk .tgt-flag b{font-size:13px;font-weight:700;letter-spacing:-.02em}
+.tk .tgt-flag.cons{bottom:2px}
+.tk .tgt-flag.cons b{color:var(--tk-sma200)}
+.tk .tgt-flag.cons::after{content:'';width:1px;height:6px;margin-top:2px;background:var(--tk-sma200);opacity:.55}
+.tk .tgt-flag.price{top:2px}
+.tk .tgt-flag.price b{color:var(--tk-blue)}
+.tk .tgt-flag.price::before{content:'';width:1px;height:6px;margin-bottom:2px;background:var(--tk-blue);opacity:.55}
+.tk .tgt-end{position:absolute;top:6px;font-size:10.5px;color:var(--tk-soft);font-weight:600}
+.tk .tgt-end.lo{left:0} .tk .tgt-end.hi{right:0}
 /* консенсус аналитиков */
 .tk .distbar{display:flex;height:22px;border-radius:6px;overflow:hidden;border:1px solid var(--tk-line)}
 .tk .distbar .ds{display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700;min-width:2px}
@@ -178,11 +194,11 @@
 /* фундаментал: сетка метрик + карточки */
 .tk .mgroup{margin-top:12px}
 .tk .mgroup-h{font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;color:var(--tk-soft);font-weight:700;margin-bottom:6px}
-.tk .metricgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.tk .metricgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:8px}
 .tk .mcard{text-align:left;background:var(--tk-chip);border:1px solid var(--tk-line);border-radius:10px;padding:8px 10px;cursor:pointer;color:var(--tk-ink)}
 .tk .mcard:hover{border-color:var(--app-acc-bd)}
 .tk .mcard.on{background:var(--app-acc-bg);border-color:var(--app-acc-bd)}
-.tk .mc-label{font-size:11px;color:var(--tk-mut);font-weight:600}
+.tk .mc-label{font-size:11px;color:var(--tk-mut);font-weight:600;line-height:1.25;min-height:2.5em;overflow-wrap:anywhere}
 .tk .mc-val{font-size:16px;font-weight:700;margin-top:2px}
 .tk .mc-sub{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-top:3px;font-size:11px;font-weight:700}
 /* новости */
