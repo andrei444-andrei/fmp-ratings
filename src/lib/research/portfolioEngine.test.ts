@@ -72,6 +72,27 @@ describe('buildPortfolio (price-panel simulation)', () => {
     expect(res.days.some((d) => d.bought.length > 0)).toBe(true);
   });
 
+  it('лестница подхватывает залп сигналов N входами подряд → загрузка плавно доходит до 100% (не 1/N)', () => {
+    const spy = series(40, '2015-01-01', 100, 0.0003);
+    const dates = spy.map((b) => b.date);
+    const aaa = series(40, '2015-01-01', 50, 0.004);
+    const panel: PricePanel = new Map([['AAA', aaa]]);
+    // ОДИН сигнальный день, но лестница из 5 под-портфелей набирает его 5 дней подряд:
+    // старая логика (транш = только сигналы дня) дала бы максимум 1/5 = 0.2 загрузки.
+    const setups: EngineSetup[] = [{ id: 's', name: 'S', signals: [{ date: dates[10], symbol: 'AAA' }] }];
+    const res = buildPortfolio(setups, cfg('ladder', 5, 'CASH'), spy, null, panel);
+    const peak = Math.max(...res.deployment);
+    expect(peak).toBeGreaterThan(0.9); // подхват трейлинг-окном → выше одиночного транша 0.2
+    expect(peak).toBeCloseTo(1, 6); // все 5 под-портфелей держат AAA
+    // полная загрузка ровно на 5-й торговый день после сигнала (окно из N под-портфелей заполнено)
+    const di = res.deployment.findIndex((d) => d > 0.99);
+    expect(res.equity[di].d).toBe(dates[15]);
+    // в «полный» день посуточная лента показывает 100% экспозицию в AAA (сумма долей = загрузка)
+    const full = res.days.find((d) => d.deployment > 0.99)!;
+    expect(full.positions[0].symbol).toBe('AAA');
+    expect(full.positions.reduce((s, p) => s + p.weight, 0)).toBeCloseTo(full.deployment, 6);
+  });
+
   it('метрики «на нагрузку»: SPY считается ТОЛЬКО за дни в рынке (≠ SPY за весь период)', () => {
     const spy = series(80, '2015-01-01', 100, 0.001); // SPY растёт каждый день
     const dates = spy.map((b) => b.date);
