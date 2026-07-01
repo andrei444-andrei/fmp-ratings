@@ -673,22 +673,28 @@ export default function PortfoliosPage() {
                       </div>
                       <div className="ctl">
                         <span className="lbl">Макс плечо</span>
-                        <input className="kin" type="number" min={1} max={3} step={0.1} value={maxLeverage} data-testid="pf-leverage"
-                          onChange={(e) => setMaxLeverage(Math.max(1, Math.min(3, Number(e.target.value) || 1)))} />
-                        <span className="lbl" style={{ textTransform: 'none', fontWeight: 500, letterSpacing: 0 }}>× (1 = без плеча)</span>
+                        <select value={maxLeverage} data-testid="pf-leverage" onChange={(e) => setMaxLeverage(Number(e.target.value))}>
+                          <option value={1}>1× (без плеча)</option>
+                          <option value={1.25}>1.25×</option>
+                          <option value={1.5}>1.5×</option>
+                          <option value={1.75}>1.75×</option>
+                          <option value={2}>2×</option>
+                          <option value={2.5}>2.5×</option>
+                          <option value={3}>3×</option>
+                        </select>
                       </div>
                       <div className="ctl">
                         <span className="lbl">Год начала</span>
                         <input className="kin" type="number" min={0} max={2100} step={1} value={startYear || ''} placeholder="с начала" data-testid="pf-startyear"
-                          onChange={(e) => { const y = Math.round(Number(e.target.value) || 0); setStartYear(y >= 1990 && y <= 2100 ? y : 0); }} />
+                          onChange={(e) => setStartYear(Math.max(0, Math.min(2100, Math.floor(Number(e.target.value)) || 0)))} />
                       </div>
                       <div className="ctl"><span className="lbl">Вес · отбор</span><span className="badge">равный · все имена</span></div>
                     </div>
                     <div className="pf-note" style={{ marginTop: 10 }}>
                       Потолок на тикер ограничивает долю одного имени; если имён мало и равный вес превысил бы потолок, остаток уходит в паркинг.
                       Плечо (напр. 1.5×) даёт долю на имя <b>min(плечо/N, потолок)</b> — суммарно &gt;100% набирается только когда имён достаточно
-                      («позиций много»), лишнее финансируется маржой по ставке паркинга. <b>При SPY-паркинге плечо не используется</b> (капитал и так
-                      в рынке). Год начала — с какого года гнать бэктест (пусто = с первого сигнала). Отбор — «все имена». Оценка in-sample.
+                      («позиций много»). Простаивающий капитал паркуется как выбрано (SPY/BIL/кэш), а заёмная часть (сверх 100%) финансируется по
+                      безрисковой ставке (BIL). Год начала — с какого года гнать бэктест (пусто = с первого сигнала). Отбор — «все имена». Оценка in-sample.
                     </div>
                   </>
                 )}
@@ -700,7 +706,7 @@ export default function PortfoliosPage() {
                       <div className="row"><span className="k">Сетапы ({selectedNames.length})</span><span>{selectedNames.join(', ') || '—'}</span></div>
                       <div className="row"><span className="k">Исполнение</span><span>{EXEC_FULL[exec]}{exec === 'ladder' ? ` · N=${ladderN}` : ''}</span></div>
                       <div className="row"><span className="k">Потолок на тикер</span><span>{maxWeightPct > 0 ? `${maxWeightPct}% (остаток → паркинг)` : 'без лимита'}</span></div>
-                      <div className="row"><span className="k">Макс плечо</span><span>{maxLeverage > 1 ? `${maxLeverage}×${parking === 'SPY' ? ' — выключено при SPY-паркинге' : ' (лишнее — маржа по ставке паркинга)'}` : 'без плеча'}</span></div>
+                      <div className="row"><span className="k">Макс плечо</span><span>{maxLeverage > 1 ? `${maxLeverage}× (простой → паркинг; заём сверх 100% — по ставке BIL)` : 'без плеча'}</span></div>
                       <div className="row"><span className="k">Год начала</span><span>{startYear > 1990 ? startYear : 'с первого сигнала'}</span></div>
                       <div className="row"><span className="k">Паркинг · вес · отбор</span><span>{PARK_LABEL[parking]} · равный · все имена</span></div>
                     </div>
@@ -757,14 +763,21 @@ export default function PortfoliosPage() {
                     onChange={(e) => setMaxWeightPct(Math.max(0, Math.min(100, Math.round(Number(e.target.value) || 0))))} />
                 </div>
                 <div className="ctl">
-                  <span className="lbl">Плечо ×</span>
-                  <input className="kin" type="number" min={1} max={3} step={0.1} value={maxLeverage} data-testid="pf-rc-leverage"
-                    onChange={(e) => setMaxLeverage(Math.max(1, Math.min(3, Number(e.target.value) || 1)))} />
+                  <span className="lbl">Плечо</span>
+                  <select value={maxLeverage} data-testid="pf-rc-leverage" onChange={(e) => setMaxLeverage(Number(e.target.value))}>
+                    <option value={1}>1×</option>
+                    <option value={1.25}>1.25×</option>
+                    <option value={1.5}>1.5×</option>
+                    <option value={1.75}>1.75×</option>
+                    <option value={2}>2×</option>
+                    <option value={2.5}>2.5×</option>
+                    <option value={3}>3×</option>
+                  </select>
                 </div>
                 <div className="ctl">
                   <span className="lbl">С года</span>
                   <input className="kin" type="number" min={0} max={2100} step={1} value={startYear || ''} placeholder="нач." data-testid="pf-rc-startyear"
-                    onChange={(e) => { const y = Math.round(Number(e.target.value) || 0); setStartYear(y >= 1990 && y <= 2100 ? y : 0); }} />
+                    onChange={(e) => setStartYear(Math.max(0, Math.min(2100, Math.floor(Number(e.target.value)) || 0)))} />
                 </div>
                 <div className="grow">
                   <button className="btn apply on" data-testid="pf-recompute-run" onClick={recompute} disabled={busy}>{busy ? 'Считаю…' : '↻ Пересчитать'}</button>
@@ -784,7 +797,7 @@ export default function PortfoliosPage() {
                 Период {m.start ?? '—'}…{m.end ?? '—'} · {m.nSignals} сигналов · {m.nSymbols} имён · {m.nSetups} сетапов ·{' '}
                 {EXEC_LABEL[meta?.execution ?? exec]}{(meta?.execution ?? exec) === 'ladder' ? ` N=${meta?.ladderN ?? ladderN}` : ''} · паркинг {meta?.parking ?? parking}
                 {(meta?.maxWeight ?? 0) > 0 ? ` · потолок ${Math.round((meta!.maxWeight as number) * 100)}%` : ''}
-                {(meta?.maxLeverage ?? 1) > 1 ? ` · плечо ${meta!.maxLeverage}×${(meta?.parking ?? parking) === 'SPY' ? ' (выкл. при SPY)' : ''}` : ''}
+                {(meta?.maxLeverage ?? 1) > 1 ? ` · плечо ${meta!.maxLeverage}×` : ''}
                 {(meta?.startYear ?? 0) > 1990 ? ` · с ${meta!.startYear}` : ''}
                 {meta?.synthetic && <span className="badge warn" style={{ marginLeft: 8 }}>данные синтетические (без ключей)</span>}
                 {!meta?.synthetic && !!meta?.syntheticSymbols && <span className="badge warn" style={{ marginLeft: 8 }}>имён без реальных цен: {meta.syntheticSymbols} (синтетика)</span>}

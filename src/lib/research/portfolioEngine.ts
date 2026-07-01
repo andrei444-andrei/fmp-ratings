@@ -22,8 +22,8 @@ export type ExecMode = 'ladder' | 'weekly' | 'monthly';
 // maxWeight — потолок веса на 1 тикер (доля 0..1); 0 = без лимита. Если равный вес превысил бы потолок
 // (имён мало), каждое имя капается на maxWeight, а неразмещённый остаток уходит в паркинг.
 // maxLeverage — макс. плечо (1 = без плеча). Доля на имя = min(L/m, потолок), итог = min(L, m·потолок):
-// >100% набирается только когда имён достаточно; лишнее финансируется маржой по ставке паркинга.
-// При SPY-паркинге плечо не используется (капитал и так в рынке) → L форсируется в 1.
+// >100% набирается только когда имён достаточно. Простаивающий капитал (загрузка <100%) паркуется как
+// выбрано (SPY/BIL/кэш); заёмная часть (>100%) финансируется по безрисковой ставке (BIL), независимо от паркинга.
 export type EngineConfig = { execution: ExecMode; ladderN: number; parking: Parking; selection: 'all'; maxWeight: number; maxLeverage: number };
 
 export type Signal = { date: string; symbol: string }; // дата входа + тикер (из потока сделок сетапа)
@@ -263,15 +263,22 @@ export function buildPortfolio(
   const calPrices = new Map<string, number[]>();
   for (const sym of symbols) calPrices.set(sym, alignCF(panel.get(sym) || [], calDates));
 
-  // ставка паркинга простоя
+  // ставка паркинга простоя (для НЕразвёрнутого капитала, когда загрузка < 100%)
   let parkRate: (k: number) => number = () => 0;
-  if (cfg.parking === 'SPY') {
-    parkRate = (k) => (spyClose[k - 1] > 0 ? spyClose[k] / spyClose[k - 1] - 1 : 0);
-  } else if (cfg.parking === 'BIL' && bil && bil.length >= 2) {
+  // ставка займа/маржи (для заёмной части при плече, загрузка > 100%): безрисковая (BIL), иначе 0
+  let borrowRate: (k: number) => number = () => 0;
+  if (bil && bil.length >= 2) {
     const bclose = alignCF(bil, calDates);
-    parkRate = (k) =>
+    borrowRate = (k) =>
       Number.isFinite(bclose[k - 1]) && Number.isFinite(bclose[k]) && bclose[k - 1] > 0 ? bclose[k] / bclose[k - 1] - 1 : 0;
   }
+  if (cfg.parking === 'SPY') {
+    parkRate = (k) => (spyClose[k - 1] > 0 ? spyClose[k] / spyClose[k - 1] - 1 : 0);
+  } else if (cfg.parking === 'BIL') {
+    parkRate = borrowRate; // паркинг в BIL = та же ставка
+  }
+  // единая ставка на «остаток»: доход паркинга (остаток ≥ 0) либо стоимость займа (остаток < 0 при плече)
+  const idleRate = (idle: number, k: number): number => (idle >= 0 ? parkRate(k) : borrowRate(k));
 
   // равновзвешенная дневная доходность корзины (по ценам k-1 → k); NaN, если нет валидных цен
   const eqwReturn = (basket: Set<string>, k: number): number => {
@@ -302,8 +309,7 @@ export function buildPortfolio(
 
   const N_LAD = clampN(cfg.ladderN);
   const maxW = cfg.maxWeight > 0 && cfg.maxWeight < 1 ? cfg.maxWeight : 0; // потолок веса на тикер (0 = off)
-  // плечо: при SPY-паркинге не используется (капитал уже в рынке); иначе клампим в [1, 3]
-  const L = cfg.parking === 'SPY' ? 1 : Math.max(1, Math.min(3, cfg.maxLeverage || 1));
+  const L = Math.max(1, Math.min(3, cfg.maxLeverage || 1)); // макс. плечо, клампим в [1, 3]
 
   // Лестница: корзина под-портфеля, ребалансированного на день входа e = «текущий отбор» —
   // имена с сигналом за трейлинг-окно N дней (e−N+1..e). Та же логика, что у периодического
@@ -359,9 +365,8 @@ export function buildPortfolio(
             const p = calPrices.get(s)!;
             sr += p[k] / p[k - 1] - 1;
           }
-          // доходность слота = per·Σ(доходность имён) + (1−deployed)·паркинг. При deployed>1 остаток < 0 —
-          // это маржа: платим ставку паркинга (BIL/кэш) на заёмную часть.
-          sum += per * sr + (1 - deployed) * parkRate(k);
+          // доходность слота = per·Σ(доходность имён) + остаток·ставка. Остаток ≥0 → паркинг; <0 (плечо) → заём (BIL).
+          sum += per * sr + (1 - deployed) * idleRate(1 - deployed, k);
           depSum += deployed;
           park += (1 - deployed) / N_LAD;
           const w = per / N_LAD; // вес имени в ПОРТФЕЛЕ (слот = 1/N капитала)
@@ -439,7 +444,7 @@ export function buildPortfolio(
 
     rebalance(start); // первый ребаланс на старте
     for (let k = start + 1; k <= end; k++) {
-      cash *= 1 + parkRate(k); // паркинг на свободном кэше
+      cash *= 1 + idleRate(cash, k); // свободный кэш → паркинг; отрицательный (маржа при плече) → заём по ставке BIL
       if (keyOf(k) !== keyOf(k - 1)) rebalance(k);
       let hv = 0;
       for (const [sym, u] of holdings) {
@@ -483,10 +488,10 @@ export function buildPortfolio(
   }
   const transitions = equity.length - 1;
   // КАПИТАЛЬНАЯ загрузка: средняя доля капитала под РЫНОЧНЫМ риском по всем торговым дням.
-  // BIL/кэш — безрисковый паркинг (НЕ загрузка); SPY-паркинг — тоже рынок, поэтому в этом режиме
-  // простаивающий капитал считается загруженным (deployment + доля в паркинге ≈ 1 → загрузка ≈ 100%).
+  // BIL/кэш — безрисковый паркинг (НЕ загрузка); SPY-паркинг — тоже рынок, поэтому простаивающий капитал
+  // считается загруженным (dep + доля в SPY-паркинге ≈ 1). При плече загрузка может быть > 100%.
   const parkedIsMarket = cfg.parking === 'SPY';
-  const loadingByDay = deployment.map((d, i) => (parkedIsMarket ? Math.min(1, (d ?? 0) + (dayParking[i] ?? 0)) : (d ?? 0)));
+  const loadingByDay = deployment.map((d, i) => (parkedIsMarket ? (d ?? 0) + (dayParking[i] ?? 0) : (d ?? 0)));
   const loading = transitions > 0 ? meanOf(loadingByDay.slice(1)) : null;
   const timeInMarket = transitions > 0 ? inMarketDays / transitions : null; // бинарный time-in-market (для справки)
   const years = (dts(calDates[end]) - dts(calDates[start])) / (365.25 * 86400);

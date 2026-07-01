@@ -189,7 +189,7 @@ describe('buildPortfolio (price-panel simulation)', () => {
     expect(capped.metrics.loading!).toBeLessThan(full.metrics.loading!);
   });
 
-  it('плечо: много имён + плечо 1.5 → загрузка ~150%; SPY-паркинг плечо выключает', () => {
+  it('плечо: много имён + плечо 1.5 → загрузка ~150% при любом паркинге', () => {
     const spy = series(90, '2015-01-01', 100, 0.0003);
     const dates = spy.map((b) => b.date);
     const panel: PricePanel = new Map();
@@ -208,9 +208,9 @@ describe('buildPortfolio (price-panel simulation)', () => {
     expect(lev.metrics.loading!).toBeGreaterThan(1.3); // загрузка сверх 100% (плечо)
     expect(flat.metrics.loading!).toBeLessThan(1.05);
     expect(lev.metrics.loading!).toBeGreaterThan(flat.metrics.loading!);
-    // SPY-паркинг выключает плечо → загрузка ~100%, не 150%
+    // плечо работает при любом паркинге, в т.ч. SPY → загрузка тоже ~150%
     const spyLev = buildPortfolio(setups, cfg('weekly', 5, 'SPY', 0.2, 1.5), spy, null, panel);
-    expect(spyLev.metrics.loading!).toBeLessThan(1.05);
+    expect(spyLev.metrics.loading!).toBeGreaterThan(1.3);
   });
 
   it('пустые входы не валятся', () => {
