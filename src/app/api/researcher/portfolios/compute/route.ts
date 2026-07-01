@@ -67,8 +67,9 @@ export async function POST(req: Request) {
     const spyRowsRaw = await getPrices('SPY', from, to).catch(() => [] as any[]);
     const synthetic = !(spyRowsRaw && spyRowsRaw.length >= 2);
     const spy = synthetic ? toBars(syntheticSeries('SPY')) : toBars(spyRowsRaw);
+    // BIL нужен для паркинга в BIL и как безрисковая ставка займа при плече (>1)
     let bil: Bar[] | null = null;
-    if (cfg.parking === 'BIL') {
+    if (cfg.parking === 'BIL' || cfg.maxLeverage > 1) {
       const bilRows = await getPrices('BIL', from, to).catch(() => [] as any[]);
       if (bilRows && bilRows.length >= 2) bil = toBars(bilRows);
     }
