@@ -6,8 +6,11 @@
 //    «топ-K экстремумов» подключается, когда в сетапе появится point-in-time ранжирующий фактор;
 //    низкокоррелированный отбор — позже.
 //  • ИСПОЛНЕНИЕ — как фактически держим/ребалансируем:
-//      – ladder N: каждый торговый день вводим 1/N капитала в сегодняшний отбор, транш держим N дней
-//        (равный вес среди N перекрывающихся дневных траншей; пустой день → паркинг в этом слоте);
+//      – ladder N: каждый торговый день ОДИН из N под-портфелей (1/N капитала) полностью
+//        перекладывается в ТЕКУЩИЙ отбор (имена с сигналом за трейлинг-окно N дней — та же логика,
+//        что у периодического ребаланса) и держит N дней. Итог = N параллельных под-портфелей,
+//        сдвинутых по фазе на день: одиночный залп сигналов подхватывается N входами подряд, так что
+//        загрузка плавно набирается к 100% и плавно снимается (сглаживание входа/выхода). Пусто → паркинг;
 //      – weekly / monthly: на 100% перекладываемся в текущий отбор (имена с сигналом за прошедший
 //        период) и держим до следующего ребаланса (buy & hold с дрейфом весов между ребалансами).
 //
@@ -285,6 +288,23 @@ export function buildPortfolio(
   };
 
   const N_LAD = clampN(cfg.ladderN);
+
+  // Лестница: корзина под-портфеля, ребалансированного на день входа e = «текущий отбор» —
+  // имена с сигналом за трейлинг-окно N дней (e−N+1..e). Та же логика, что у периодического
+  // ребаланса, но для одного из N сдвинутых по фазе под-портфелей. Мемоизируется по e.
+  const trancheCache = new Map<number, Set<string>>();
+  const trancheBasket = (e: number): Set<string> => {
+    let b = trancheCache.get(e);
+    if (b) return b;
+    b = new Set<string>();
+    for (let t = Math.max(0, e - N_LAD + 1); t <= e; t++) {
+      const set = signalsByDay.get(t);
+      if (set) for (const s of set) b.add(s);
+    }
+    trancheCache.set(e, b);
+    return b;
+  };
+
   const maxHold = cfg.execution === 'ladder' ? N_LAD : cfg.execution === 'weekly' ? 5 : 21;
   const start = minEntry;
   const end = Math.min(N - 1, Math.max(lastEntry + maxHold, start + 1));
@@ -312,8 +332,8 @@ export function buildPortfolio(
           park += 1 / N_LAD;
           continue;
         }
-        const basket = signalsByDay.get(e);
-        const valid = basket && basket.size ? basketValid(basket, k) : [];
+        const basket = trancheBasket(e); // текущий отбор под-портфеля, вошедшего на день e
+        const valid = basket.size ? basketValid(basket, k) : [];
         if (valid.length) {
           let sr = 0;
           for (const s of valid) {
@@ -337,13 +357,14 @@ export function buildPortfolio(
       dayWeights.push(wmap);
       dayParking.push(park);
     }
-    // входы лестницы: каждый сигнальный день — транш 1/N капитала, равные доли среди имён дня
-    for (const [d, basket] of signalsByDay) {
-      if (d < start || d >= end) continue;
+    // входы лестницы: каждый торговый день один под-портфель (1/N капитала) ребалансируется в
+    // ТЕКУЩИЙ отбор (трейлинг-окно N дней) и держит N дней; равные доли среди имён отбора.
+    for (let e = start; e < end; e++) {
+      const basket = trancheBasket(e);
+      if (!basket.size) continue;
       const names = [...basket];
-      if (!names.length) continue;
       rebalances.push({
-        date: calDates[d],
+        date: calDates[e],
         kind: 'tranche',
         scope: 1 / N_LAD,
         positions: names.map((s) => ({ symbol: s, weight: 1 / names.length, setups: setupsOf(s) })),
@@ -351,7 +372,6 @@ export function buildPortfolio(
         spyRet: 0,
       });
     }
-    rebalances.sort((a, b) => (a.date < b.date ? -1 : 1));
   } else {
     // периодический ребаланс: на границе недели/месяца на 100% в имена с сигналом за прошедший период
     const keyOf = (k: number): number =>
@@ -601,7 +621,7 @@ export function buildPortfolio(
 
   // посуточная лента: ПОЛНАЯ экспозиция каждого дня + изменения состава (куплено/продано).
   // Экспозиция дня k = веса активных траншей/холдингов (dayWeights). Изменения vs вчера:
-  //  лестница — вошёл транш signals[k-1] (стал живым сегодня), вышел signals[k-1-N]; каждый (1/N)/m.
+  //  лестница — вошёл под-портфель (трейлинг-отбор дня k-1, стал живым сегодня), вышел под-портфель дня k-1-N; каждый (1/N)/m.
   //  ребаланс — на день ребаланса продаём вчерашний состав, покупаем новый; иначе изменений нет.
   const DAYS_CAP = 1000;
   const rebDaySet = new Set<number>();
@@ -615,9 +635,10 @@ export function buildPortfolio(
     let bought: DayTrade[] = [];
     let sold: DayTrade[] = [];
     if (cfg.execution === 'ladder') {
-      const bd = signalsByDay.get(k - 1);
+      const bd = k - 1 >= start ? trancheBasket(k - 1) : null; // под-портфель, вошедший сегодня
       if (bd && bd.size) { const w = 1 / N_LAD / bd.size; bought = [...bd].map((s) => ({ symbol: s, weight: w })); }
-      const sd = signalsByDay.get(k - 1 - N_LAD);
+      const se = k - 1 - N_LAD;
+      const sd = se >= start ? trancheBasket(se) : null; // под-портфель, истёкший сегодня
       if (sd && sd.size) { const w = 1 / N_LAD / sd.size; sold = [...sd].map((s) => ({ symbol: s, weight: w })); }
     } else if (rebDaySet.has(k)) {
       const prev = dayWeights[i - 1] || new Map();
