@@ -92,6 +92,7 @@
 .rsx .pf-stack.empty { align-items: center; justify-content: center; color: var(--fk-text-3); font-size: 11px; }
 .rsx .pf-stack .seg { display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: 700; white-space: nowrap; overflow: hidden; min-width: 2px; border-right: 1px solid rgba(255, 255, 255, .35); }
 .rsx .pf-stack .seg:last-child { border-right: 0; }
+.rsx .pf-stack .seg.park { background: repeating-linear-gradient(45deg, #dbe1ea, #dbe1ea 6px, #e8edf4 6px, #e8edf4 12px); color: var(--fk-text-2); font-weight: 600; }
 .rsx table.pf-ptable td .pf-stack { height: 18px; }
 
 /* ось лет под кривой капитала + тумблер SPY-на-загрузке */

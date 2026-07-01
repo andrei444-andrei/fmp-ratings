@@ -18,6 +18,7 @@ type ComputeMeta = { setups: string[]; execution: ExecMode; ladderN: number; par
 const EXEC_LABEL: Record<ExecMode, string> = { ladder: 'лестница', weekly: 'ребаланс/нед', monthly: 'ребаланс/мес' };
 const EXEC_FULL: Record<ExecMode, string> = { ladder: 'Лестница', weekly: 'Недельный ребаланс', monthly: 'Месячный ребаланс' };
 const PARK_LABEL: Record<Parking, string> = { BIL: 'BIL (T-bills)', SPY: 'SPY', CASH: 'Кэш (0%)' };
+const PARK_SHORT: Record<Parking, string> = { BIL: 'BIL', SPY: 'SPY', CASH: 'кэш' };
 const STEPS = ['Вселенная', 'Ребалансировка', 'Параметры', 'Запуск'];
 
 const newId = () => (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `pf-${Date.now()}-${Math.round(Math.random() * 1e6)}`);
@@ -174,9 +175,10 @@ function PeriodChart({ periods, hovered, onHover, showLoaded }: { periods: Perio
 
 const SEG_COLORS = ['#2563eb', '#0a8a60', '#b5740a', '#c81e3c', '#7c3aed', '#0891b2', '#be185d', '#65a30d', '#0d9488', '#9333ea', '#ea580c', '#0369a1'];
 
-// Наглядная долевая полоса состава: ширина сегмента ∝ доля тикера.
-function StackedBar({ positions }: { positions: { symbol: string; weight: number }[] }) {
-  if (!positions.length) return <div className="pf-stack empty">в паркинге — позиций нет</div>;
+// Наглядная долевая полоса состава: ширина сегмента ∝ доля тикера. Опц. хвост — паркинг (SPY/BIL/кэш).
+function StackedBar({ positions, parking }: { positions: { symbol: string; weight: number }[]; parking?: { label: string; weight: number } }) {
+  const parkW = parking && parking.weight > 1e-4 ? parking.weight * 100 : 0;
+  if (!positions.length && !parkW) return <div className="pf-stack empty">в паркинге — позиций нет</div>;
   return (
     <div className="pf-stack" data-testid="pf-stack">
       {positions.map((p, i) => {
@@ -187,6 +189,11 @@ function StackedBar({ positions }: { positions: { symbol: string; weight: number
           </div>
         );
       })}
+      {parkW > 0 && (
+        <div className="seg park" style={{ width: `${parkW}%` }} title={`${parking!.label} (паркинг) ${parkW.toFixed(1)}%`}>
+          {parkW > 7 ? `${parking!.label} ${parkW.toFixed(0)}%` : ''}
+        </div>
+      )}
     </div>
   );
 }
@@ -215,6 +222,7 @@ export default function PortfoliosPage() {
   const [selWeek, setSelWeek] = useState<string | null>(null); // выбранная неделя (drill-down)
   const [selDay, setSelDay] = useState<number>(-1); // индекс выбранного дня (drill-down экспозиции)
   const [dayFilter, setDayFilter] = useState(''); // фильтр дней по тикеру
+  const [dayYear, setDayYear] = useState(''); // фильтр ленты дней по году ('' = все)
   const [libQuery, setLibQuery] = useState(''); // поиск по библиотеке тестов
   const [libSort, setLibSort] = useState<LibSort>('recent'); // сортировка библиотеки
 
@@ -418,7 +426,31 @@ export default function PortfoliosPage() {
     [loadSaved, curId],
   );
 
+  // быстрый пересчёт открытого теста с текущими параметрами (без мастера) + обновление сохранённого
+  const recompute = useCallback(async () => {
+    const ids = [...selected];
+    if (!ids.length) return;
+    setBusy(true);
+    setErr('');
+    const maxWeight = maxWeightPct > 0 ? Math.min(1, maxWeightPct / 100) : 0;
+    try {
+      const res = await computeOnly(ids, { execution: exec, ladderN, parking, maxWeight });
+      if (res && curId) {
+        await fetch('/api/researcher/portfolios', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ id: curId, name: name || fallbackName(setups.filter((s) => ids.includes(s.id)).map((s) => s.name), exec, ladderN, parking, maxWeight), config: { setupIds: ids, selection: 'all', execution: exec, ladderN, parking, maxWeight }, snapshot: snapOf(res.metrics) }),
+        });
+        await loadSaved();
+      }
+    } catch (e: any) {
+      setErr(e?.message || 'Ошибка расчёта');
+    } finally {
+      setBusy(false);
+    }
+  }, [selected, exec, ladderN, parking, maxWeightPct, curId, name, setups, computeOnly, loadSaved]);
+
   const m = result?.metrics;
+  const parkShort = PARK_SHORT[(meta?.parking ?? parking) as Parking] || 'паркинг';
   const stats = useMemo(() => {
     if (!m) return [];
     return [
@@ -442,16 +474,23 @@ export default function PortfoliosPage() {
   const weekDetail = useMemo(() => (result && selWeek ? result.weeks.find((w) => w.start === selWeek) || null : null), [result, selWeek]);
   useEffect(() => { setSelWeek(null); }, [result, gran]);
 
-  // посуточная экспозиция и сделки: список (новые сверху) с фильтром по тикеру
+  // посуточная экспозиция и сделки: список (новые сверху) с фильтром по году и тикеру
+  const dayYears = useMemo(() => {
+    const ys = new Set<string>();
+    for (const d of result?.days || []) ys.add(d.date.slice(0, 4));
+    return [...ys].sort((a, b) => (a < b ? 1 : -1)); // новые годы сверху
+  }, [result]);
   const dayList = useMemo(() => {
     const all = result?.days ? result.days.map((d, idx) => ({ d, idx })).reverse() : [];
     const f = dayFilter.trim().toUpperCase();
-    return f
-      ? all.filter(({ d }) => d.positions.some((p) => p.symbol.includes(f)) || d.bought.some((t) => t.symbol.includes(f)) || d.sold.some((t) => t.symbol.includes(f)))
-      : all;
-  }, [result, dayFilter]);
+    return all.filter(({ d }) => {
+      if (dayYear && d.date.slice(0, 4) !== dayYear) return false;
+      if (f && !(d.positions.some((p) => p.symbol.includes(f)) || d.bought.some((t) => t.symbol.includes(f)) || d.sold.some((t) => t.symbol.includes(f)))) return false;
+      return true;
+    });
+  }, [result, dayFilter, dayYear]);
   const selDayEvent = useMemo(() => (result?.days && selDay >= 0 ? result.days[selDay] || null : null), [result, selDay]);
-  useEffect(() => { setSelDay(-1); setDayFilter(''); }, [result]);
+  useEffect(() => { setSelDay(-1); setDayFilter(''); setDayYear(''); }, [result]);
 
   // библиотека тестов: поиск по имени + сортировка; избранные всегда закреплены сверху
   const libRows = useMemo(() => {
@@ -668,6 +707,35 @@ export default function PortfoliosPage() {
                 <input data-testid="portfolio-name" value={name} placeholder="Название теста…" onChange={(e) => setName(e.target.value)} onBlur={(e) => rename(e.target.value)} />
                 <button className="btn sm" data-testid="new-test-2" onClick={newTest}>➕ Новый тест</button>
               </div>
+              {/* быстрая правка параметров + пересчёт без мастера */}
+              <div className="pf-controls pf-recompute" data-testid="pf-recompute">
+                <div className="ctl">
+                  <span className="lbl">Исполнение</span>
+                  <select value={exec} data-testid="pf-rc-exec" onChange={(e) => setExec(e.target.value as ExecMode)}>
+                    <option value="ladder">Лестница</option>
+                    <option value="weekly">Ребаланс / неделя</option>
+                    <option value="monthly">Ребаланс / месяц</option>
+                  </select>
+                  {exec === 'ladder' && (
+                    <input className="kin" type="number" min={1} max={60} value={ladderN} data-testid="pf-rc-ladderN"
+                      onChange={(e) => setLadderN(Math.max(1, Math.min(60, Number(e.target.value) || 5)))} />
+                  )}
+                </div>
+                <div className="ctl">
+                  <span className="lbl">Паркинг</span>
+                  <select value={parking} data-testid="pf-rc-parking" onChange={(e) => setParking(e.target.value as Parking)}>
+                    <option value="BIL">BIL</option><option value="SPY">SPY</option><option value="CASH">Кэш</option>
+                  </select>
+                </div>
+                <div className="ctl">
+                  <span className="lbl">Потолок %</span>
+                  <input className="kin" type="number" min={0} max={100} step={5} value={maxWeightPct} data-testid="pf-rc-maxweight"
+                    onChange={(e) => setMaxWeightPct(Math.max(0, Math.min(100, Math.round(Number(e.target.value) || 0))))} />
+                </div>
+                <div className="grow">
+                  <button className="btn apply on" data-testid="pf-recompute-run" onClick={recompute} disabled={busy}>{busy ? 'Считаю…' : '↻ Пересчитать'}</button>
+                </div>
+              </div>
               <div className="card-t">Метрики стратегии</div>
               <div className="statgrid pf" data-testid="portfolio-metrics" style={{ marginTop: 10 }}>
                 {stats.map((s) => (
@@ -809,7 +877,15 @@ export default function PortfoliosPage() {
             <div className="card"><div className="card-b">
               <div className="pf-period-head">
                 <div className="card-t">Экспозиция и сделки по дням ({result.days.length})</div>
-                <input className="nin" placeholder="Фильтр по тикеру…" data-testid="pf-reb-filter" value={dayFilter} onChange={(e) => setDayFilter(e.target.value)} />
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  {dayYears.length > 1 && (
+                    <select className="nin" style={{ width: 'auto' }} data-testid="pf-day-year" value={dayYear} onChange={(e) => setDayYear(e.target.value)}>
+                      <option value="">Все годы</option>
+                      {dayYears.map((y) => <option key={y} value={y}>{y}</option>)}
+                    </select>
+                  )}
+                  <input className="nin" placeholder="Фильтр по тикеру…" data-testid="pf-reb-filter" value={dayFilter} onChange={(e) => setDayFilter(e.target.value)} />
+                </div>
               </div>
               {selDayEvent ? (
                 <>
@@ -817,7 +893,7 @@ export default function PortfoliosPage() {
                     <b>{selDayEvent.date}</b> · экспозиция {pct(selDayEvent.deployment, 0)} · паркинг {pct(selDayEvent.parking, 0)} · имён {selDayEvent.positions.length}
                     {' '}· день <span className={signCls(selDayEvent.ret)}>{signPct(selDayEvent.ret)}</span> · SPY {signPct(selDayEvent.spyRet)}
                   </div>
-                  <StackedBar positions={selDayEvent.positions} />
+                  <StackedBar positions={selDayEvent.positions} parking={{ label: parkShort, weight: selDayEvent.parking }} />
                   <div className="pf-ptable-wrap" style={{ marginTop: 10, maxHeight: 220 }}>
                     <table className="pf-ptable" data-testid="pf-reb-positions">
                       <thead><tr><th className="l">Тикер</th><th>Экспозиция</th><th className="l">Сетапы</th></tr></thead>
@@ -849,13 +925,13 @@ export default function PortfoliosPage() {
                         <td>{d.bought.length + d.sold.length > 0 ? `${d.bought.length}↑ ${d.sold.length}↓` : '—'}</td>
                         <td className={signCls(d.ret)}>{signPct(d.ret)}</td>
                         <td className={signCls(d.ret - d.spyRet)}>{signPct(d.ret - d.spyRet)}</td>
-                        <td className="l" style={{ minWidth: 200 }}><StackedBar positions={d.positions.slice(0, 12)} /></td>
+                        <td className="l" style={{ minWidth: 200 }}><StackedBar positions={d.positions.slice(0, 12)} parking={{ label: parkShort, weight: d.parking }} /></td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-              {dayList.length > 400 && <div className="pf-note">Показаны первые 400 из {dayList.length} дней. Уточни фильтром по тикеру.</div>}
+              {dayList.length > 400 && <div className="pf-note">Показаны первые 400 из {dayList.length} дней{dayYear ? ` за ${dayYear}` : ''}. Уточни выбором года или фильтром по тикеру.</div>}
             </div></div>
           )}
         </>

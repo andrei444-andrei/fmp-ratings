@@ -89,6 +89,13 @@ test.describe('Портфели /portfolios', () => {
     // выбранный день: полная экспозиция дня
     await expect(page.getByTestId('pf-reb-sel')).toContainText('экспозиция');
 
+    // быстрая правка параметров без мастера: меняем паркинг и пересчитываем на месте
+    await expect(page.getByTestId('pf-recompute-run')).toBeVisible();
+    await page.getByTestId('pf-rc-parking').selectOption('SPY');
+    await page.getByTestId('pf-recompute-run').click();
+    await expect(page.getByTestId('portfolio-metrics')).toBeVisible({ timeout: 30000 });
+    await expect(page.getByTestId('portfolio-meta')).toContainText('паркинг SPY');
+
     await request.delete(`/api/researcher/setups?id=${encodeURIComponent(setupId)}`);
   });
 
