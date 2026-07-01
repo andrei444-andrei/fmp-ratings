@@ -24,6 +24,7 @@ const METRICS: Record<string, { label: string; periods: number[]; unit: string }
   momentum: { label: 'Моментум', periods: [5, 10, 21, 63, 126, 252], unit: '%' },
   vol: { label: 'Волатильность', periods: [10, 21, 63, 126], unit: '%' },
   dist_ath: { label: 'Расст. от макс.', periods: [0, 63, 252], unit: '%' },
+  dd_pctile: { label: 'Перц. просадки', periods: [63, 126, 252], unit: '' },
   xbench: { label: 'Превышение бенч.', periods: [5, 10, 21, 63, 126, 252], unit: 'пп' },
   xvadj: { label: 'Превыш., норм. на волу', periods: [21, 63, 126, 252], unit: 'пп' },
   sma_dist: { label: 'Откл. от SMA', periods: [20, 50, 100, 200], unit: '%' },
@@ -1220,7 +1221,7 @@ function FormulaHelp({ onInsert, onClose }: { onInsert: (name: string, expr: str
                 ))}
               </tbody>
             </table>
-            <p className="sub" style={{ marginTop: 6 }}>Напоминание: <code>vol</code> — <b>годовая</b> волатильность (×√252); <code>xbench</code>/<code>xvadj</code> — в пп относительно бенчмарка; <code>dist_ath[0]</code> ≤ 0 (расстояние до исторического максимума).</p>
+            <p className="sub" style={{ marginTop: 6 }}>Напоминание: <code>vol</code> — <b>годовая</b> волатильность (×√252); <code>xbench</code>/<code>xvadj</code> — в пп относительно бенчмарка; <code>dist_ath[0]</code> ≤ 0 (расстояние до исторического максимума); <code>dd_pctile</code> — перцентиль текущей просадки в окне: <b>0 = самая глубокая/редкая</b>, 100 = у максимума (условие <code>dd_pctile[252] ≤ 10</code> = «в 10% самых глубоких просадок за год»; поставьте горизонт 5 и разрез «По тикерам» → ожидаемая доходность за 5д в этом бакете).</p>
           </section>
           <section className="fh-s">
             <h4>Пустые значения (null)</h4>
