@@ -22,6 +22,10 @@ describe('formula — безопасный вычислитель', () => {
     expect(c.refs.sort()).toEqual(['momentum_126', 'momentum_21', 'momentum_63']);
     expect(c.eval(G({ momentum_21: 9, momentum_63: 12, momentum_126: 15 }))).toBe(12);
     expect(compileFormula('xbench[5] - xbench[252]').eval(G({ xbench_5: 3, xbench_252: 1 }))).toBe(2);
+    // фактор с подчёркиванием в имени (dd_pctile) через скобки → колонка dd_pctile_63 (как в движке)
+    const dd = compileFormula('dd_pctile[63]');
+    expect(dd.refs).toEqual(['dd_pctile_63']);
+    expect(dd.eval(G({ dd_pctile_63: 8 }))).toBe(8);
     expect(() => compileFormula('momentum[]')).toThrow(/период/);
     expect(() => compileFormula('momentum[5')).toThrow(/скобка/);
   });

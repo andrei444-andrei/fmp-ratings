@@ -183,6 +183,10 @@ test.describe('Скринер /researcher', () => {
     // в справке есть таблица факторов и раздел готовых формул
     await expect(help.getByText('Доступные факторы')).toBeVisible();
     await expect(help.getByText('Готовые сложные формулы')).toBeVisible();
+    // новый фактор перцентиля просадки виден в таблице факторов (строка dd_pctile с периодами 63/126/252)
+    const ddRow = help.locator('tr').filter({ hasText: 'dd_pctile' });
+    await expect(ddRow).toBeVisible();
+    await expect(ddRow).toContainText('63, 126, 252');
 
     // «Вставить» первой готовой формулы → в карточке 3 добавляется строка-черновик.
     // Кнопка видима и доступна; клик шлём через dispatchEvent — модалка центрируется через CSS transform,

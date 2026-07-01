@@ -17,9 +17,10 @@ export type { TickerObs, TickerPanel };
 const TTL_MS = 24 * 3600 * 1000;
 // Версия раскладки/семантики наблюдения (obs). v2 добавила форвардные исходы [ret,exc,mfe,mae,mdd];
 // v3 обрезала MFE/MAE по 0 и сделала exc сырым; v4/v5 расширили набор факторов (финансовые периоды);
-// v6 добавила xvadj (превышение бенча, скорр. на волатильность).
+// v6 добавила xvadj (превышение бенча, скорр. на волатильность);
+// v7 добавила dd_pctile (перцентиль-ранг текущей просадки в окне — насколько редка просадка для актива).
 // Несовместимые старые строки игнорируются на чтении и пересчитываются.
-const SCHEMA_VERSION = 'v6';
+const SCHEMA_VERSION = 'v7';
 
 let ensured = false;
 export async function ensureScreenPanelTable(): Promise<void> {

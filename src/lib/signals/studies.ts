@@ -144,6 +144,13 @@ def factor_series(c, bc, fid, param, has_b, skip=0):
     if fid == 'dist_ath':
         mx = c.cummax() if p == 0 else c.rolling(p).max()
         return (c / mx - 1.0) * 100.0
+    if fid == 'dd_pctile':
+        # Перцентиль-ранг ТЕКУЩЕЙ просадки в окне p дней (насколько редка просадка ИМЕННО для этого актива).
+        # Просадка = отклонение от трейлинг-максимума за p дней (<= 0); ранжируем сегодняшнее значение среди
+        # последних p наблюдений: 0 = самая ГЛУБОКАЯ просадка за окно (реже/экстремальнее), 100 = у максимума.
+        # Только прошлые данные (point-in-time, без look-ahead). Ожидаемую доходность в бакете считает скринер.
+        dd = c / c.rolling(p).max() - 1.0
+        return dd.rolling(p).rank(pct=True) * 100.0
     if fid == 'sma_dist':
         return (c / c.rolling(p).mean() - 1.0) * 100.0
     if fid == 'rsi':
@@ -909,6 +916,7 @@ async def main():
         METR = [('momentum', 5), ('momentum', 10), ('momentum', 21), ('momentum', 63), ('momentum', 126), ('momentum', 252),
                 ('vol', 10), ('vol', 21), ('vol', 63), ('vol', 126),
                 ('dist_ath', 0), ('dist_ath', 63), ('dist_ath', 252),
+                ('dd_pctile', 63), ('dd_pctile', 126), ('dd_pctile', 252),
                 ('xbench', 5), ('xbench', 10), ('xbench', 21), ('xbench', 63), ('xbench', 126), ('xbench', 252),
                 ('xvadj', 21), ('xvadj', 63), ('xvadj', 126), ('xvadj', 252),
                 ('sma_dist', 20), ('sma_dist', 50), ('sma_dist', 100), ('sma_dist', 200),
